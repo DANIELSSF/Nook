@@ -1,0 +1,349 @@
+{
+ "source": "https://developers.openai.com/codex/cli/slash-commands",
+ "retrieved": "2026-10-02",
+ "version": "0.155.1",
+ "commands": [
+  {
+   "name": "permissions",
+   "hint": null,
+   "detail": "Set what Codex can do without asking first",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "ide",
+   "hint": null,
+   "detail": "Include open files, current selection, and other IDE context",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "keymap",
+   "hint": null,
+   "detail": "Remap TUI keyboard shortcuts",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "vim",
+   "hint": null,
+   "detail": "Toggle Vim mode for the composer",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "agent",
+   "hint": null,
+   "detail": "Switch the active agent thread",
+   "aliases": [
+    "subagents"
+   ],
+   "kind": "command"
+  },
+  {
+   "name": "apps",
+   "hint": null,
+   "detail": "Browse apps (connectors) and insert them into your prompt",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "plugins",
+   "hint": null,
+   "detail": "Browse installed and discoverable plugins",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "hooks",
+   "hint": null,
+   "detail": "View and manage lifecycle hooks",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "clear",
+   "hint": null,
+   "detail": "Clear the terminal and start a fresh chat",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "rename",
+   "hint": null,
+   "detail": "Rename the current chat",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "archive",
+   "hint": null,
+   "detail": "Archive the current session and exit Codex",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "delete",
+   "hint": null,
+   "detail": "Permanently delete the current session and exit Codex",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "compact",
+   "hint": null,
+   "detail": "Summarize the visible chat to free tokens",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "copy",
+   "hint": null,
+   "detail": "Copy the latest completed Codex output",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "diff",
+   "hint": null,
+   "detail": "Show the Git diff, including files Git isn't tracking yet",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "exit",
+   "hint": null,
+   "detail": "Exit the CLI (same as /quit)",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "experimental",
+   "hint": null,
+   "detail": "Toggle experimental features",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "approve",
+   "hint": null,
+   "detail": "Approve one retry of a recent auto review denial",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "memories",
+   "hint": null,
+   "detail": "Configure memory use and generation",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "skills",
+   "hint": null,
+   "detail": "Browse and use skills",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "import",
+   "hint": null,
+   "detail": "Import Claude Code or Cursor setup, projects, and chats",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "feedback",
+   "hint": null,
+   "detail": "Send logs to the Codex maintainers",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "init",
+   "hint": null,
+   "detail": "Generate an AGENTS.md scaffold in the current directory",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "logout",
+   "hint": null,
+   "detail": "Sign out of Codex",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "mcp",
+   "hint": null,
+   "detail": "List configured Model Context Protocol (MCP) tools",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "mention",
+   "hint": null,
+   "detail": "Attach a file to the chat",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "model",
+   "hint": null,
+   "detail": "Choose the active model (and reasoning effort, when available)",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "fast",
+   "hint": null,
+   "detail": "Toggle a Fast service tier when the model catalog exposes one",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "plan",
+   "hint": null,
+   "detail": "Switch to plan mode and optionally send a prompt",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "goal",
+   "hint": null,
+   "detail": "Set, edit, pause, resume, view, or clear a task goal",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "personality",
+   "hint": null,
+   "detail": "Choose a communication style for responses",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "ps",
+   "hint": null,
+   "detail": "Show background terminals and their recent output",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "stop",
+   "hint": null,
+   "detail": "Stop all background terminals",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "fork",
+   "hint": null,
+   "detail": "Fork the current chat into a new chat",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "app",
+   "hint": null,
+   "detail": "Continue the current session in the ChatGPT desktop app",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "side",
+   "hint": null,
+   "detail": "Start an ephemeral side chat",
+   "aliases": [
+    "btw"
+   ],
+   "kind": "command"
+  },
+  {
+   "name": "raw",
+   "hint": null,
+   "detail": "Toggle raw scrollback mode",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "resume",
+   "hint": null,
+   "detail": "Resume a saved chat from your session list",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "new",
+   "hint": null,
+   "detail": "Start a new chat inside the same CLI session",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "quit",
+   "hint": null,
+   "detail": "Exit the CLI",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "review",
+   "hint": null,
+   "detail": "Ask Codex to review your working tree",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "status",
+   "hint": null,
+   "detail": "Display session configuration and token usage",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "usage",
+   "hint": null,
+   "detail": "View account token usage or use a rate-limit reset",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "debug-config",
+   "hint": null,
+   "detail": "Print config layer and requirements diagnostics",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "statusline",
+   "hint": null,
+   "detail": "Configure TUI status-line fields interactively",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "title",
+   "hint": null,
+   "detail": "Configure terminal window or tab title fields interactively",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "theme",
+   "hint": null,
+   "detail": "Choose a syntax-highlighting theme",
+   "aliases": [],
+   "kind": "command"
+  },
+  {
+   "name": "pets",
+   "hint": null,
+   "detail": "Choose or hide a terminal pet",
+   "aliases": [
+    "pet"
+   ],
+   "kind": "command"
+  }
+ ]
+}

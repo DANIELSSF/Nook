@@ -1,0 +1,17 @@
+.build/
+dist/
+.DS_Store
+Vendor/tmux-source/
+Vendor/downloads/
+Vendor/bin/
+
+# Local coordination, diagnostics, and generated previews
+HANDOFF_CLAUDE.md
+CLAUDE_STATUS.md
+CODEX_REVIEW.md
+*.log
+.env
+.env.*
+!.env.example
+.swiftpm/
+render-output/

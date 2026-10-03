@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Nook</string>
+<key>CFBundleDisplayName</key><string>Nook</string>
+<key>CFBundleIdentifier</key><string>dev.nook.mac</string>
+<key>CFBundleExecutable</key><string>Nook</string>
+<key>CFBundleIconFile</key><string>Nook</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>LSMinimumSystemVersion</key><string>27.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>Usa tu voz para preparar un mensaje para la terminal. Tú eliges cuándo enviarlo.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>Transcribe tu voz para escribir en tu sesión de IA.</string>
+<key>NSAppleEventsUsageDescription</key><string>Lee la salida de tus ventanas y pestañas de Terminal en tiempo real, envía tus mensajes a la pestaña elegida y muestra su ventana original.</string>
+</dict></plist>

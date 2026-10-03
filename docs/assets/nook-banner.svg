@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Nook</title>
+  <desc id="desc">Tu terminal de IA, a un gesto del notch. Una pequeña isla oscura con un gato blanco y una sesión de terminal.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#101416"/><stop offset="1" stop-color="#192725"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#81c9af" stop-opacity=".14"/><stop offset="1" stop-color="#81c9af" stop-opacity="0"/></radialGradient>
+    <linearGradient id="island" x2="0" y2="1"><stop stop-color="#030504"/><stop offset="1" stop-color="#080d0b"/></linearGradient>
+    <filter id="shadow" x="-.4" y="-.4" width="1.8" height="1.8"><feDropShadow dy="16" stdDeviation="22" flood-opacity=".45"/></filter>
+  </defs>
+  <rect width="1200" height="520" rx="24" fill="url(#background)"/>
+  <ellipse cx="910" cy="235" rx="370" ry="300" fill="url(#glow)"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif">
+    <text x="76" y="162" fill="#93c7b5" font-size="15" letter-spacing="4">UN PEQUEÑO LUGAR PARA TU IA</text>
+    <text x="70" y="279" fill="#f4f6f4" font-size="112" font-weight="600" letter-spacing="-6">Nook</text>
+    <text x="76" y="337" fill="#bac5bf" font-size="23">Tu terminal, a un gesto del notch.</text>
+    <g transform="translate(76 384)"><rect width="94" height="32" rx="16" fill="#93c7b5" fill-opacity=".12"/><text x="47" y="21" text-anchor="middle" fill="#b8dccd" font-size="13">macOS nativo</text></g>
+    <g transform="translate(182 384)"><rect width="120" height="32" rx="16" fill="#d3e6dc" fill-opacity=".07"/><text x="60" y="21" text-anchor="middle" fill="#bfcdc6" font-size="13">Claude · Codex</text></g>
+  </g>
+  <g transform="translate(625 100)" filter="url(#shadow)">
+    <path d="M0 0H495V285Q495 319 461 319H34Q0 319 0 285Z" fill="url(#island)" stroke="#374b41" stroke-opacity=".6"/>
+    <path d="M172 0H323V35Q323 47 311 47H184Q172 47 172 35Z" fill="#010201"/>
+    <g transform="translate(44 49) scale(1.4 -1.4)" fill="#f4f7f5" stroke="#f4f7f5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M-5.5 3.5C-19-2-19.5 9-13 12" fill="none" stroke-width="3.5"/>
+      <ellipse cy="7.2" rx="9.6" ry="7.4" stroke="none"/><ellipse cy="13.5" rx="6.6" ry="8.5" stroke="none"/>
+      <path d="M-3.6 8V1.3M3.6 8V1.3" stroke-width="3.8"/>
+      <ellipse cy="19.2" rx="9.3" ry="7.4" stroke="none"/>
+      <path d="M-9.1 20.8-7.5 31.4-2.2 25.8M9.1 20.8 7.5 31.4 2.2 25.8" stroke="none"/>
+      <g fill="#030504" stroke="none"><ellipse cx="-4.3" cy="19.5" rx="1.1" ry="1.45"/><ellipse cx="4.3" cy="19.5" rx="1.1" ry="1.45"/></g>
+    </g>
+    <circle cx="454" cy="27" r="4" fill="#88cbb3"/>
+    <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif">
+      <rect x="24" y="69" width="106" height="31" rx="10" fill="#8fc6af" fill-opacity=".18"/>
+      <circle cx="38" cy="84.5" r="3" fill="#9ed7bf"/><text x="49" y="90" fill="#d9e8df" font-size="15">Mi sesión</text>
+      <text x="446" y="90" fill="#92a89a" font-size="24">+</text>
+      <text x="27" y="135" fill="#9dd3bb" font-size="14">› ¿Cómo va el proyecto?</text>
+      <circle cx="32" cy="167" r="3.5" fill="#d79b7b"/>
+      <text x="45" y="172" fill="#e4eae6" font-size="15">Todo listo. Tu terminal sigue trabajando.</text>
+      <rect x="45" y="188" width="313" height="5" rx="2.5" fill="#c7d6cc" fill-opacity=".14"/>
+      <rect x="45" y="204" width="233" height="5" rx="2.5" fill="#c7d6cc" fill-opacity=".09"/>
+      <rect x="22" y="239" width="451" height="58" rx="17" fill="#edf5ee" fill-opacity=".065" stroke="#e5f6eb" stroke-opacity=".065"/>
+      <text x="39" y="266" fill="#9baaa0" font-size="15">Mensaje o /comando…</text>
+      <circle cx="443" cy="270" r="16" fill="#84c6ab"/><path d="M443 277V263M438 268L443 263 448 268" fill="none" stroke="#092419" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+  <text x="1121" y="474" fill="#799087" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="end" letter-spacing="1">UNA ISLA COMPACTA · UNA MASCOTA CON PERSONALIDAD</text>
+</svg>
