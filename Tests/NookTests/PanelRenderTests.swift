@@ -33,12 +33,27 @@ final class PanelRenderTests: XCTestCase {
     }
 
     private func claudeSession(_ model: AppModel, text: String, tty: String = "/dev/ttys099", processes: [String] = ["login", "-zsh", "claude"]) -> TerminalSession {
-        let tab = TerminalTabSnapshot(windowID: 1, windowTitle: "IA", index: 1, tty: tty, customTitle: "codex", processes: processes, busy: false, selected: true, text: text)
+        let tab = TerminalTabSnapshot(windowID: 1, windowTitle: "IA", index: 1, tty: tty, customTitle: processes.last == "codex" ? "Codex" : "Claude Code", processes: processes, busy: false, selected: true, text: text)
         let session = TerminalSession(tab: tab, backend: .bundled, bridge: model.terminalBridge)
         model.sessions = [session]; model.selectedID = session.id
         model.expanded = true; model.islandContentVisible = true
         model.updateActivity()
         return session
+    }
+
+    /// A publication preview with fictional project work and labels matching each session's CLI.
+    func testRenderReadmePreview() throws {
+        let directory = try renderDirectory()
+        let screen = ["> Update the welcome page for a small website.", "",
+                      "⏺ Done. The layout now adapts to mobile and desktop.", "",
+                      "  The navigation is clearer, and the preview is ready to review.", "",
+                      rule, "❯ ", rule, "  ⏵⏵ auto mode on (shift+tab to cycle)"].joined(separator: "\n")
+        let model = AppModel(receivesSignals: false)
+        model.animations = false
+        _ = claudeSession(model, text: screen)
+        let size = NSSize(width: NotchGeometry.expandedWidth, height: NotchGeometry.expandedHeight(topInset: 28))
+        let host = NSHostingView(rootView: NookPanel(model: model).environment(\.colorScheme, .dark).environment(\.nookTintedGlass, false))
+        try write(host, size: size, to: URL(fileURLWithPath: directory).appendingPathComponent("readme-preview.png").path)
     }
 
     /// The whole panel, the way the app lays it out without a notch (28 pt neck, 262 pt tall).

@@ -1,50 +1,54 @@
 <div align="center">
 
-<img src="docs/assets/nook-banner.svg" alt="Nook — tu terminal de IA, a un gesto del notch" width="100%">
+<img src="docs/assets/nook-banner.svg" alt="Nook — your terminal, a gesture away" width="100%">
 
-**Un pequeño gato. Una isla compacta. Tu terminal, siempre a mano.**
+**A little cat. A compact island. Your terminal, within reach.**
 
 ![macOS](https://img.shields.io/badge/macOS-27%2B-151719?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
-![Estado](https://img.shields.io/badge/estado-en_desarrollo-8EC9B4)
+![Status](https://img.shields.io/badge/status-in_development-8EC9B4)
 
-[Empezar](#empezar) · [Compilar](#compilar) · [Guía de uso](docs/USAGE.md) · [Desarrollo](docs/DEVELOPMENT.md)
+[Get started](#get-started) · [Build](#build) · [Usage guide (ES)](docs/USAGE.md) · [Development (ES)](docs/DEVELOPMENT.md)
 
 </div>
 
-Nook es una app nativa de macOS que convierte el espacio junto al notch en un lugar para seguir tus sesiones de terminal, escribir a tu IA y enterarte de cuándo necesita tu atención. Acerca el cursor al gato y la isla se despliega desde el borde superior de la pantalla.
+Nook is a native macOS app that brings your terminal sessions to the notch. Follow your AI's work, send messages, and catch requests for your attention without switching away from what you're doing. Move the pointer toward the cat to expand the island from the top edge of your screen.
 
 <div align="center">
 
-<img src="docs/assets/nook-preview.png" alt="Panel real de Nook desplegado con una sesión de Claude y su campo de escritura" width="572">
+<img src="docs/assets/nook-preview.png" alt="Expanded Nook panel with a Claude Code session showing a sample website task" width="572">
 
-<sub>Vista del panel generado por la app con una conversación de prueba.</sub>
+<sub>App-rendered preview with a sample conversation. The app's current interface is in Spanish.</sub>
 
 </div>
 
-## Tu sesión sigue siendo tuya
+## Your session stays yours
 
-- **Conecta una pestaña concreta.** Arrastra el gato a Terminal de macOS o elige la sesión que quieres seguir.
-- **Escribe con comodidad.** Mensajes de varias líneas, borradores por pestaña, historial y autocompletado de comandos `/` para Claude Code y Codex.
-- **Vuelve a la terminal original.** Un botón muestra su ventana. Cerrar la pestaña en Nook conserva la sesión original.
-- **Dale tu estilo.** Nombres propios, colores suaves y ajustes de tamaño y letra.
-- **Una mascota con personalidad.** Miradas curiosas, aseo, siestas, juego y celebraciones, con soporte para Reducir movimiento.
-- **Sigue el trabajo de Claude.** Conversación, preguntas, permisos, resúmenes y actividad de subagentes.
-- **Añade contexto.** Dicta un borrador, pega imágenes o arrastra archivos al mensaje.
+- **Connect individual tabs.** Drag the cat to macOS Terminal or choose the session you want to follow.
+- **Write comfortably.** Send multiline messages, keep a draft for each tab, browse message history, and complete `/` commands for Claude Code and Codex.
+- **Return to the original terminal.** Bring its window forward with one button. Closing a Nook tab keeps the original terminal session open.
+- **Make it your own.** Rename tabs, choose soft accent colors, and adjust the panel and text size.
+- **Follow Claude's work.** Read conversations, answer questions and permission requests, and check summaries and subagent activity.
+- **Read code clearly.** Claude responses support formatted text and highlighted code. Inline edits show numbered lines with red and green backgrounds for removed and added code.
+- **Explore subagent conversations.** Open an agent from its tab badge or the composer capsule to see its name, model, status, and conversation. The composer continues to send messages to the main Claude session.
+- **Use Claude's interactive panels.** View panels such as `/usage`, `/status`, `/config`, and `/mcp`, navigate with familiar keys, and return to the conversation with your draft preserved.
+- **See activity at a glance.** The notch badge shows working subagents; hover for details or click to open their tab and list.
+- **Add context.** Dictate a draft, paste images, or drag files into your message.
+- **Enjoy a cat with personality.** Curious glances, grooming, naps, play, and celebrations, with support for Reduce Motion.
 
-También puedes crear sesiones propias compartidas mediante tmux. La isla y la conversación mantienen una superficie oscura que se integra con el notch.
+You can also create shared terminal sessions through the bundled tmux backend. The island and conversation use a dark surface that blends with the notch.
 
-## Empezar
+## Get started
 
-1. Abre Nook y elige **Conectar una terminal…**, o arrastra el gato a una ventana de Terminal.
-2. Autoriza el control de Terminal cuando macOS lo solicite.
-3. Acerca el cursor al gato para desplegar la isla y haz clic para escribir.
+1. Open Nook and choose **Conectar una terminal…** (Connect a terminal), or drag the cat to a Terminal window.
+2. Allow Nook to control Terminal when macOS asks.
+3. Move the pointer toward the cat to expand the island, then click to start typing.
 
-En **Ajustes → Permisos** puedes revisar Automatización, Accesibilidad, micrófono, reconocimiento de voz y avisos de Claude. El dictado prepara un borrador: tú eliges cuándo enviarlo.
+In **Ajustes → Permisos** (Settings → Permissions), you can review Automation, Accessibility, microphone, speech recognition, and Claude notifications. Dictation prepares a draft; you choose when to send it.
 
-## Compilar
+## Build
 
-La app empaquetada actual requiere **macOS 27 o posterior** y está preparada para **Apple Silicon**. Necesitas Swift 6 / Xcode, las herramientas de línea de comandos y Homebrew.
+The current packaged app requires **macOS 27 or later** and targets **Apple Silicon**. You'll need Swift 6 / Xcode, the command line tools, and Homebrew.
 
 ```sh
 git clone https://github.com/DANIELSSF/Nook.git
@@ -54,18 +58,18 @@ bash Scripts/build-app.sh release
 open dist/Nook.app
 ```
 
-La primera compilación descarga SwiftTerm y el código fuente de tmux. El resultado se firma localmente de forma ad hoc; todavía no está notarizado. Los CLI de Claude Code y Codex se instalan y autentican por separado.
+The first build downloads SwiftTerm and the tmux source. The resulting app is signed locally with an ad hoc signature and is not yet notarized. Install and authenticate the Claude Code and Codex CLIs separately.
 
-## Alcance actual
+## Current scope
 
-La conexión directa admite **Terminal de macOS**. iTerm2, Ghostty, Warp y terminales de editores todavía no tienen conexión directa. El espejo refleja texto; las sesiones propias de tmux usan el emulador integrado.
+Direct connections currently support **macOS Terminal**. iTerm2, Ghostty, Warp, and editor terminals do not yet have direct integration. External sessions use a text mirror; Nook's own tmux sessions use the integrated terminal emulator.
 
-Las funciones de registro de conversación, resumen y subagentes son específicas de Claude Code. Las flechas, Tab, Escape y el pegado directo de imágenes en pestañas externas necesitan Accesibilidad. Consulta la [guía de uso](docs/USAGE.md) para los detalles de cada modo.
+Conversation transcripts, summaries, subagent views, and interactive Claude panels are specific to Claude Code. Arrow keys, Tab, Escape, and direct image paste in external tabs require Accessibility permission. See the [usage guide (Spanish)](docs/USAGE.md) for details on each mode.
 
-## Hecho para macOS
+## Built for macOS
 
 **SwiftUI · AppKit · SwiftTerm · tmux · Speech**
 
-[Arquitectura y pruebas](docs/DEVELOPMENT.md) · [Contribuir](CONTRIBUTING.md) · [Créditos de terceros](THIRD_PARTY_NOTICES.md)
+[Architecture and tests (ES)](docs/DEVELOPMENT.md) · [Contributing (ES)](CONTRIBUTING.md) · [Third-party notices (ES)](THIRD_PARTY_NOTICES.md)
 
-Nook está en desarrollo activo. El código propio todavía no tiene una licencia de redistribución elegida; las dependencias conservan sus licencias originales.
+Nook is in active development. A redistribution license has not yet been chosen for the project's own code; dependencies retain their original licenses.
