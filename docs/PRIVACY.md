@@ -34,10 +34,10 @@ Before relying on this setting, use a second device or participant to inspect th
 
 ## Implementation and distribution
 
-Nook sets the public `NSWindow.sharingType` of each of its windows to `.none` while the setting is on, and back to `.readOnly` when it is off. macOS then leaves the window out of the capture, so viewers see whatever lies beneath it, as if Nook were not open.
+Nook sets the public `NSWindow.sharingType` of each of its windows to `.none` while the setting is on, and back to `.readOnly` when it is off. This requests that capture clients omit the window; it does not establish that a particular recorder or screen-sharing app will honor the request.
 
 An earlier version used the private WindowServer entry point `CGSSetWindowCaptureExcludeShape`. That call redacts rather than omits: macOS paints the excluded shape solid gray in screenshots and shares, so Nook's large transparent notch window showed up as a gray block. Nook no longer calls it.
 
-Capture clients do not all honor the sharing type the same way. Apple's ScreenCaptureKit leaves such windows out of a new capture, but some recorders (QuickTime among them, per [Apple Developer Forums thread 808016](https://developer.apple.com/forums/thread/808016)) have been reported to capture them anyway. Check the receiver's view in each app you use.
+Capture clients do not all honor the sharing type the same way. Some recorders (QuickTime among them, per [Apple Developer Forums thread 808016](https://developer.apple.com/forums/thread/808016)) have been reported to capture them anyway. Check the receiver's view in each app you use.
 
 [Back to the README](../README.md)

@@ -34,7 +34,7 @@ final class ClaudeWelcomeTests: XCTestCase {
     }
 
     func testTheFolderIsSplitSoItsNameCanStandOut() {
-        XCTAssertTrue(ClaudeWelcomeText.folder("~/Documents/Examples/New project") == ("~/Documents/ChatGPT/", "New project"))
+        XCTAssertTrue(ClaudeWelcomeText.folder("~/Documents/Examples/New project") == ("~/Documents/Examples/", "New project"))
         XCTAssertTrue(ClaudeWelcomeText.folder("~/Documents/app") == ("~/Documents/", "app"))
         XCTAssertTrue(ClaudeWelcomeText.folder("~/Documents/app/") == ("~/Documents/", "app"), "A trailing slash is not part of the name.")
         XCTAssertTrue(ClaudeWelcomeText.folder("~") == ("", "~"))
