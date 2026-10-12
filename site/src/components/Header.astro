@@ -1,0 +1,25 @@
+---
+import Icon from './Icon.astro';
+import ThemeToggle from './ThemeToggle.astro';
+import { catMarkup } from '../cat/render';
+import { asleepPose } from '../cat/anim';
+import { t } from '../i18n';
+import { urls } from '../config';
+---
+<header class="site-header" data-header>
+  <div class="site-header__bar">
+    <a class="pill brand" href="#top" aria-label={t.header.home}>
+      <span class="brand__mark" aria-hidden="true">
+        <span class="brand__awake" set:html={catMarkup()} />
+        <span class="brand__asleep" set:html={catMarkup(undefined, asleepPose())} />
+      </span>
+      <span class="brand__name">Nook</span>
+    </a>
+    <div class="pill site-header__right">
+      <ThemeToggle />
+      <a class="btn btn--primary btn--sm site-header__cta" href={urls.download} rel="noopener" data-download>
+        <Icon name="download" /> <span>{t.header.download}</span>
+      </a>
+    </div>
+  </div>
+</header>

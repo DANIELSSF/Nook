@@ -1,0 +1,43 @@
+---
+/**
+ * "Antes de salir": the island dims, a card comes up with the sad cat and asks «¿Seguro que quieres salir?», and «Quedarme» (the
+ * default) puts everything back. The sad cat is the same cat, drooped: its pose is the app's `PetAnimation.sad`, played by the
+ * script (`pose`). Words and measures are the app's (QuitPromptView.swift).
+ */
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import Icon from '../Icon.astro';
+import { catMarkup } from '../../cat/render';
+import { t } from '../../i18n';
+
+const c = t.demo.quit;
+---
+<Demo id="quit" alt={c.alt} steps={c.steps} tint="sand" copy={c}>
+  <Island id="island" state="open" oh={290} iw="572px" tabs={[{ name: c.tab.name, color: 'mint', active: true, id: 'tab-0' }]}>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user">{c.user}</div>
+        <div class="msg msg--ai">{c.ai}</div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" />
+    <Fragment slot="overlays">
+      <div class="scrim is-transient" data-t="scrim"></div>
+      <div class="quit-layer">
+        <div class="quit is-transient" data-t="quit">
+          <div class="sadstage" data-t="sad-cat" set:html={catMarkup(undefined, undefined, { unit: 2.93 })} />
+          <div class="quit__body">
+            <div class="quit__title">{c.title}</div>
+            <p class="quit__text">{c.text}</p>
+            <div class="quit__actions">
+              <span class="qbtn qbtn--stay" data-t="stay"><Icon name="heart" />{c.stay}</span>
+              <span class="qbtn qbtn--leave" data-t="leave"><Icon name="power" />{c.leave}</span>
+            </div>
+            <p class="quit__hint">{c.hintBefore}<span class="keycap">⌘Q</span>{c.hintAfter}</p>
+          </div>
+        </div>
+      </div>
+    </Fragment>
+  </Island>
+</Demo>

@@ -1,0 +1,48 @@
+---
+/**
+ * One demo, alone, filling the window at 1280 × 720: what `npm run export:demos` records to a clip. It is only generated when
+ * the build is started by that script (EXPORT_DEMOS=1), so it never ships with the site.
+ */
+import Base from '../../layouts/Base.astro';
+import HomeScene from '../../components/scenes/HomeScene.astro';
+import FollowScene from '../../components/scenes/FollowScene.astro';
+import QuestionScene from '../../components/scenes/QuestionScene.astro';
+import ComposeScene from '../../components/scenes/ComposeScene.astro';
+import AgentsScene from '../../components/scenes/AgentsScene.astro';
+import AlertsScene from '../../components/scenes/AlertsScene.astro';
+import CustomizeScene from '../../components/scenes/CustomizeScene.astro';
+import QuitScene from '../../components/scenes/QuitScene.astro';
+
+export function getStaticPaths() {
+  if (!process.env['EXPORT_DEMOS']) return [];
+  return ['home', 'follow', 'question', 'compose', 'agents', 'alerts', 'customize', 'quit'].map((scene) => ({ params: { scene } }));
+}
+const { scene } = Astro.params;
+---
+<Base title={`Nook demo · ${scene}`} noindex>
+  <main id="main" class="export-stage" data-export>
+    {scene === 'home' && <HomeScene />}
+    {scene === 'follow' && <FollowScene />}
+    {scene === 'question' && <QuestionScene />}
+    {scene === 'compose' && <ComposeScene />}
+    {scene === 'agents' && <AgentsScene />}
+    {scene === 'alerts' && <AlertsScene />}
+    {scene === 'customize' && <CustomizeScene />}
+    {scene === 'quit' && <QuitScene />}
+  </main>
+  <script>
+    import '../../scripts/export';
+  </script>
+</Base>
+<style is:global>
+  /* The frame is the whole window, with the screen centred in it at the scene's own ratio (16:10 unless the scene is taller). */
+  .export-stage { height: 100vh; overflow: hidden; }
+  .export-stage .demo, .export-stage .demo__frame { height: 100vh; border-radius: 0; box-shadow: none; }
+  .export-stage .demo__frame { --pad: 0px; display: grid; place-items: center; }
+  .export-stage .demo__window { width: min(calc(100vw - 120px), calc((100vh - 120px) * var(--ratio, 1.6))); }
+  .export-stage .demo__caption { left: 50%; right: auto; bottom: 34px; width: min(80vw, 900px); transform: translateX(-50%); display: grid; place-items: center; }
+  .export-stage .demo__cap { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); font-size: 18px; padding: 9px 20px 9px 10px; }
+  .export-stage .demo__keys { right: 60px; bottom: 36px; }
+  .export-stage .demo__steps { display: none; }
+  .site-header, .skip-link { display: none; }
+</style>

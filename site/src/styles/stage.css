@@ -1,0 +1,147 @@
+/*
+ * The pieces of the app's newest screens, redrawn: the cat's stage (a black window onto the island, with a glow, a mat and a few
+ * stars), the home and the greeting that use it, and the question before quitting with its sad cat. Measures and colors are the app's
+ * own (HomeView.swift, QuitPromptView.swift); the cards follow the island's theme the way the app's do.
+ */
+
+/* What a card is made of: the app's `card` surface (a little off the black) and its raised one; white on the paper. */
+.hscreen, .quit { --h-card: #1d1d1d; --h-raised: #212121; --h-line: rgb(255 255 255 / 0.1); --h-soft: rgb(255 255 255 / 0.075); --h-hint: rgb(255 255 255 / 0.5); }
+.is-paper .hscreen, .is-paper .quit { --h-card: #ffffff; --h-raised: #ffffff; --h-line: rgb(28 27 24 / 0.12); --h-soft: rgb(28 27 24 / 0.08); --h-hint: rgb(28 27 24 / 0.66); }
+
+/* Under the strip the home takes the island's whole body; the island's panel (tabs, conversation, field) waits behind it. */
+.hscreen { position: absolute; left: 0; right: 0; top: 36px; bottom: 0; z-index: 8; }
+.island--home .island__panel { transition: opacity 0.4s ease; }
+.island--home.is-home .island__panel { opacity: 0; }
+
+/* The cat's stage. `--hw`/`--hh` are its size, `--home` how far across the cat sits, `--u` the points per rig unit. */
+.hstage {
+  --ground: 8px;
+  position: relative; flex: none; width: var(--hw); height: var(--hh); overflow: hidden; isolation: isolate;
+  border-radius: 18px; background: #000; box-shadow: inset 0 0 0 0.75px rgb(255 255 255 / 0.09);
+}
+.hstage__glow { position: absolute; inset: 0; background: radial-gradient(circle calc(var(--hh) * 0.95) at calc(var(--home) * 100%) 62%, rgb(81 217 173 / 0.2), rgb(81 217 173 / 0.06) 50%, transparent); }
+.hstage__mat {
+  --mat: max(7px, calc(var(--u) * 3.6));
+  position: absolute; width: calc(var(--u) * 34); height: var(--mat); border-radius: 50%;
+  left: calc(var(--home) * var(--hw) - var(--u) * 17); bottom: calc(var(--ground) + var(--u) * 1.2 - var(--mat) / 2);
+  background: linear-gradient(rgb(81 217 173 / 0.34), rgb(81 217 173 / 0.1));
+}
+.hstage__star { position: absolute; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
+.hstage__cat { position: absolute; left: calc(var(--home) * var(--hw) - var(--u) * 22); bottom: calc(var(--ground) - var(--u) * 2); }
+.hstage__cat .cat { margin: 0; }
+/* What the cat says: a white capsule with a point toward it */
+.hbubble {
+  position: absolute; top: 9px; right: 11px; z-index: 2; padding: 4.5px 9px; border-radius: 999px; white-space: nowrap;
+  font: 600 10.5px/1.2 ui-rounded, "SF Pro Rounded", var(--font-sans); color: rgb(0 0 0 / 0.86); background: #fff;
+}
+.hbubble::after { content: ''; position: absolute; left: 9px; bottom: -2.5px; z-index: -1; width: 7px; height: 7px; border-radius: 2px; background: #fff; transform: rotate(45deg); }
+
+/* The titles are set in the system's rounded face where there is one (the app's `.rounded`) */
+.home__title, .welcome__title, .quit__title { font-family: ui-rounded, "SF Pro Rounded", var(--font-sans); }
+
+/* The home: the stage and a few words, and the three ways to start */
+.home { display: flex; flex-direction: column; justify-content: center; gap: 12px; height: 100%; padding: 8px 19px 15px; }
+.home__hero { display: flex; align-items: center; gap: 16px; }
+.home__words { flex: 1; min-width: 0; height: 132px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.home__over { font: 600 9px/1.2 var(--font-sans); letter-spacing: 0.8px; text-transform: uppercase; color: var(--i-dim); }
+.home__title { margin-top: 3px; font-size: 21px; font-weight: 600; line-height: 1.15; letter-spacing: -0.3px; color: var(--i-strong); white-space: nowrap; }
+.home__lede { margin-top: 4px; font-size: 11px; line-height: 1.35; color: var(--i-dim); }
+.hconnect {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; margin-top: 10px; padding: 0 11px; border-radius: 999px; white-space: nowrap;
+  font: 500 11px/1 var(--font-sans); color: rgb(var(--i-wash) / 0.88); background: var(--h-soft); transition: background-color 0.16s;
+}
+.hconnect .icon { width: 13px; height: 13px; }
+.hconnect.is-hover { background: rgb(var(--i-wash) / 0.13); }
+.hint { display: flex; align-items: center; gap: 5px; font-size: 9.5px; line-height: 1.3; color: var(--h-hint); }
+.hint .icon { flex: none; width: 12px; height: 12px; }
+.home__words .hint { margin-top: 7px; }
+.home__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.hcard {
+  --tint: var(--i-mint); --tile: var(--i-mint-fill);
+  position: relative; display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 11px; border-radius: 14px;
+  background: var(--h-card); box-shadow: inset 0 0 0 0.75px var(--h-line), 0 1px 3px rgb(0 0 0 / 0.16);
+  transition: transform 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+.hcard--claude { --tint: var(--i-terracotta); --tile: var(--i-terracotta-fill); }
+.hcard--codex { --tint: var(--i-info); --tile: var(--i-info); }
+.hcard__tile { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--tint); background: color-mix(in srgb, var(--tile) 18%, transparent); transition: background-color 0.16s; }
+.hcard__tile .icon { width: 15px; height: 15px; }
+.hcard__text { min-width: 0; display: grid; gap: 2px; }
+.hcard__text b { font: 600 12px/1.2 var(--font-sans); color: var(--i-strong); white-space: nowrap; }
+.hcard__text small { font: 400 10px/1.2 var(--font-sans); color: var(--i-dim); white-space: nowrap; }
+.hcard__go { margin-left: auto; display: grid; place-items: center; color: var(--i-faint); transition: transform 0.16s ease-out, color 0.16s; }
+.hcard__go .icon { width: 12px; height: 12px; stroke-width: 1.6; }
+.hcard__wait { display: none; margin-left: auto; gap: 2.5px; align-items: center; height: 12px; width: 18px; }
+.hcard__wait i { width: 3.5px; height: 3.5px; border-radius: 50%; background: var(--tint); animation: hcard-wait 0.84s ease-in-out infinite alternate; }
+.hcard__wait i:nth-child(2) { animation-delay: 0.14s; } .hcard__wait i:nth-child(3) { animation-delay: 0.28s; }
+@keyframes hcard-wait { from { transform: translateY(1px); } to { transform: translateY(-2.5px); } }
+.is-reduced .hcard__wait i, .is-hidden .hcard__wait i { animation: none; }
+/* The pointer on a card lifts it, brightens its tile and leans its arrow out; a press sinks it; while it opens a session its arrow gives way to dots */
+.hcard.is-hover { transform: translateY(-1.5px); box-shadow: inset 0 0 0 0.75px rgb(var(--i-wash) / 0.18), 0 3px 7px rgb(0 0 0 / 0.3); }
+.hcard.is-hover .hcard__tile { background: color-mix(in srgb, var(--tile) 30%, transparent); }
+.hcard.is-hover .hcard__go { color: var(--tint); transform: translate(1.5px, -1.5px); }
+.hcard.is-press { transform: scale(0.975); }
+.hcard.is-opening .hcard__go { display: none; }
+.hcard.is-opening .hcard__wait { display: inline-flex; }
+.hcard.is-dimmed { opacity: 0.55; }
+
+/* The greeting: the cat waves, says who it is and what it does */
+.welcome { display: flex; align-items: center; gap: 20px; height: 100%; padding: 8px 19px 15px; }
+.welcome__text { flex: 1; min-width: 0; }
+.welcome__title { font-size: 22px; font-weight: 600; line-height: 1.15; letter-spacing: -0.3px; color: var(--i-strong); white-space: nowrap; }
+.welcome__lede { margin-top: 4px; font-size: 11.5px; line-height: 1.35; color: var(--i-dim); }
+.welcome__rows { display: grid; gap: 7px; margin-top: 12px; }
+.wrow { display: flex; align-items: flex-start; gap: 9px; }
+.wrow .icon { flex: none; width: 16px; height: 14px; color: var(--i-mint); }
+.wrow b { display: block; font: 600 11px/1.25 var(--font-sans); color: var(--i-strong); }
+.wrow small { display: block; margin-top: 1px; font: 400 10px/1.3 var(--font-sans); color: var(--i-dim); }
+.welcome__actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.hbtn {
+  display: inline-flex; flex: none; align-items: center; gap: 6px; height: 30px; padding: 0 15px; border-radius: 999px;
+  font: 600 12px/1 var(--font-sans); color: rgb(0 0 0 / 0.85); background: rgb(81 217 173 / 0.94); box-shadow: 0 2px 4px rgb(81 217 173 / 0.2);
+  transition: transform 0.16s, filter 0.16s, box-shadow 0.16s;
+}
+.is-paper .hbtn { color: #fff; background: #1c7459; box-shadow: 0 2px 4px rgb(46 163 130 / 0.2); }
+.hbtn .icon { width: 10px; height: 10px; stroke-width: 2; transition: transform 0.16s; }
+.hbtn.is-hover { filter: brightness(1.06); box-shadow: 0 2px 8px rgb(81 217 173 / 0.4); }
+.hbtn.is-hover .icon { transform: translateX(2px); }
+.hbtn.is-press { transform: scale(0.96); }
+
+/* The question before quitting: the island dims, a card comes up with the sad cat, the question and two buttons */
+.scrim { position: absolute; inset: 0; z-index: 20; background: rgb(0 0 0 / 0.64); }
+.is-paper .scrim { background: rgb(0 0 0 / 0.46); }
+.quit-layer { position: absolute; inset: 0; z-index: 21; display: grid; place-items: center; pointer-events: none; }
+.quit {
+  display: flex; align-items: center; gap: 16px; box-sizing: border-box; width: 438px; max-width: calc(100% - 40px); padding: 16px; border-radius: 22px;
+  background: var(--h-raised); box-shadow: inset 0 0 0 0.75px rgb(var(--i-wash) / 0.12), 0 10px 26px rgb(0 0 0 / 0.55);
+  color: var(--i-ink);
+}
+.is-paper .quit { box-shadow: inset 0 0 0 0.75px rgb(28 27 24 / 0.14), 0 10px 26px rgb(0 0 0 / 0.28); }
+/* The sad cat's stage: black like the home's, with a cold glow where the home's is mint; it sits 8 points above the floor, a little right of the middle */
+.sadstage {
+  --u: 2.93px;
+  position: relative; flex: none; display: flex; align-items: flex-end; justify-content: center; width: 124px; height: 108px; padding-bottom: calc(8px - var(--u) * 2);
+  overflow: hidden; isolation: isolate; border-radius: 16px; background: #000; box-shadow: inset 0 0 0 0.75px rgb(255 255 255 / 0.09);
+}
+.sadstage::before { content: ''; position: absolute; inset: 0; z-index: -1; background: radial-gradient(circle 97px at 50% 60%, rgb(127 189 252 / 0.2), rgb(127 189 252 / 0.05) 50%, transparent); }
+.sadstage .cat { flex: none; margin: 0; transform: translateX(calc(var(--u) * 3.1)); }
+.quit__body { flex: 1; min-width: 0; }
+.quit__title { font-size: 16px; font-weight: 600; line-height: 1.25; letter-spacing: -0.2px; color: var(--i-strong); }
+.quit__text { margin: 5px 0 0; font-size: 11px; line-height: 1.35; color: var(--i-dim); text-wrap: pretty; }
+.quit__actions { display: flex; gap: 8px; margin-top: 12px; }
+.qbtn {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; border-radius: 999px; white-space: nowrap;
+  font: 600 12px/1 var(--font-sans); transition: transform 0.14s, filter 0.14s, box-shadow 0.14s, background-color 0.14s;
+}
+.qbtn .icon { width: 10px; height: 10px; }
+.qbtn--stay { padding: 0 16px; color: rgb(0 0 0 / 0.85); background: rgb(81 217 173 / 0.94); box-shadow: 0 2px 4px rgb(81 217 173 / 0.22); }
+.is-paper .qbtn--stay { color: #fff; background: #1c7459; box-shadow: 0 2px 4px rgb(46 163 130 / 0.22); }
+.qbtn--stay.is-hover { filter: brightness(1.06); box-shadow: 0 2px 8px rgb(81 217 173 / 0.42); }
+.qbtn--leave { padding: 0 14px; color: var(--i-coral); background: rgb(248 106 103 / 0.11); box-shadow: inset 0 0 0 0.9px rgb(248 106 103 / 0.38); }
+.is-paper .qbtn--leave { background: rgb(216 70 70 / 0.11); box-shadow: inset 0 0 0 0.9px rgb(216 70 70 / 0.38); }
+.qbtn.is-press { transform: scale(0.96); }
+.quit__hint { display: flex; align-items: center; gap: 5px; margin: 9px 0 0; font-size: 9.5px; line-height: 1; color: var(--h-hint); }
+.keycap {
+  display: inline-grid; place-items: center; height: 15px; padding: 0 5px; border-radius: 4.5px;
+  font: 600 9.5px/1 ui-rounded, "SF Pro Rounded", var(--font-sans); color: var(--i-dim); background: rgb(var(--i-wash) / 0.07); box-shadow: inset 0 0 0 0.6px rgb(var(--i-wash) / 0.16);
+}

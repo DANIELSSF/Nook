@@ -1,0 +1,360 @@
+/*
+ * The island, recreated in HTML and CSS. It is black (it is hardware: it hangs from the notch), whatever the page theme.
+ * Its shape is three layers that share one clip-path made of three custom properties (--c-ix, --c-iy, --c-r): the rim, the black
+ * body and the content. The open/collapsed states set them in CSS; the morph (src/demo/island.ts) tweens them in px, so the
+ * island grows out of the notch the way the app's mask does, without animating any layout property.
+ *
+ * The app also has a light theme: the shell stays black (the notch's strip, a 5px bezel round the body) and the body is a warm
+ * paper laid in under the strip. A scene that shows it wraps itself in a `.skinscope` and turns `is-paper` on and off there; the
+ * paper layer, the palette and the tab colors below follow (see "The paper skin"). Only what the scenes that use it draw is
+ * covered: the tab row, the conversation, the field and the popovers.
+ */
+
+/*
+ * Tab colors, from the app's own shades (TabStyle.swift): on the black island the tab's color is a vivid pastel and its voice
+ * is light; `accent` is a solid that takes the send button's white arrow (3.1:1 or more) and is the same in both themes.
+ */
+.tc-mint { --tab: #6ed4b3; --tab-accent: #2ea383; --tab-marker: #80d9bb; --tab-text: #e6f9f1; }
+.tc-teal { --tab: #67d0da; --tab-accent: #31a0a9; --tab-marker: #80d4dc; --tab-text: #e3f8fa; }
+.tc-sky { --tab: #6dcbf6; --tab-accent: #2c9cc9; --tab-marker: #88cff1; --tab-text: #e5f7ff; }
+.tc-blue { --tab: #94c1fb; --tab-accent: #3f93f7; --tab-marker: #a6c7f1; --tab-text: #eaf5ff; }
+.tc-violet { --tab: #b7b5fb; --tab-accent: #8d83f7; --tab-marker: #bebef1; --tab-text: #f1f2ff; }
+.tc-lavender { --tab: #d4a9f5; --tab-accent: #b775e4; --tab-marker: #d7b4f1; --tab-text: #f8f0ff; }
+.tc-rose { --tab: #f79fc3; --tab-accent: #e565a0; --tab-marker: #f3adc8; --tab-text: #ffeef4; }
+.tc-coral { --tab: #fba29c; --tab-accent: #ee6562; --tab-marker: #f2b1ac; --tab-text: #ffeeec; }
+.tc-peach { --tab: #f4ac6f; --tab-accent: #d47c23; --tab-marker: #f2b685; --tab-text: #fff0e5; }
+.tc-sand { --tab: #dabb64; --tab-accent: #af8e23; --tab-marker: #dfc171; --tab-text: #f9f3e3; }
+.tc-lime { --tab: #a4ce6c; --tab-accent: #729f22; --tab-marker: #abd474; --tab-text: #eff7e7; }
+.tc-gray { --tab: #b9bec7; --tab-accent: #8c929d; --tab-marker: #c2c8d2; --tab-text: #f1f4f8; }
+
+.island {
+  --iw: 572px;
+  --oh: 300px;
+  --th: 300px;
+  --open: 1;
+  --c-ix: 0px;
+  --c-iy: calc(100% - var(--oh));
+  --c-r: 28px;
+  --bezel: 5px;
+  --neck: 36px;
+  position: relative;
+  width: var(--iw);
+  max-width: 100%;
+  height: max(var(--oh), var(--th));
+  margin-inline: auto;
+  font: 400 12.5px/1.4 var(--font-sans);
+  color: var(--i-ink);
+  text-align: left;
+  filter: drop-shadow(0 20px 22px rgb(0 0 0 / 0.24)) drop-shadow(0 2px 4px rgb(0 0 0 / 0.28));
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  container: island / inline-size;
+}
+.island[data-state='collapsed'] { --open: 0; --c-ix: calc(50% - 124px); --c-iy: calc(100% - 36px); --c-r: 16px; }
+.island[data-state='peek'] { --open: 0; --c-ix: calc(50% - 186px); --c-iy: calc(100% - 106px); --c-r: 24px; }
+.island[data-state='tall'] { --c-iy: calc(100% - var(--th)); }
+
+.island { pointer-events: none; }
+.island__content { pointer-events: auto; }
+.island__rim, .island__shape, .island__content { position: absolute; inset: 0; }
+.island__rim {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.03), rgb(255 255 255 / 0.2));
+  clip-path: inset(0 var(--c-ix) var(--c-iy) var(--c-ix) round 0 0 var(--c-r) var(--c-r));
+}
+.island__shape {
+  background: linear-gradient(180deg, #020403, #070b09 45%, #0a0f0d);
+  clip-path: inset(0 calc(var(--c-ix) + 1px) calc(var(--c-iy) + 1px) calc(var(--c-ix) + 1px) round 0 0 calc(var(--c-r) - 1px) calc(var(--c-r) - 1px));
+}
+.island__paper { position: absolute; inset: 0; opacity: var(--open); pointer-events: none; }
+.island__content {
+  clip-path: inset(0 calc(var(--c-ix) + 1px) calc(var(--c-iy) + 1px) calc(var(--c-ix) + 1px) round 0 0 calc(var(--c-r) - 1px) calc(var(--c-r) - 1px));
+}
+
+/* The strip the island hangs from: the cat on the left, the notch in the middle, the activity on the right. */
+.island__strip { position: absolute; left: 0; right: 0; top: 0; height: 36px; }
+.island__cat {
+  --u: 0.78px;
+  position: absolute; left: 0; bottom: 5.5px; width: 36px; height: 30px;
+  display: flex; align-items: flex-end; justify-content: center;
+  transform: translateX(calc((1 - var(--open)) * (var(--iw) / 2 - 124px) + var(--open) * 6px));
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.island__cat .cat { margin-bottom: 0; }
+.island__lens {
+  position: absolute; left: 50%; top: 14px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #1b2a26, #050807 70%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.05);
+  opacity: calc(1 - var(--open));
+}
+.island__right { position: absolute; top: 0; height: 36px; display: flex; align-items: center; color: var(--i-dim); }
+.island__right--compact { left: calc(50% + 88px); width: 36px; justify-content: center; opacity: calc(1 - var(--open)); }
+.island__right--open { right: 12px; gap: 12px; opacity: var(--open); }
+.island[data-state='collapsed'] .island__right--open, .island[data-state='peek'] .island__right--open { visibility: hidden; }
+.island__right--open .icon { width: 14px; height: 14px; }
+.island__ctl { display: inline-flex; align-items: center; justify-content: center; gap: 1px; min-width: 24px; height: 24px; padding: 0 3px; border-radius: 8px; color: inherit; transition: background-color 0.2s, color 0.2s; }
+.island__ctl:hover, .island__ctl.is-hover { background: rgb(var(--i-wash) / 0.08); color: var(--i-ink); }
+
+/* The three dots that wave while a tab works */
+.dots { display: inline-flex; gap: 3.5px; align-items: center; height: 10px; }
+.dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--i-mint); opacity: 0.5; }
+.dots[data-on='true'] i { animation: dot-wave 1.05s ease-in-out infinite; }
+.dots[data-on='true'] i:nth-child(2) { animation-delay: 0.15s; }
+.dots[data-on='true'] i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot-wave { 0%, 100% { transform: translateY(1.5px); opacity: 0.4; } 40% { transform: translateY(-2px); opacity: 1; } }
+.is-reduced .dots i, .is-hidden .dots i { animation: none !important; opacity: 0.9; transform: none; }
+
+/* The badge on the notch's right wing: how many alerts wait */
+.badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 700; color: #04251a; background: var(--i-mint); }
+.badge--ask { background: var(--i-amber); color: #2c1d00; }
+.badge--fail { background: var(--i-coral); color: #2b0606; }
+
+/* Everything below the strip */
+.island__panel {
+  position: absolute; left: 0; right: 0; top: 36px; height: calc(var(--oh) - 36px);
+  display: flex; flex-direction: column;
+  opacity: var(--open);
+}
+.island__tabs { flex: none; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 10px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 9px; border-radius: 9px;
+  font-size: 12.5px; font-weight: 520; color: var(--i-dim); white-space: nowrap; position: relative;
+  background: color-mix(in srgb, var(--tab) 9%, transparent);
+  transition: background-color 0.25s, color 0.25s, box-shadow 0.2s, scale 0.2s;
+}
+.tab.is-active { color: var(--i-ink); background: color-mix(in srgb, var(--tab) 20%, transparent); }
+.tab.is-hover:not(.is-active) { color: var(--i-ink); background: color-mix(in srgb, var(--tab) 15%, transparent); }
+.tab__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tab); flex: none; }
+.tab__x { width: 10px; height: 10px; opacity: 0.55; }
+/* A tab whose alert sound is off wears a slashed speaker after its name, in its own color */
+.tab__mute { display: inline-flex; flex: none; width: 0; margin-left: -7px; overflow: hidden; opacity: 0; color: var(--tab); transition: opacity 0.3s ease; }
+.tab__mute.is-on { width: 10px; margin-left: 0; opacity: 0.85; }
+.tab__mute .icon { flex: none; width: 10px; height: 10px; }
+/* A tab being dragged: lifted off the row, with a soft shadow; the row's other tabs spring aside as it passes */
+.tab.is-lifted { z-index: 4; scale: 1.05; box-shadow: 0 8px 18px -6px rgb(0 0 0 / 0.65), 0 0 0 1px color-mix(in srgb, var(--tab) 42%, transparent); background: color-mix(in srgb, var(--tab) 26%, var(--i-pop)); }
+/* The mark a tab wears: a dot, or an icon that moves while its AI works (lib/tabIcons.ts, demo/liveIcons.ts) */
+.tab__mark { position: relative; display: block; width: 10px; height: 10px; flex: none; color: var(--tab); }
+.tab__mark .tabicon { display: none; }
+.tab__mark .tabicon.is-on { display: block; }
+.tabicon { width: 10px; height: 10px; fill: currentColor; overflow: visible; }
+.tab__badge {
+  display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px 0 4px; border-radius: 8px;
+  font-size: 9.5px; font-weight: 700; color: #fff; background: var(--i-terracotta-fill);
+}
+.tab__badge .icon { width: 9px; height: 9px; }
+.tab__q { display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; font-size: 9.5px; font-weight: 800; color: #2c1d00; background: var(--i-amber-fill); }
+.island__tab-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--i-dim); }
+.island__tab-actions .icon { width: 14px; height: 14px; }
+
+.island__convo {
+  position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 6px 14px 0;
+  font: 500 12px/1.55 var(--font-mono); color: var(--i-text);
+}
+.msg { position: relative; margin: 0 0 7px; padding-left: 0; }
+.msg--user {
+  padding: 3px 9px; border-radius: 4px; font-weight: 650; color: var(--tab-text);
+  background: color-mix(in srgb, var(--tab-accent) var(--i-user-mix), var(--i-user-base));
+}
+.msg--user::before { content: '>'; margin-right: 9px; color: var(--tab-marker); font-weight: 800; }
+.msg--ai { padding-left: 19px; }
+.msg--ai::before {
+  content: ''; position: absolute; left: 5px; top: 0.52em; width: 8px; height: 8px; border-radius: 50%; background: var(--i-terracotta-fill);
+}
+.msg--tool { padding-left: 19px; color: var(--i-faint); font-weight: 450; }
+.msg--tool::before { content: ''; position: absolute; left: 5px; top: 0.52em; width: 8px; height: 8px; border-radius: 50%; background: var(--i-faint); }
+.msg--out { padding-left: 33px; color: var(--i-faint); font-weight: 450; }
+.msg--out::before { content: '⎿'; position: absolute; left: 19px; top: 0; }
+.msg .dim { color: var(--i-faint); font-weight: 450; }
+.msg .strong { color: var(--i-strong); }
+.msg--queued { opacity: 0.55; }
+.tag { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 5px; font: 700 9px/15px var(--font-sans); letter-spacing: 0.08em; vertical-align: 1px; color: var(--i-dim); background: rgb(var(--i-wash) / 0.09); }
+.tag--send { color: var(--tab-text); background: color-mix(in srgb, var(--tab-accent) 55%, transparent); }
+
+/* Code edits: numbered lines, red and green */
+.diff { margin: 2px 0 7px 19px; border-radius: 6px; overflow: hidden; font-size: 11px; line-height: 1.5; background: rgb(var(--i-wash) / 0.04); }
+.diff__row { display: flex; gap: 8px; padding: 0 8px; white-space: pre; }
+.diff__n { flex: none; width: 18px; text-align: right; color: var(--i-faint); }
+.diff__row--add { background: rgb(60 190 130 / 0.17); }
+.diff__row--add .diff__n { color: var(--i-add-n); }
+.diff__row--del { background: rgb(240 90 90 / 0.17); }
+.diff__row--del .diff__n { color: var(--i-del-n); }
+.diff .kw { color: var(--i-kw); } .diff .st { color: var(--i-st); } .diff .fn { color: var(--i-fn); }
+
+.spinner { display: inline-block; color: var(--i-terracotta); }
+.spinner .icon { width: 11px; height: 11px; vertical-align: -1px; }
+[data-spin='true'] .icon { animation: spin 2.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.is-reduced [data-spin='true'] .icon, .is-hidden [data-spin='true'] .icon { animation: none; }
+
+/* The message field */
+.composer {
+  position: relative; flex: none; margin: 4px 12px 12px; padding: 11px 14px 9px; border-radius: 18px;
+  background: var(--i-field); border: 1px solid var(--i-cardline);
+  box-shadow: var(--i-cardshadow);
+  transition: border-color 0.25s, background-color 0.25s, box-shadow 0.25s;
+}
+.composer.is-focus { border-color: color-mix(in srgb, var(--tab) 40%, transparent); }
+.composer.is-drop { border-color: var(--i-mint); background: rgb(81 217 173 / 0.1); box-shadow: 0 0 0 3px rgb(81 217 173 / 0.18); }
+.composer__text { min-height: 20px; max-height: 60px; overflow: hidden; font-size: 13px; line-height: 20px; color: var(--i-ink); white-space: pre-wrap; word-break: break-word; }
+.composer__text .ph { color: var(--i-ph); }
+.composer__text .typed:empty + .ph { display: inline; }
+.composer__text .typed:not(:empty) ~ .ph { display: none; }
+.composer__text .caret { display: none; width: 1.5px; height: 15px; margin-left: 1px; vertical-align: -3px; background: var(--tab); }
+.composer.is-focus .caret { display: inline-block; animation: caret 1s steps(2, jump-none) infinite; }
+@keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.is-reduced .composer.is-focus .caret { animation: none; }
+.composer__row { display: flex; align-items: center; gap: 7px; margin-top: 8px; min-height: 26px; font-size: 10.5px; color: var(--i-dim); }
+.composer__status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer__status i { width: 6px; height: 6px; border-radius: 50%; background: var(--i-mint-fill); flex: none; }
+.composer__status.is-busy i { background: var(--i-terracotta-fill); }
+.composer__spacer { flex: 1; }
+.chip {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; flex: none;
+  border: 1px solid transparent; background: rgb(var(--i-wash) / 0.08); color: var(--i-dim);
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, transform 0.2s;
+}
+.chip .icon { width: 13px; height: 13px; }
+.chip.is-hover { background: rgb(var(--i-wash) / 0.15); color: var(--i-ink); }
+/* The permission mode keeps a thin ring; the others are plain washes */
+.chip--mode { border-color: var(--i-hair); color: var(--i-chipink); }
+.chip--model { color: var(--i-chipink); }
+.chip--ring svg { width: 15px; height: 15px; }
+.mic, .send { display: inline-grid; place-items: center; border-radius: 50%; flex: none; }
+.mic { width: 26px; height: 26px; color: var(--i-dim); background: rgb(var(--i-wash) / 0.06); transition: background-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.16s ease-out; }
+.mic.is-live { color: #fff; background: var(--i-coral-fill); box-shadow: 0 0 0 4px rgb(248 106 103 / 0.22); }
+.send { width: 28px; height: 28px; color: rgb(var(--i-wash) / 0.4); background: rgb(var(--i-wash) / 0.1); transition: background-color 0.3s, color 0.3s, transform 0.15s; }
+.send.is-ready { color: #fff; background: var(--tab-accent); }
+.send.is-press { transform: scale(0.9); }
+.send .icon { width: 14px; height: 14px; }
+.kbd-ico { color: var(--i-dim); display: inline-grid; place-items: center; width: 24px; height: 24px; }
+.kbd-ico .icon { width: 15px; height: 15px; }
+
+/*
+ * Buttons that answer (the app's click motions): a press sinks the control a little and its symbol makes one small gesture of its own,
+ * once: the pin tilts, arrows nudge the way they point, + and the cross turn, the microphone swells. A demo's click gives the control
+ * `is-press` for a moment; the hero's real button has `:active`. Reduced motion keeps only the change of state.
+ */
+.island__ctl { transition: transform 0.16s ease-out, background-color 0.2s, color 0.2s; }
+.kbd-ico { transition: transform 0.16s ease-out; }
+.island__ctl .icon, .chip .icon, .mic .icon, .send .icon { transition: transform 0.3s cubic-bezier(0.34, 1.5, 0.5, 1); }
+.island__ctl.is-press, .chip.is-press, .mic.is-press, .kbd-ico.is-press, button.island__ctl:active { transform: scale(0.9); }
+:is(.is-press, button:active) > .icon[data-icon='pin'] { transform: rotate(18deg); }
+:is(.is-press, button:active) > .icon[data-icon='chevron-down'] { transform: translateY(2px); }
+:is(.is-press, button:active) > .icon[data-icon='chevron-up'] { transform: translateY(-2px); }
+:is(.is-press, button:active) > .icon[data-icon='plus'], :is(.is-press, button:active) > .icon[data-icon='x'] { transform: rotate(90deg); }
+:is(.is-press, button:active) > .icon[data-icon='send'] { transform: translateY(-3px); }
+:is(.is-press, button:active) > .icon[data-icon='mic'] { transform: scale(1.18); }
+.is-reduced :is(.is-press, button:active) > .icon { transform: none; }
+.is-reduced .island__ctl.is-press, .is-reduced .chip.is-press, .is-reduced .mic.is-press, .is-reduced .kbd-ico.is-press, .is-reduced button.island__ctl:active { transform: none; }
+
+/* Popovers that float over the conversation (menus, lists, cards) */
+.pop {
+  position: absolute; z-index: 5; border-radius: 14px; color: var(--i-ink);
+  background: var(--i-pop); border: 1px solid var(--i-pop-line);
+  box-shadow: var(--i-pop-shadow);
+  backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+/* Alert peek: the island grows a little downward with a bell, the tab's name and the message */
+.island__peek {
+  --c: var(--i-mint);
+  position: absolute; left: 50%; top: 36px; width: 372px; height: 68px; margin-left: -186px; padding: 4px 16px 0;
+  display: flex; align-items: center; gap: 11px;
+}
+.peek__bell {
+  flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent);
+}
+.peek__bell .icon { width: 17px; height: 17px; }
+.peek__bell[data-ring='true'] .icon { animation: ring 0.9s ease-in-out 2; transform-origin: 50% 12%; }
+@keyframes ring { 0%, 100% { transform: rotate(0); } 18% { transform: rotate(16deg); } 36% { transform: rotate(-14deg); } 54% { transform: rotate(9deg); } 72% { transform: rotate(-5deg); } }
+.is-reduced .peek__bell .icon { animation: none !important; }
+.peek__text { min-width: 0; }
+.peek__tab { font-size: 12.5px; font-weight: 650; color: var(--i-ink); display: flex; align-items: center; gap: 7px; }
+.peek__tab .tab__dot { width: 6px; height: 6px; }
+.peek__msg { font-size: 12px; color: var(--i-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peek--ok { --c: var(--i-mint); }
+.peek--ask { --c: var(--i-amber); }
+.peek--fail { --c: var(--i-coral); }
+
+/* A narrow island (a phone, a compact size) drops what does not fit. */
+@container island (max-width: 520px) {
+  .composer__status span { display: none; }
+  .composer__row .kbd-ico, .composer__row .chip--ring { display: none; }
+  .island__convo { padding-inline: 12px; }
+}
+
+.is-transient { opacity: 0; visibility: hidden; }
+
+/*
+ * The paper skin: the app's light theme. A sheet of paper laid into the black shell, under the strip, with its corners concentric
+ * with the shell's so the bezel is the same width all round. It is part of the content: it follows `--open`, so it comes on once
+ * the island has grown and goes with it. Everything the strip draws (the cat, the dots, the notch) stays white on black.
+ */
+.island__paper i {
+  position: absolute; top: var(--neck);
+  left: calc(var(--c-ix) + var(--bezel)); right: calc(var(--c-ix) + var(--bezel)); bottom: calc(var(--c-iy) + var(--bezel));
+  border-radius: 14px 14px calc(var(--c-r) - var(--bezel)) calc(var(--c-r) - var(--bezel));
+  background: var(--i-paper); opacity: 0; transition: opacity 0.5s ease;
+}
+.is-paper .island__paper i { opacity: 1; }
+
+/* The same palette, for paper: ink instead of white, text-safe status colors (4.5:1 or more), white cards */
+.is-paper :is(.island__panel, .pop, .settings) {
+  color: var(--i-ink);
+  --i-ink: #1c1b18;
+  --i-dim: rgb(28 27 24 / 0.66);
+  --i-faint: rgb(28 27 24 / 0.48);
+  --i-line: rgb(28 27 24 / 0.08);
+  --i-field: #ffffff;
+  --i-wash: 28 27 24;
+  --i-text: #1c1b18;
+  --i-strong: #1c1b18;
+  --i-chipink: rgb(28 27 24 / 0.78);
+  --i-ph: rgb(28 27 24 / 0.63);
+  --i-hair: rgb(28 27 24 / 0.16);
+  --i-cardline: rgb(28 27 24 / 0.11);
+  --i-cardshadow: 0 1px 3px rgb(0 0 0 / 0.07);
+  --i-user-mix: 16%;
+  --i-user-base: #f3f0e9;
+  --i-pop: rgb(255 255 255 / 0.98);
+  --i-pop-line: rgb(28 27 24 / 0.12);
+  --i-pop-shadow: 0 18px 40px -12px rgb(60 40 10 / 0.38), 0 0 0 0.5px rgb(28 27 24 / 0.06);
+  --i-settings: #fbfaf7;
+  --i-mint: #1c745a;
+  --i-terracotta: #b74a26;
+  --i-amber: #8a6617;
+  --i-coral: #bf3a3c;
+  --i-info: #186bb3;
+  --i-mint-fill: #2ea383;
+  --i-terracotta-fill: #d0623d;
+  --i-amber-fill: #df9e17;
+  --i-coral-fill: #d84646;
+  --i-add-n: #1c745a;
+  --i-del-n: #bf3a3c;
+  --i-kw: #b74a26;
+  --i-st: #1c745a;
+  --i-fn: #186bb3;
+}
+
+/* Tab colors on paper: the same hues, deeper, so a dot, an icon and the user's words read on it (the accent is the same) */
+.is-paper .tc-mint { --tab: #28876c; --tab-marker: #1f6d57; --tab-text: #06372a; }
+.is-paper .tc-teal { --tab: #2a848c; --tab-marker: #216b71; --tab-text: #00363a; }
+.is-paper .tc-sky { --tab: #2582a7; --tab-marker: #1d6987; --tab-text: #063244; }
+.is-paper .tc-blue { --tab: #2279db; --tab-marker: #1461b5; --tab-text: #1a2f49; }
+.is-paper .tc-violet { --tab: #7669dc; --tab-marker: #5f53b7; --tab-text: #2b2948; }
+.is-paper .tc-lavender { --tab: #9d5cc9; --tab-marker: #8147a7; --tab-text: #362542; }
+.is-paper .tc-rose { --tab: #c84b86; --tab-marker: #a5386d; --tab-text: #432130; }
+.is-paper .tc-coral { --tab: #d14b4a; --tab-marker: #ad3839; --tab-text: #462220; }
+.is-paper .tc-peach { --tab: #b1671b; --tab-marker: #905213; --tab-text: #42270e; }
+.is-paper .tc-sand { --tab: #92761c; --tab-marker: #765f14; --tab-text: #392c07; }
+.is-paper .tc-lime { --tab: #5e841c; --tab-marker: #4b6b15; --tab-text: #263313; }
+.is-paper .tc-gray { --tab: #727985; --tab-marker: #5b626d; --tab-text: #292e36; }
+
+/* Switching theme cross-fades the colors. With no specificity of its own, so anything that sets its own transition keeps it. */
+:where(.skinscope) :where(.island__panel, .pop, .settings),
+:where(.skinscope) :where(.island__panel, .pop, .settings) *,
+:where(.skinscope) :where(.island__panel, .pop, .settings) *::before {
+  transition: color 0.45s ease, background-color 0.45s ease, border-color 0.45s ease, box-shadow 0.45s ease;
+}

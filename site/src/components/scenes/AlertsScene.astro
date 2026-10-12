@@ -1,0 +1,48 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import Icon from '../Icon.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('alerts');
+const c = t.demo.alerts;
+const peeks = [
+  { id: 'ok', cls: 'peek--ok', tab: c.ok.tab, msg: c.ok.msg, color: 'tc-mint' },
+  { id: 'ask', cls: 'peek--ask', tab: c.ask.tab, msg: c.ask.msg, color: 'tc-blue' },
+  { id: 'fail', cls: 'peek--fail', tab: c.fail.tab, msg: c.fail.msg, color: 'tc-coral' },
+];
+---
+<Demo id="alerts" alt={item.alt} steps={item.steps} tint="rose" copy={c}>
+  <div slot="desk">
+    <div class="desk__win" style="left: 92px; top: 116px; width: 456px; height: 232px;">
+      <div class="desk__win-bar"><i></i><i></i><i></i><span>{c.other.title}</span></div>
+      <div class="desk__win-body">
+        <div class="desk__text desk__text--h">{c.other.title}</div>
+        {c.other.lines.map((l) => <div class="desk__text">{l}</div>)}
+        <div class="desk__line"></div><div class="desk__line" style="width:68%"></div><div class="desk__line" style="width:48%"></div>
+      </div>
+    </div>
+  </div>
+  <Island id="island" state="open" working oh={316} iw="572px" tabs={[{ name: c.tabs[0]!.name, color: 'mint' }, { name: c.tabs[1]!.name, color: 'blue' }, { name: c.tabs[2]!.name, color: 'coral', active: true }]}>
+    <Fragment slot="notch-right">
+      <span class="dots" data-t="dots" data-on="true"><i></i><i></i><i></i></span>
+      <span class="badge is-transient" data-t="badge" style="position:absolute">1</span>
+    </Fragment>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user">{c.prev.user}</div>
+        <div class="msg msg--ai">{c.prev.ai}</div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" />
+    <Fragment slot="overlays">
+      {peeks.map((p) => (
+        <div class:list={['island__peek', p.cls, p.color, 'is-transient']} data-t={`peek-${p.id}`}>
+          <span class="peek__bell" data-ring="true" data-t={`bell-${p.id}`}><Icon name="bell" /></span>
+          <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{p.tab}</div><div class="peek__msg">{p.msg}</div></div>
+        </div>
+      ))}
+    </Fragment>
+  </Island>
+</Demo>

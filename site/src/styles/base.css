@@ -1,0 +1,130 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--bg);
+  scroll-padding-top: 88px;
+}
+html.lenis, html.lenis body { height: auto; }
+.lenis:not(.lenis-autoToggle).lenis-stopped { overflow: clip; }
+.lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--fs-body) / 1.58 var(--font-sans);
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+
+h1, h2, h3, h4, p, ul, ol, figure, blockquote, dl, dd { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+img, svg, video { display: block; max-width: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+::selection { background: light-dark(rgb(47 180 141 / 0.28), rgb(80 217 173 / 0.3)); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+.skip-link {
+  position: fixed; left: 16px; top: 12px; z-index: 100;
+  padding: 10px 16px; border-radius: 999px;
+  background: var(--btn-bg); color: var(--btn-ink); font-weight: 600;
+  transform: translateY(-160%);
+  transition: transform 0.25s var(--ease-out);
+}
+.skip-link:focus-visible { transform: none; }
+
+.container { width: min(100% - 2 * var(--gutter), var(--maxw)); margin-inline: auto; }
+
+/* Headings */
+.h-hero {
+  font-size: var(--fs-hero); font-weight: 680; line-height: 1.03; letter-spacing: -0.034em; word-spacing: 0.03em; text-wrap: balance;
+}
+.h-2 { font-size: var(--fs-h2); font-weight: 670; line-height: 1.05; letter-spacing: -0.035em; text-wrap: balance; }
+.h-3 { font-size: var(--fs-h3); font-weight: 650; line-height: 1.12; letter-spacing: -0.028em; text-wrap: balance; }
+.lede { font-size: var(--fs-lede); line-height: 1.5; color: var(--ink-2); text-wrap: pretty; max-width: 40ch; }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 0.6em;
+  font-size: var(--fs-eyebrow); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--mint);
+}
+.eyebrow::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--mint-fill);
+  box-shadow: 0 0 0 4px var(--mint-soft);
+}
+.muted { color: var(--ink-2); }
+
+/* Buttons */
+.btn {
+  --h: 56px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.65em;
+  min-height: var(--h); padding: 0 1.55em; border-radius: 999px;
+  font-size: 1.0625rem; font-weight: 620; letter-spacing: -0.01em; white-space: nowrap;
+  transition: transform 0.35s var(--ease-out), background-color 0.25s, box-shadow 0.35s var(--ease-out), border-color 0.25s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn svg { width: 1.15em; height: 1.15em; flex: none; }
+.btn--primary {
+  background: var(--btn-bg); color: var(--btn-ink);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.18) inset, 0 12px 28px -12px light-dark(rgb(20 19 15 / 0.6), rgb(80 217 173 / 0.45));
+}
+.btn--primary:hover { background: var(--btn-bg-hover); }
+.btn--ghost {
+  border: 1px solid var(--line-strong); color: var(--ink);
+  background: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.04));
+}
+.btn--ghost:hover { border-color: var(--ink-3); background: light-dark(#fff, rgb(255 255 255 / 0.08)); }
+/* The lift is for a pointer that hovers; on a touch screen a tapped button would keep it after the finger is gone. */
+@media (hover: hover) {
+  .btn--primary:hover, .btn--ghost:hover { transform: translateY(-2px); }
+}
+.btn:active { transform: translateY(0) scale(0.985); }
+.btn--sm { --h: 40px; font-size: 0.9375rem; padding: 0 1.1em; }
+/* A finger needs a bigger target than a pointer. */
+@media (pointer: coarse) { .btn--sm { --h: 44px; } }
+
+/* The cat */
+.cat { display: block; width: calc(44 * var(--u, 1px)); max-width: none; height: calc(36 * var(--u, 1px)); overflow: visible; }
+.cat .cat-fill { fill: var(--cat-fill, #fff); }
+.cat .cat-stroke { fill: none; stroke: var(--cat-fill, #fff); stroke-linecap: round; stroke-linejoin: round; }
+.cat .cat-seam { fill: none; stroke: #000; stroke-linecap: round; stroke-linejoin: round; }
+.cat .cat-eye { fill: #000; }
+.cat .cat-z { fill: none; stroke: var(--cat-fill, #fff); stroke-width: 1.1; stroke-linejoin: miter; stroke-linecap: butt; }
+.cat .cat-stripe-stroke { fill: none; stroke: var(--cat-stripe, #555); stroke-width: 0.9; stroke-linecap: butt; }
+.cat:not(.cat--striped) .cat-stripe-only { display: none; }
+
+/* Things that ease in as they enter the screen. Without script they are simply there; with motion reduced they only fade. */
+@media (prefers-reduced-motion: no-preference) {
+  .js:not(.is-reduced) .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.9s var(--ease-out), transform 0.9s var(--ease-out); transition-delay: var(--d, 0s); }
+  .js:not(.is-reduced) .reveal.is-in { opacity: 1; transform: none; }
+}
+.js.is-reduced .reveal:not(.is-in) { opacity: 0; }
+.js.is-reduced .reveal { transition: opacity 0.6s ease; }
+
+/* A change of theme cross-fades the whole page (where the browser can), instead of flipping every color at once. */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.42s; animation-timing-function: var(--ease-in-out); }
+
+/* Looping animations hold still while their part of the page is out of view (src/scripts/offscreen.ts). */
+.is-offscreen, .is-offscreen * { animation-play-state: paused !important; }
+
+@media (forced-colors: active) {
+  .btn, .pill, .chipbtn, .segment, .seg { border: 1px solid ButtonText; }
+  .btn--primary { forced-color-adjust: none; background: ButtonFace; color: ButtonText; }
+  .theme-toggle { border: 1px solid ButtonText; }
+}

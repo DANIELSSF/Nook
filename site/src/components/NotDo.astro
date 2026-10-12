@@ -1,0 +1,41 @@
+---
+import Icon from './Icon.astro';
+import { catMarkup } from '../cat/render';
+import { t } from '../i18n';
+
+const n = t.nots;
+---
+<section class="nots" id="lo-que-no-hace" aria-labelledby="nots-title">
+  <div class="nots__peek" data-vignette="peek" aria-hidden="true">
+    <div class="nots__peek-cat" set:html={catMarkup(undefined, undefined, { unit: 3.2 })} />
+  </div>
+  <div class="container">
+    <header class="section-head section-head--center reveal">
+      <p class="eyebrow">{n.eyebrow}</p>
+      <h2 class="h-2" id="nots-title">{n.title}</h2>
+      <p class="lede">{n.intro}</p>
+    </header>
+
+    <h3 class="nots__group reveal">{n.calmTitle}</h3>
+    <ul class="nots__cards">
+      {n.calm.map((c, i) => (
+        <li class="ncard reveal" style={`--d:${i * 0.07}s`}>
+          <span class="ncard__icon"><Icon name={c.icon as any} size={20} /></span>
+          <h4 class="ncard__title">{c.title}</h4>
+          <p class="ncard__text">{c.text}</p>
+          {'note' in c && c.note ? <p class="ncard__note">{c.note}</p> : null}
+        </li>
+      ))}
+    </ul>
+
+    <h3 class="nots__group reveal">{n.limitsTitle}</h3>
+    <ul class="nots__limits">
+      {n.limits.map((l, i) => (
+        <li class="limit-row reveal" style={`--d:${(i % 2) * 0.07}s`}>
+          <h4>{l.title}</h4>
+          <p>{l.text}</p>
+        </li>
+      ))}
+    </ul>
+  </div>
+</section>

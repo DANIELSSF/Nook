@@ -1,0 +1,102 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import Icon from '../Icon.astro';
+import { t, feature } from '../../i18n';
+import { TAB_ICONS, iconMarkup } from '../../lib/tabIcons';
+
+const item = feature('customize');
+const c = t.demo.customize;
+// The editor's colors, in its order (round the color wheel, the gray last). Each swatch wears its color class: the same `--tab` the island uses.
+const tints = ['mint', 'teal', 'sky', 'blue', 'violet', 'lavender', 'rose', 'coral', 'peach', 'sand', 'lime', 'gray'];
+// The island in miniature for the theme picker: its strip with the notch, a sheet (paper or black), a tab, two lines and the field.
+const mini = (light: boolean, diag = false) =>
+  `<span class="mini${light ? ' mini--light' : ''}${diag ? ' mini--diag' : ''}"><span class="mini__strip"><b></b><s></s><b></b></span><span class="mini__body"><u></u><em style="width:64px"></em><em style="width:46px"></em><i></i></span></span>`;
+const thumbs = [mini(true) + mini(false, true), mini(true), mini(false)];
+const themeIcons = ['auto', 'sun', 'moon'] as const;
+// The card's six tabs, in the app's order: Isla, Gato, Sonido, Permisos, Privacidad, Pantalla.
+const settingsIcons = ['sliders', 'paw', 'speaker', 'shield', 'eye-off', 'display'] as const;
+---
+<Demo id="customize" alt={item.alt} steps={item.steps} tint="violet" copy={c} h={510}>
+  <div class="skinscope" data-t="skin">
+    <Island id="island" state="open" working oh={232} iw="572px" class="tc-mint" tabs={[{ name: c.tabs[0]!.name, color: 'mint', active: true, id: 'tab-0', marks: ['dot', 'flame'] }, { name: c.tabs[1]!.name, color: 'blue', id: 'tab-1' }, { name: c.tabs[2]!.name, color: 'gray', id: 'tab-2' }]}>
+      <div slot="convo" class="island__convo" data-t="convo">
+        <div class="convo__list" data-t="list">
+          <div class="msg msg--user" data-t="m-user">{c.user}</div>
+          <div class="msg msg--ai">{c.ai}</div>
+        </div>
+      </div>
+      <IslandComposer slot="composer" />
+      <Fragment slot="overlays">
+        <div class="pop ctxmenu is-transient" data-t="menu">
+          {c.menu.map((m, i) => <div class="ctxmenu__row" data-t={`menu-${i}`}>{m}</div>)}
+        </div>
+        <div class="pop ctxmenu ctxmenu--more is-transient" data-t="menu2">
+          {c.moreMenu.map((m, i) => <div class="ctxmenu__row" data-t={`menu2-${i}`}>{m}</div>)}
+        </div>
+      </Fragment>
+    </Island>
+
+    {/* The editor is a popover of its own: it floats over the island and past its edge. */}
+    <div class="pop editor tc-mint is-transient" data-t="editor">
+      <div class="editor__title">{c.editorTitle}</div>
+      <div class="editor__who">
+        <span class="editor__preview" data-t="preview">
+          <svg class="tabicon is-on" data-t="pv-dot" data-icon="dot" viewBox="0 0 10 10" aria-hidden="true" focusable="false" set:html={iconMarkup('dot', null)} />
+          <svg class="tabicon" data-t="pv-flame" data-icon="flame" viewBox="0 0 10 10" aria-hidden="true" focusable="false" set:html={iconMarkup('flame', null)} />
+        </span>
+        <div class="field"><span data-t="name-field">{c.tabs[0]!.name}</span><i class="caret"></i></div>
+      </div>
+      <div class="editor__sec">
+        <div class="editor__head"><span class="editor__label">{c.colorLabel}</span><span class="editor__val" data-t="color-name">{c.colors[0]}</span></div>
+        <div class="swatches" data-t="swatches">
+          {tints.map((tint, i) => <i class:list={['sw', `tc-${tint}`, { 'is-on': i === 0 }]} data-t={`sw-${i}`}></i>)}
+        </div>
+      </div>
+      <div class="editor__sec">
+        <div class="editor__head"><span class="editor__label">{c.iconLabel}</span><span class="editor__val" data-t="icon-name">{c.icons[0]}</span></div>
+        <div class="icons" data-t="icons">
+          {TAB_ICONS.map((name, i) => (
+            <span class:list={['ic', { 'is-on': i === 0 }]} data-t={`ic-${i}`} aria-hidden="true">
+              <svg class="tabicon" data-t={`ic-${i}-svg`} data-icon={name} viewBox="0 0 10 10" focusable="false" set:html={iconMarkup(name, null)} />
+            </span>
+          ))}
+        </div>
+        <div class="editor__note">{c.iconNote}</div>
+      </div>
+      <div class="editor__sound" data-t="sound-row">
+        <span class="editor__sound-ic"><Icon name="speaker" class="is-live" /><Icon name="speaker-off" class="is-muted" /></span>
+        <span class="editor__sound-text"><b>{c.soundTitle}</b><small>{c.soundText}</small></span>
+        <span class="switch is-on" data-t="sound-switch"><i></i></span>
+      </div>
+      <div class="editor__foot">
+        <span class="editor__note">{c.keepNote}</span>
+        <span class="btn-default" data-t="done">{c.done}</span>
+      </div>
+    </div>
+
+    {/* The settings card hangs under the island, centred on the notch, so the island stays whole while something changes. */}
+    <div class="pop settings is-transient" data-t="settings">
+      <div class="settings__bar">
+        <div class="settings__tabs">
+          {settingsIcons.map((icon, i) => (
+            <span class:list={['stab', { 'is-on': i === 0 }]}><Icon name={icon} />{i === 0 ? <span>{c.settings.tabs[0]}</span> : null}</span>
+          ))}
+        </div>
+        <span class="settings__x"><Icon name="x" /></span>
+      </div>
+      <div class="settings__body">
+        <div class="editor__label">{c.settings.appearance}</div>
+        <div class="themes" data-t="themes">
+          {c.settings.themes.map((name, i) => (
+            <span class:list={['theme', { 'is-on': i === 0 }]} data-t={`theme-${i}`}>
+              <span class="theme__thumb" set:html={thumbs[i]} />
+              <span class="theme__name"><Icon name={themeIcons[i]!} />{name}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+</Demo>

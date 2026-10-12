@@ -1,0 +1,48 @@
+---
+import Icon from './Icon.astro';
+import HomeScene from './scenes/HomeScene.astro';
+import FollowScene from './scenes/FollowScene.astro';
+import QuestionScene from './scenes/QuestionScene.astro';
+import ComposeScene from './scenes/ComposeScene.astro';
+import AgentsScene from './scenes/AgentsScene.astro';
+import AlertsScene from './scenes/AlertsScene.astro';
+import CustomizeScene from './scenes/CustomizeScene.astro';
+import QuitScene from './scenes/QuitScene.astro';
+import Personality from './Personality.astro';
+import { t } from '../i18n';
+
+const f = t.features;
+// Each feature keeps its own color whatever its place in the list.
+const tints: Record<string, string> = { home: 'sand', follow: 'mint', question: 'amber', compose: 'blue', agents: 'terracotta', alerts: 'rose', customize: 'violet', cat: 'sand' };
+---
+<section class="features" id="que-hace" aria-labelledby="features-title">
+  <header class="section-head container reveal">
+    <p class="eyebrow">{f.eyebrow}</p>
+    <h2 class="h-2" id="features-title">{f.title}</h2>
+    <p class="lede">{f.intro}</p>
+  </header>
+
+  {f.items.map((item, i) => (
+    <article class="feature container" id={`f-${item.id}`} data-tint={tints[item.id]} aria-labelledby={`f-${item.id}-title`}>
+      <div class="feature__text reveal">
+        <p class="kicker"><span class="kicker__n">{String(i + 1).padStart(2, '0')}</span>{item.kicker}</p>
+        <h3 class="h-3" id={`f-${item.id}-title`}>{item.title}</h3>
+        <p class="feature__lede">{item.text}</p>
+        <ul class="points">
+          {item.points.map((p) => <li><Icon name="check" size={16} />{p}</li>)}
+        </ul>
+      </div>
+      <div class="feature__demo reveal" style="--d: 0.12s">
+        {item.id === 'home' && <HomeScene />}
+        {item.id === 'follow' && <FollowScene />}
+        {item.id === 'question' && <QuestionScene />}
+        {item.id === 'compose' && <ComposeScene />}
+        {item.id === 'agents' && <AgentsScene />}
+        {item.id === 'alerts' && <AlertsScene />}
+        {item.id === 'customize' && <CustomizeScene />}
+        {item.id === 'cat' && <Personality />}
+        {item.id === 'cat' && <div class="feature__more"><QuitScene /></div>}
+      </div>
+    </article>
+  ))}
+</section>

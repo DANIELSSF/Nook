@@ -1,0 +1,76 @@
+---
+/**
+ * "Para empezar": what the island shows with no tab open. The first time, the greeting (the cat waves and says who it is and what it
+ * does); then the home (the cat on its stage, a line for the hour, a way to follow a terminal that is open, and three cards to start
+ * one); a card opens a session and the island fills with its tab. The words and measures are the app's (HomeView.swift).
+ */
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import HomeStage from '../HomeStage.astro';
+import Icon from '../Icon.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('home');
+const c = t.demo.home;
+const w = c.welcome;
+const rowIcons = ['terminal', 'bell', 'text-cursor'] as const;
+// The cards: who they open, and the icon that stands for it (the app's tile colors: Claude's terracotta, the plain terminal's mint).
+const cards = [
+  { cls: 'hcard--claude', icon: 'sparkle' },
+  { cls: 'hcard--codex', icon: 'code' },
+  { cls: '', icon: 'terminal' },
+] as const;
+---
+<Demo id="home" alt={item.alt} steps={item.steps} tint="sand" copy={c} h={400}>
+  <Island id="island" state="open" oh={266} iw="572px" class="island--home is-home" tabs={[{ name: c.tab.name, color: 'mint', active: true, id: 'tab-0' }]}>
+    <div slot="convo" class="island__convo" data-t="convo"><div class="convo__list" data-t="list"></div></div>
+    <IslandComposer slot="composer" focus />
+    <Fragment slot="overlays">
+      {/* The greeting, the first time Nook runs: the stage, who it is, what it does, and the way on. */}
+      <div class="hscreen" data-t="welcome">
+        <div class="welcome">
+          <HomeStage w={179} h={160} home={0.5} unit={3.8} cat="welcome-cat" bubble={w.hello} />
+          <div class="welcome__text">
+            <div class="welcome__title">{w.title}</div>
+            <div class="welcome__lede">{w.lede}</div>
+            <div class="welcome__rows">
+              {w.rows.map((row, i) => (
+                <div class="wrow"><Icon name={rowIcons[i]!} /><div><b>{row.title}</b><small>{row.text}</small></div></div>
+              ))}
+            </div>
+            <div class="welcome__actions">
+              <span class="hbtn" data-t="start">{w.start}<Icon name="arrow" /></span>
+              <span class="hint"><Icon name="drag" />{w.hint}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* The home, with no tab: the stage, a line for the hour and three cards. */}
+      <div class="hscreen is-transient" data-t="home">
+        <div class="home">
+          <div class="home__hero">
+            <HomeStage w={240} h={132} home={0.4} unit={3.76} cat="home-cat" />
+            <div class="home__words">
+              <div class="home__over" data-t="over">{c.greetings.afternoon}</div>
+              <div class="home__title">{c.title}</div>
+              <div class="home__lede">{c.lede}</div>
+              <span class="hconnect"><Icon name="link" />{c.connect}</span>
+              <span class="hint"><Icon name="drag" />{c.hint}</span>
+            </div>
+          </div>
+          <div class="home__cards">
+            {c.cards.map((card, i) => (
+              <div class:list={['hcard', cards[i]!.cls]} data-t={`card-${i}`}>
+                <span class="hcard__tile"><Icon name={cards[i]!.icon} /></span>
+                <span class="hcard__text"><b>{card.title}</b><small>{card.text}</small></span>
+                <span class="hcard__go"><Icon name="arrow-up-right" /></span>
+                <span class="hcard__wait"><i></i><i></i><i></i></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Fragment>
+  </Island>
+</Demo>

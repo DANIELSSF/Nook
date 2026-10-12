@@ -1,0 +1,51 @@
+---
+import Icon from './Icon.astro';
+import { catMarkup } from '../cat/render';
+import { t } from '../i18n';
+import { urls } from '../config';
+
+const f = t.footer;
+---
+<footer class="footer" id="pie">
+  <div class="container">
+    <div class="footer__top">
+      <div class="footer__brand">
+        <p class="footer__logo">Nook</p>
+        <p class="footer__tag">{f.tagline}</p>
+        <div class="footer__nap" data-vignette="sleep" data-strings={JSON.stringify({ say: t.cat.say })}>
+          <div class="footer__nap-cat" set:html={catMarkup(undefined, undefined, { title: f.catLabel, unit: 3.4 })} />
+          <p class="bubble bubble--small" data-bubble role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <nav class="footer__col" aria-label={t.a11y.footerNav}>
+        <h2 class="footer__h">{f.links}</h2>
+        <ul>
+          <li><a href={urls.repo} rel="noopener">{f.github} <Icon name="arrow-up-right" size={13} /></a></li>
+          <li><a href={urls.releases} rel="noopener">{f.releases} <Icon name="arrow-up-right" size={13} /></a></li>
+          <li><a href={urls.usage} rel="noopener">{f.usage} <Icon name="arrow-up-right" size={13} /></a></li>
+          <li><a href={urls.privacy} rel="noopener">{f.privacyDoc} <Icon name="arrow-up-right" size={13} /></a></li>
+          <li><a href={urls.notices} rel="noopener">{f.notices} <Icon name="arrow-up-right" size={13} /></a></li>
+        </ul>
+      </nav>
+      <div class="footer__col">
+        <h2 class="footer__h">{f.privacyTitle}</h2>
+        <p>{f.privacy}</p>
+        <h2 class="footer__h footer__h--gap">{f.licenseTitle}</h2>
+        <p>{f.license}</p>
+      </div>
+    </div>
+    <div class="footer__bottom">
+      <p>{f.built}</p>
+      <p>{f.independent}</p>
+      <div class="footer__tools">
+        <div class="motion-toggle" role="group" aria-label={t.motion.label}>
+          <span class="motion-toggle__label">{t.motion.label}</span>
+          <button type="button" class="seg" data-motion-set="auto" aria-pressed="true" title={t.motion.hint}>{t.theme.auto}</button>
+          <button type="button" class="seg" data-motion-set="full" aria-pressed="false">{t.motion.full}</button>
+          <button type="button" class="seg" data-motion-set="reduced" aria-pressed="false">{t.motion.reduced}</button>
+        </div>
+        <a class="footer__top-link" href="#top">{f.backToTop} <Icon name="chevron-up" size={14} /></a>
+      </div>
+    </div>
+  </div>
+</footer>

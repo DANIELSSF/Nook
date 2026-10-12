@@ -1,0 +1,16 @@
+---
+import Icon from './Icon.astro';
+import { t } from '../i18n';
+---
+<button
+  class="theme-toggle"
+  type="button"
+  data-theme-toggle
+  data-labels={JSON.stringify({ auto: t.theme.auto, light: t.theme.light, dark: t.theme.dark, pattern: t.theme.toggle })}
+  aria-label={t.theme.toggle.replace('{current}', t.theme.auto)}
+  title={t.theme.label}
+>
+  <span class="theme-toggle__icon ti-auto"><Icon name="auto" size={18} /></span>
+  <span class="theme-toggle__icon ti-light"><Icon name="sun" size={18} /></span>
+  <span class="theme-toggle__icon ti-dark"><Icon name="moon" size={18} /></span>
+</button>

@@ -1,0 +1,28 @@
+---
+/**
+ * The cat's stage, as the app draws it on the home and in the greeting: a black window onto the island (black in both themes: a white
+ * cat does not read on paper), a mint glow behind the cat, the mat it sits on, a few still stars, and the cat itself, drawn large.
+ * `cat` names the cat for a script (`{ do: 'cat', target }`); `home` is how far across the stage the cat sits, and `unit` how many
+ * pixels a unit of the cat's rig is. Where the cat can talk, a bubble comes out at the top right.
+ */
+import { catMarkup } from '../cat/render';
+
+export interface Props {
+  w: number;
+  h: number;
+  home: number;
+  unit: number;
+  cat: string;
+  bubble?: string;
+}
+const { w, h, home, unit, cat, bubble } = Astro.props;
+// Where the stars are (a fraction of the stage), how big, and how bright: the app's own.
+const stars = [[0.12, 0.2, 1.6, 0.34], [0.86, 0.3, 1.3, 0.24], [0.7, 0.14, 1.8, 0.3], [0.93, 0.68, 1.4, 0.2], [0.22, 0.52, 1.2, 0.2], [0.55, 0.1, 1.2, 0.18]] as const;
+---
+<div class="hstage" style={`--hw:${w}px;--hh:${h}px;--home:${home};--u:${unit}px`}>
+  <i class="hstage__glow"></i>
+  <i class="hstage__mat"></i>
+  {stars.map(([x, y, size, alpha]) => <i class="hstage__star" style={`left:${x * 100}%;top:${y * 100}%;width:${size}px;height:${size}px;opacity:${alpha}`}></i>)}
+  <div class="hstage__cat" data-stage-cat={cat} set:html={catMarkup()} />
+  {bubble ? <span class="hbubble is-transient" data-t={`${cat}-bubble`}>{bubble}</span> : null}
+</div>

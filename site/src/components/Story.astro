@@ -1,0 +1,117 @@
+---
+import Icon from './Icon.astro';
+import Island from './Island.astro';
+import { catMarkup } from '../cat/render';
+import { CURSOR_SVG } from '../demo/cursor';
+import { t } from '../i18n';
+
+const s = t.story;
+const w = s.windows;
+const beatIcons = ['sun', 'sun', 'sun', 'sun', 'moon'] as const;
+const lines = [
+  ['prompt', '~/sitio ❯ claude'],
+  ['dim', '✻ Claude Code · v2.1.292'],
+  ['user', '> Agrega una página de precios'],
+  ['ai', '⏺ Leyendo src/pages/index.astro'],
+  ['dim', '  ⎿ 214 líneas'],
+  ['ai', '⏺ Editando src/pages/precios.astro'],
+  ['dim', '  ⎿ Añadidas 4 líneas, quitada 1'],
+  ['ai', '⏺ Probando el sitio en local'],
+  ['dim', '  ⎿ 12 pruebas, todas bien'],
+  ['ai', '⏺ Listo. La página de precios ya está.'],
+] as const;
+---
+<section class="story" id="gatito" aria-labelledby="story-title" data-story>
+  <header class="story__intro container reveal">
+    <p class="eyebrow">{s.eyebrow}</p>
+    <h2 class="h-2" id="story-title">{s.title}</h2>
+    <p class="lede">{s.intro}</p>
+  </header>
+
+  <div class="story__track" data-track style={`--beats:${s.beats.length}`}>
+    <div class="story__stage" data-stage role="img" aria-label={s.sceneLabel}>
+      <div class="sky sky--night" data-sky="night"></div>
+      <div class="sky sky--dusk" data-sky="dusk"></div>
+      <div class="sky sky--day" data-sky="day"></div>
+      <div class="sky sky--dawn" data-sky="dawn"></div>
+      <div class="stars" data-stars></div>
+      <div class="orb orb--sun" data-orb="sun"></div>
+      <div class="orb orb--moon" data-orb="moon"></div>
+      <div class="layer clouds" data-layer="clouds"><i class="cloud c1"></i><i class="cloud c2"></i><i class="cloud c3"></i></div>
+      <div class="layer far" data-layer="far">
+        <i class="ghost g1"></i><i class="ghost g2"></i><i class="ghost g3"></i>
+      </div>
+      <div class="desk desk--story">
+        <div class="desk__menubar">
+          <i class="desk__dot"></i><i class="desk__bar desk__bar--bold"></i><i class="desk__bar"></i><i class="desk__bar"></i><i class="desk__bar"></i>
+          <span class="desk__spacer"></span><i class="desk__bar desk__bar--sm"></i><i class="desk__bar desk__bar--sm"></i><span class="desk__clock">9:41</span>
+        </div>
+      </div>
+
+      <div class="win win--terminal" data-win="terminal">
+        <div class="win__bar" data-ledge><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">{w.terminal} — {w.terminalTab}</span></div>
+        <div class="win__body"><div class="term" data-term>
+          {lines.map(([kind, text]) => <div class={`term__line term__line--${kind}`}>{text}</div>)}
+          <div class="term__line term__line--prompt"><span class="term__caret"></span></div>
+        </div></div>
+        <div class="win__connected" data-connected><i></i>{w.connected}</div>
+      </div>
+
+      <div class="win win--user" data-win="user">
+        <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">{w.other}</span></div>
+        <div class="win__body win__body--doc">
+          <div class="doc__h"></div>
+          <div class="doc__line" data-doc-line style="--w:92%"></div>
+          <div class="doc__line" data-doc-line style="--w:78%"></div>
+          <div class="doc__img"></div>
+          <div class="doc__line" data-doc-line style="--w:64%"></div>
+          <div class="doc__line" data-doc-line style="--w:86%"></div>
+        </div>
+      </div>
+
+      <div class="night-veil" data-veil></div>
+      <div class="story__island">
+        <Island id="story-island" state="collapsed" working oh={300} iw="min(572px, calc(100vw - 24px))" tabs={[{ name: w.tab, color: 'mint', active: true }]}>
+          <Fragment slot="notch-right">
+            <span class="dots" data-t="dots" data-on="true"><i></i><i></i><i></i></span>
+            <span class="badge is-transient" data-t="badge" style="position:absolute">1</span>
+            <span class="badge badge--ask is-transient" data-t="badge2" style="position:absolute">2</span>
+          </Fragment>
+          <div slot="convo" class="island__convo"></div>
+          <div slot="composer"></div>
+          <Fragment slot="overlays">
+            <div class="island__peek peek--ok is-transient" data-t="peek-ok">
+              <span class="peek__bell" data-ring="true"><Icon name="bell" /></span>
+              <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{w.tab}</div><div class="peek__msg">{w.alertDone}</div></div>
+            </div>
+            <div class="island__peek peek--ask is-transient" data-t="peek-ask">
+              <span class="peek__bell" data-ring="true"><Icon name="bell" /></span>
+              <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{w.tab}</div><div class="peek__msg">{w.alertAsk}</div></div>
+            </div>
+          </Fragment>
+        </Island>
+      </div>
+
+      <div class="story-cat" data-story-cat><div class="story-cat__inner" data-story-cat-inner set:html={catMarkup(undefined, undefined, {})} /></div>
+      <div class="story-cursor" data-story-cursor aria-hidden="true" set:html={CURSOR_SVG} />
+      <div class="layer fg" data-layer="fg"><i class="bokeh b1"></i><i class="bokeh b2"></i><i class="bokeh b3"></i><i class="bokeh b4"></i></div>
+
+      <div class="caps" aria-hidden="true">
+        {s.beats.map((b, i) => (
+          <div class="cap" data-cap={i}>
+            <p class="cap__part"><Icon name={beatIcons[i]!} size={15} />{b.part}</p>
+            <p class="cap__title">{b.title}</p>
+            <p class="cap__text">{b.text}</p>
+          </div>
+        ))}
+      </div>
+      <div class="beat-dots" aria-hidden="true">{s.beats.map((_, i) => <i data-dot={i}></i>)}</div>
+    </div>
+  </div>
+
+  <ol class="story__list container" aria-label={t.a11y.story}>
+    {s.beats.map((b) => (
+      <li><span class="story__part">{b.part}</span><strong>{b.title}</strong><span>{b.text}</span></li>
+    ))}
+  </ol>
+</section>

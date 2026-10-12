@@ -1,0 +1,31 @@
+{
+  "name": "nook-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Landing page for Nook: Astro + GSAP + Lenis, static output.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "assets": "node scripts/make-assets.mjs",
+    "export:demos": "node scripts/export-demos.mjs",
+    "compare:cat": "node scripts/compare-cat.mjs"
+  },
+  "dependencies": {
+    "astro": "7.3.8",
+    "gsap": "3.15.0",
+    "lenis": "1.3.26"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "ffmpeg-static": "5.3.0",
+    "playwright": "1.64.0",
+    "sharp": "0.35.5",
+    "typescript": "6.0.3"
+  }
+}

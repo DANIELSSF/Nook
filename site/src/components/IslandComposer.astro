@@ -1,0 +1,40 @@
+---
+/** The message field: the text on top, and below it the state of Claude, the four round chips, the keyboard, the mic and send. */
+import Icon from './Icon.astro';
+
+export interface Props {
+  placeholder?: string;
+  status?: string;
+  busy?: boolean;
+  /** Which chips to draw (Claude tabs have all four). */
+  chips?: boolean;
+  /** The extra capsule for agents and shells goes in the `capsule` slot. */
+  focus?: boolean;
+  text?: string;
+  /** The label shown while a file is dragged over (scenes that drop files). */
+  drop?: string;
+}
+const { drop = '', placeholder = 'Mensaje o /comando para Claude…', status = 'Claude · en vivo · ↵ enviar', busy = false, chips = true, focus = false, text = '' } = Astro.props;
+---
+<div class:list={['composer', { 'is-focus': focus }]} data-t="composer">
+  {drop ? <div class="composer__drop" aria-hidden="true">{drop}</div> : null}
+  <div class="composer__text" data-t="field"><span class="typed" data-t="typed">{text}</span><i class="caret"></i><span class="ph">{placeholder}</span></div>
+  <div class="composer__row">
+    <span class:list={['composer__status', { 'is-busy': busy }]} data-t="status"><i></i><span data-t="status-text">{status}</span></span>
+    <slot name="capsule" />
+    <span class="composer__spacer"></span>
+    {chips ? (
+      <>
+        <span class="chip chip--mode" data-t="chip-mode"><Icon name="hand" /></span>
+        <span class="chip chip--model" data-t="chip-model"><Icon name="flower" /></span>
+        <span class="chip chip--ring" data-t="chip-effort">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5"/><path d="M8 2.4a5.6 5.6 0 0 1 5.3 3.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </span>
+        <span class="chip" data-t="chip-usage"><Icon name="gauge" /></span>
+      </>
+    ) : null}
+    <span class="kbd-ico" data-t="keys"><Icon name="keyboard" /></span>
+    <span class="mic" data-t="mic"><Icon name="mic" size={15} /></span>
+    <span class="send" data-t="send"><Icon name="send" /></span>
+  </div>
+</div>

@@ -1,0 +1,52 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import Icon from '../Icon.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('question');
+const c = t.demo.question;
+---
+<Demo id="question" alt={item.alt} steps={item.steps} tint="amber" copy={c}>
+  <div slot="desk">
+    <div class="desk__win" style="left: 92px; top: 112px; width: 456px; height: 236px;">
+      <div class="desk__win-bar"><i></i><i></i><i></i><span>{t.demo.alerts.other.title}</span></div>
+      <div class="desk__win-body">
+        <div class="desk__text desk__text--h">{t.demo.alerts.other.title}</div>
+        {t.demo.alerts.other.lines.map((l) => <div class="desk__text">{l}</div>)}
+        <div class="desk__line"></div><div class="desk__line" style="width:72%"></div><div class="desk__line" style="width:54%"></div>
+      </div>
+    </div>
+  </div>
+  <Island id="island" state="open" working oh={344} iw="572px" tabs={[{ name: c.alertTab, color: 'mint', active: true, question: true }]}>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user">{c.prev.user}</div>
+        <div class="msg msg--ai">{c.prev.ai}</div>
+        <div class="msg msg--out is-transient" data-t="m-answer">{c.answered}</div>
+        <div class="msg msg--ai is-transient" data-t="m-reply">{c.reply}</div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" status="Claude · esperando tu respuesta" />
+    <Fragment slot="overlays">
+      <div class="island__peek peek--ask is-transient" data-t="peek">
+        <span class="peek__bell" data-ring="true"><Icon name="bell" /></span>
+        <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{c.alertTab}</div><div class="peek__msg">{c.alertMsg}</div></div>
+      </div>
+      <div class="qcard" data-t="card">
+        <div class="qcard__bar"><span class="qcard__cancel">{c.cancel}</span><Icon name="chevron-down" size={14} /></div>
+        <div class="qcard__label">{c.label}</div>
+        <div class="qcard__title">{c.title}</div>
+        <div class="qopts">
+          {c.options.map((o, i) => (
+            <div class:list={['qopt', { 'is-marked': i === 0 }]} data-t={`opt-${i}`}>
+              <span class="qopt__n">{i + 1}</span>
+              <div><div class="qopt__t">{o.title}</div><div class="qopt__d">{o.text}</div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Fragment>
+  </Island>
+</Demo>

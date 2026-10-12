@@ -1,0 +1,31 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('follow');
+const c = t.demo.follow;
+---
+<Demo id="follow" alt={item.alt} steps={item.steps} tint="mint" copy={c}>
+  <Island id="island" state="open" oh={316} iw="572px" tabs={[{ name: c.tabs[0]!.name, color: 'mint', active: true }]}>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user" data-t="m-prev-user">{c.prev.user}</div>
+        <div class="msg msg--ai" data-t="m-prev-ai">{c.prev.ai}</div>
+        <div class="msg msg--user" data-t="m-user">{c.typed}<span class="tag tag--send is-transient" data-t="m-tag">{c.sending}</span></div>
+        <div class="msg msg--tool" data-t="m-tool1">{c.tool1}</div>
+        <div class="msg msg--out" data-t="m-out1">{c.out1}</div>
+        <div class="msg msg--tool" data-t="m-tool2">{c.tool2}</div>
+        <div class="msg msg--out" data-t="m-out2">{c.out2}</div>
+        <div class="diff" data-t="m-diff">
+          {c.diff.map((row) => (
+            <div class:list={['diff__row', `diff__row--${row.kind}`]} data-t="m-diff-row"><span class="diff__n">{row.n}</span><span>{row.kind === 'add' ? '+ ' : '- '}{row.code}</span></div>
+          ))}
+        </div>
+        <div class="msg msg--ai" data-t="m-answer">{c.answer}</div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" status={c.done} />
+  </Island>
+</Demo>

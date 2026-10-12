@@ -1,0 +1,34 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import Icon from '../Icon.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('compose');
+const c = t.demo.compose;
+---
+<Demo id="compose" alt={item.alt} steps={item.steps} tint="blue" copy={c}>
+  <Island id="island" state="open" oh={316} iw="572px" tabs={[{ name: 'Claude Code', color: 'blue', active: true }]}>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user">{c.prev.user}</div>
+        <div class="msg msg--ai">{c.prev.ai}</div>
+        <div class="msg msg--user is-transient" data-t="m-user">{c.lead}{c.path}<span class="tag tag--send is-transient" data-t="m-tag">{c.sending}</span></div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" drop={c.drop} />
+    <Fragment slot="overlays">
+      <div class="pop slash is-transient" data-t="slash">
+        {c.menu.map((m, i) => (
+          <div class:list={['slash__row', { 'is-sel': i === 0 }]}>
+            <span class="slash__name">/<b>{m.name.slice(0, 1)}</b>{m.name.slice(1)}</span>
+            {m.args ? <span class="slash__args">{m.args}</span> : null}
+            <span class="slash__desc">{m.text}</span>
+          </div>
+        ))}
+      </div>
+    </Fragment>
+  </Island>
+  <div class="filechip" data-t="filechip"><Icon name="file" /> {c.file}</div>
+</Demo>

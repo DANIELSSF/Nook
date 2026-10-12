@@ -1,0 +1,102 @@
+---
+/**
+ * The island: the black shape that hangs from the notch, with the cat in its left wing, the tab row, the conversation and the
+ * message field. Scenes fill the `convo` and `composer` slots and add popovers in `overlays`. Everything here is decorative
+ * markup for a demo of the app, so it is hidden from assistive technology; the demo's text alternative lives next to it.
+ *
+ * The body is black, like the shell. A scene that shows the app's light theme wraps itself in a `.skinscope` that gets `is-paper`
+ * (see island.css): the body turns to paper inside the black shell, and the colors cross-fade as it does.
+ */
+import Icon from './Icon.astro';
+import { catMarkup, type Look } from '../cat/render';
+import { iconMarkup, type TabIconName } from '../lib/tabIcons';
+
+export interface TabDef {
+  name: string;
+  color?: string;
+  active?: boolean;
+  /** Subagents working in the tab: a small badge with the Claude spinner and the count. */
+  agents?: number;
+  /** A question waits in this tab. */
+  question?: boolean;
+  /** The tab's alert sound is off: a slashed speaker follows its name (a script can switch it with `is-on` on `{id}-mute`). */
+  muted?: boolean;
+  closable?: boolean;
+  id?: string;
+  /** The icons the tab can wear during the scene (the first shows at first; a script switches with `is-on`). Without it, a dot. */
+  marks?: TabIconName[];
+}
+
+export interface Props {
+  state?: 'open' | 'collapsed' | 'peek' | 'tall';
+  tabs?: TabDef[];
+  /** The three dots wave and the status says the tab is busy. */
+  working?: boolean;
+  /** Height of the open island and of its tallest state, in px. */
+  oh?: number;
+  th?: number;
+  /** CSS length for the island's width. */
+  iw?: string;
+  look?: Look;
+  class?: string;
+  id?: string;
+  /** Renders real buttons for the controls (the hero's island is interactive). */
+  interactive?: boolean;
+  labels?: { collapse: string; pin: string; cat: string };
+}
+
+const {
+  state = 'open', tabs = [{ name: 'Claude Code', color: 'mint', active: true }], working = false, oh, th, iw, look,
+  class: cls, id, interactive = false, labels = { collapse: 'Recoger la isla', pin: 'Mantener abierta', cat: 'El gato de Nook' },
+} = Astro.props;
+const activeTab = tabs.find((t) => t.active) ?? tabs[0];
+const style = [oh ? `--oh:${oh}px` : '', th ? `--th:${th}px` : oh ? `--th:${oh}px` : '', iw ? `--iw:${iw}` : ''].filter(Boolean).join(';');
+const cat = catMarkup(look);
+---
+<div class:list={['island', cls, `tc-${activeTab?.color ?? 'mint'}`]} data-island data-state={state} data-t={id ?? 'island'} style={style}>
+  <div class="island__rim"></div>
+  <div class="island__shape"></div>
+  <div class="island__paper" aria-hidden="true"><i></i></div>
+  <div class="island__content">
+    <div class="island__strip" data-t="strip">
+      <div class="island__cat" data-t="cat" data-cat-host set:html={cat} />
+      <i class="island__lens"></i>
+      <div class="island__right island__right--compact" data-t="notch-right">
+        <slot name="notch-right"><span class="dots" data-on={working ? 'true' : 'false'}><i></i><i></i><i></i></span></slot>
+      </div>
+      <div class="island__right island__right--open" data-t="strip-right">
+        <span class="dots" data-t="dots" data-on={working ? 'true' : 'false'}><i></i><i></i><i></i></span>
+        <span class="island__ctl"><Icon name="pin" /></span>
+        {interactive
+          ? <button type="button" class="island__ctl" data-island-collapse aria-label={labels.collapse}><Icon name="chevron-up" /></button>
+          : <span class="island__ctl" data-t="collapse"><Icon name="chevron-up" /></span>}
+      </div>
+    </div>
+    <div class="island__panel" data-t="panel">
+      <div class="island__tabs" data-t="tabs">
+        {tabs.map((t, i) => (
+          <span class:list={['tab', `tc-${t.color ?? 'mint'}`, { 'is-active': t.active }]} data-t={t.id ?? `tab-${i}`}>
+            {t.marks
+              ? <span class="tab__mark" data-t={`${t.id ?? `tab-${i}`}-mark`}>
+                  {t.marks.map((m, k) => <svg class:list={['tabicon', { 'is-on': k === 0 }]} data-t={`${t.id ?? `tab-${i}`}-icon-${m}`} data-icon={m} viewBox="0 0 10 10" aria-hidden="true" focusable="false" set:html={iconMarkup(m, null)} />)}
+                </span>
+              : <i class="tab__dot" data-t={`${t.id ?? `tab-${i}`}-dot`}></i>}
+            <span class="tab__name" data-t={`${t.id ?? `tab-${i}`}-name`}>{t.name}</span>
+            <span class:list={['tab__mute', { 'is-on': t.muted }]} data-t={`${t.id ?? `tab-${i}`}-mute`}><Icon name="speaker-off" /></span>
+            {t.agents ? <span class="tab__badge" data-t={`${t.id ?? `tab-${i}`}-badge`}><span data-spin="true"><Icon name="spark" /></span>{t.agents}</span> : null}
+            {t.question ? <span class="tab__q" data-t={`${t.id ?? `tab-${i}`}-q`}>?</span> : null}
+            {t.closable !== false && t.active ? <Icon name="x" class="tab__x" /> : null}
+          </span>
+        ))}
+        <div class="island__tab-actions">
+          <span class="island__ctl" data-t="plus"><Icon name="plus" /><Icon name="chevron-down" /></span>
+          <span class="island__ctl"><Icon name="window" /></span>
+          <span class="island__ctl" data-t="more"><Icon name="ellipsis" /><Icon name="chevron-down" /></span>
+        </div>
+      </div>
+      <slot name="convo" />
+      <slot name="composer" />
+    </div>
+    <slot name="overlays" />
+  </div>
+</div>

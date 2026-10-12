@@ -1,0 +1,116 @@
+/*
+ * The demo frame: a window on a soft wallpaper, like a Recordly export. The wallpaper takes a tint per feature; the screen
+ * inside follows the page theme (a light or a dark desktop), while the island on it is black (a scene may turn its body to paper).
+ */
+.demo { --w0: light-dark(#e8efe9, #0d1412); --w1: light-dark(#bdeedb, #0f4a3a); --w2: light-dark(#f8dcc2, #3d2a22); --screen-a: light-dark(#cbd8ee, #1b2c47); --screen-b: light-dark(#e6e0f1, #2a2447); --screen-c: light-dark(#f2dccf, #46293a); display: block; width: 100%; }
+.demo[data-tint='amber'] { --w0: light-dark(#f1ece0, #15120b); --w1: light-dark(#fbe2a8, #5a4310); --w2: light-dark(#f8c7c0, #4a2420); }
+.demo[data-tint='blue'] { --w0: light-dark(#e6edf4, #0c1118); --w1: light-dark(#bcd9fb, #123a63); --w2: light-dark(#e1d0f6, #2f2358); }
+.demo[data-tint='terracotta'] { --w0: light-dark(#f2e9e2, #15100d); --w1: light-dark(#f7c7ae, #5a2a18); --w2: light-dark(#f6e2b8, #4b3a14); }
+.demo[data-tint='rose'] { --w0: light-dark(#f2e7ec, #150e12); --w1: light-dark(#f7c3d8, #5a1f3a); --w2: light-dark(#d9d0f7, #2b2358); }
+.demo[data-tint='violet'] { --w0: light-dark(#ebe8f4, #0f0d18); --w1: light-dark(#d4c8f8, #35286a); --w2: light-dark(#bde6f4, #123b4a); }
+.demo[data-tint='sand'] { --w0: light-dark(#f1ece0, #14120c); --w1: light-dark(#ecd9a0, #4d3f12); --w2: light-dark(#bfe9d6, #15483a); }
+
+.demo__frame { --pad: clamp(14px, 3.6vw, 36px); position: relative; isolation: isolate; border-radius: var(--radius-lg); padding: var(--pad); overflow: hidden; box-shadow: var(--shadow-lift), 0 0 0 1px var(--line); }
+.demo__wallpaper {
+  position: absolute; inset: 0; z-index: -1;
+  background:
+    radial-gradient(72% 90% at 10% 6%, var(--w1), transparent 64%),
+    radial-gradient(62% 80% at 96% 98%, var(--w2), transparent 66%),
+    var(--w0);
+}
+.demo__window {
+  position: relative; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 30px 54px -18px rgb(0 0 0 / 0.55), 0 12px 20px -10px rgb(0 0 0 / 0.35);
+  background: linear-gradient(155deg, var(--screen-a), var(--screen-b) 48%, var(--screen-c));
+}
+.demo__screen { position: relative; width: 100%; aspect-ratio: var(--ar, 8 / 5); overflow: hidden; contain: paint; }
+.demo__camera { position: absolute; left: 0; top: 0; width: var(--sw); height: var(--sh); transform-origin: 0 0; transform: scale(var(--k, 0.9)); }
+.demo__scene { position: relative; width: 100%; height: 100%; }
+.demo__scene .island { margin-top: 0; }
+
+/* The desktop behind the island: a menu bar and, in some scenes, a window of the visitor's own. */
+.desk { position: absolute; inset: 0; pointer-events: none; }
+.desk__menubar {
+  position: absolute; left: 0; right: 0; top: 0; height: 36px; display: flex; align-items: center; gap: 12px; padding: 0 18px;
+  background: light-dark(rgb(255 255 255 / 0.4), rgb(14 14 22 / 0.42));
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+}
+.desk__dot { width: 11px; height: 11px; border-radius: 50%; background: light-dark(rgb(30 30 40 / 0.55), rgb(255 255 255 / 0.6)); }
+.desk__bar { width: 34px; height: 7px; border-radius: 4px; background: light-dark(rgb(30 30 40 / 0.3), rgb(255 255 255 / 0.32)); }
+.desk__bar--bold { width: 44px; background: light-dark(rgb(30 30 40 / 0.5), rgb(255 255 255 / 0.55)); }
+.desk__bar--sm { width: 14px; }
+.desk__spacer { flex: 1; }
+.desk__clock { font: 600 11px/1 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.6), rgb(255 255 255 / 0.65)); letter-spacing: 0.02em; }
+.desk__win {
+  position: absolute; border-radius: 12px; overflow: hidden;
+  background: light-dark(rgb(255 255 255 / 0.86), rgb(28 30 40 / 0.82));
+  box-shadow: 0 0 0 1px light-dark(rgb(0 0 0 / 0.08), rgb(255 255 255 / 0.08)), 0 24px 40px -16px rgb(0 0 0 / 0.4);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+}
+.desk__win-bar { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; font: 600 11px/1 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.6), rgb(255 255 255 / 0.6)); }
+.desk__win-bar i { width: 9px; height: 9px; border-radius: 50%; background: #ff6058; }
+.desk__win-bar i:nth-child(2) { background: #ffbd2e; } .desk__win-bar i:nth-child(3) { background: #29c840; }
+.desk__win-bar span { margin-left: 8px; }
+.desk__win-body { padding: 10px 16px 16px; display: grid; gap: 9px; }
+.desk__line { height: 8px; border-radius: 4px; background: light-dark(rgb(30 30 40 / 0.14), rgb(255 255 255 / 0.16)); }
+.desk__line--h { height: 12px; width: 46%; background: light-dark(rgb(30 30 40 / 0.3), rgb(255 255 255 / 0.34)); margin-bottom: 4px; }
+.desk__text { font: 500 12px/1.5 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.78), rgb(255 255 255 / 0.78)); }
+.desk__text--h { font-weight: 700; font-size: 14px; }
+
+/* The cursor, its ripple, keystrokes and captions */
+.demo__cursor {
+  position: absolute; left: 0; top: 0; z-index: 40; width: 20px; height: 26px; margin: -1.7px 0 0 -2.4px; pointer-events: none;
+  opacity: 0; visibility: hidden; transform-origin: 2.4px 1.7px; filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.38));
+}
+.demo__cursor-inner { width: 100%; height: 100%; }
+.demo__cursor-inner svg { width: 100%; height: 100%; }
+.demo__ripple {
+  position: absolute; left: 0; top: 0; z-index: 39; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; pointer-events: none;
+  border: 2px solid rgb(255 255 255 / 0.9); background: rgb(255 255 255 / 0.18); opacity: 0; visibility: hidden;
+}
+.demo__ripple.is-right { border-color: rgb(255 214 130 / 0.95); background: rgb(255 214 130 / 0.2); }
+.demo__keys { position: absolute; right: calc(var(--pad) + 14px); bottom: calc(var(--pad) + 14px); z-index: 50; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+.demo__keychip {
+  display: inline-flex; gap: 5px; padding: 6px 7px; border-radius: 13px; opacity: 0; visibility: hidden;
+  background: rgb(22 26 24 / 0.82); border: 1px solid rgb(255 255 255 / 0.16);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 12px 26px -8px rgb(0 0 0 / 0.55);
+}
+.demo__keychip kbd {
+  min-width: 28px; height: 28px; padding: 0 9px; display: grid; place-items: center; border-radius: 8px;
+  font: 600 14px/1 var(--font-sans); color: #fff; background: rgb(255 255 255 / 0.15); box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.35);
+}
+.demo__caption { position: absolute; left: calc(var(--pad) + 14px); right: calc(var(--pad) + 150px); bottom: calc(var(--pad) + 14px); height: 32px; z-index: 50; pointer-events: none; }
+.demo__cap {
+  position: absolute; left: 0; bottom: 0; display: flex; align-items: center; gap: 9px; width: max-content; max-width: 100%; white-space: normal;
+  padding: 6px 13px 6px 7px; border-radius: 999px; opacity: 0; visibility: hidden;
+  font: 560 12.5px/1.3 var(--font-sans); color: #fff; letter-spacing: -0.005em;
+  background: rgb(22 26 24 / 0.78); border: 1px solid rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 12px 26px -10px rgb(0 0 0 / 0.5);
+}
+.demo__cap-n { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font: 700 11px/1 var(--font-sans); color: #04251a; background: var(--i-mint); }
+
+/* The steps: the text alternative of the animation. Visible when motion is reduced; read aloud always. */
+.demo__steps { counter-reset: step; display: grid; gap: 9px; margin-top: 20px; font-size: 0.9375rem; color: var(--ink-2); }
+.demo__steps li { counter-increment: step; display: flex; gap: 11px; align-items: baseline; }
+.demo__steps li::before {
+  content: counter(step); flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  font-size: 0.75rem; font-weight: 700; color: var(--mint); background: var(--mint-soft); transform: translateY(-1px);
+}
+:root.js:not(.is-reduced) .demo__steps {
+  position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.is-reduced .demo__cap { display: none; }
+
+/* Things that appear in scenes */
+.is-press { transform: scale(0.965); }
+
+/* On a phone the window is small: the caption moves under it, and the keys stay on the screen. */
+@media (max-width: 720px) {
+  .demo__frame { padding-bottom: calc(var(--pad) + 58px); }
+  .demo__caption { left: var(--pad); right: var(--pad); bottom: 14px; height: 40px; }
+  .demo__cap { font-size: 12px; padding: 5px 12px 5px 6px; }
+  .demo__keys { right: calc(var(--pad) + 8px); bottom: calc(var(--pad) + 58px + 8px); }
+  .demo__keychip kbd { min-width: 24px; height: 24px; font-size: 12px; }
+}

@@ -1,0 +1,56 @@
+---
+import { catMarkup } from '../cat/render';
+import { t, feature } from '../i18n';
+
+const p = t.personality;
+const item = feature('cat');
+const gestureOrder = ['glance', 'groom', 'yawn', 'stretch', 'scratch', 'startle', 'tailPlay', 'loaf', 'hunt', 'play', 'wave', 'nap', 'celebrate'] as const;
+const coatSwatch: Record<string, string> = { snow: '#ffffff', cream: '#f7e6c2', silver: '#b8c4d6', tabby: '#d1ccc2', ginger: '#f5b06b' };
+---
+<div class="personality" data-personality data-tint="sand" data-strings={JSON.stringify({ say: t.cat.say, wakeLabel: t.cat.wakeLabel })}>
+  <div class="stage" data-cat-stage>
+    <div class="stage__glow" aria-hidden="true"></div>
+    <div class="stage__floor" aria-hidden="true"></div>
+    <div class="stage__cat" data-cat-stage-cat set:html={catMarkup(undefined, undefined, { title: item.alt, unit: 7 })} />
+    <p class="bubble" data-bubble role="status" aria-live="polite"></p>
+    <p class="stage__hint">
+      <span class="hint-awake"><span class="hint-pointer">{p.hint}</span><span class="hint-touch">{p.hintTouch}</span></span>
+      <span class="hint-asleep"><span class="hint-pointer">{p.hintAsleep}</span><span class="hint-touch">{p.hintAsleepTouch}</span></span>
+    </p>
+  </div>
+  <div class="controls">
+    <div class="control">
+      <p class="control__label" id="pl-gestures">{p.gesturesLabel}</p>
+      <div class="chips" role="group" aria-labelledby="pl-gestures">
+        {gestureOrder.map((g) => <button type="button" class="chipbtn" data-gesture={g}>{p.gestures[g]}</button>)}
+      </div>
+    </div>
+    <div class="control">
+      <p class="control__label" id="pl-character">{p.characterLabel}</p>
+      <div class="segments" role="radiogroup" aria-labelledby="pl-character">
+        {(['curious', 'playful', 'calm', 'sleepy'] as const).map((c, i) => (
+          <button type="button" role="radio" class="segment" data-character={c} aria-checked={i === 0 ? 'true' : 'false'} title={p.characters[c].text}>{p.characters[c].name}</button>
+        ))}
+      </div>
+    </div>
+    <div class="control-row">
+      <div class="control">
+        <p class="control__label" id="pl-coat">{p.coatLabel}</p>
+        <div class="swatch-row" role="radiogroup" aria-labelledby="pl-coat">
+          {(['snow', 'cream', 'silver', 'tabby', 'ginger'] as const).map((c, i) => (
+            <button type="button" role="radio" class="coat" data-coat={c} aria-checked={i === 0 ? 'true' : 'false'} aria-label={p.coats[c]} title={p.coats[c]} style={`--c:${coatSwatch[c]}`}></button>
+          ))}
+        </div>
+      </div>
+      <div class="control">
+        <p class="control__label" id="pl-acc">{p.accessoryLabel}</p>
+        <div class="segments segments--small" role="radiogroup" aria-labelledby="pl-acc">
+          {(['none', 'collar', 'bow', 'glasses'] as const).map((a, i) => (
+            <button type="button" role="radio" class="segment" data-accessory={a} aria-checked={i === 0 ? 'true' : 'false'}>{p.accessories[a]}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+    <p class="control__note reduced-note">{p.reduced}</p>
+  </div>
+</div>

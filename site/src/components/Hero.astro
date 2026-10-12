@@ -1,0 +1,64 @@
+---
+import Icon from './Icon.astro';
+import Island from './Island.astro';
+import IslandComposer from './IslandComposer.astro';
+import { t } from '../i18n';
+import { urls } from '../config';
+
+const c = t.hero.conversation;
+---
+<section class="hero" id="top" aria-labelledby="hero-title" data-hero data-busy={c.busy} data-cat-label={t.hero.cat} data-wake-label={t.cat.wakeLabel}>
+  <div class="hero__bg" aria-hidden="true"></div>
+
+  <div class="hero__island">
+    <Island
+      id="hero-island"
+      class="hero-island"
+      state="collapsed"
+      iw="min(572px, calc(100vw - 2 * var(--gutter)))"
+      interactive
+      labels={{ collapse: t.hero.collapse, pin: t.hero.pin, cat: t.hero.cat }}
+      tabs={[{ name: c.tab, color: 'mint', active: true }]}
+    >
+      <div slot="convo" class="island__convo" data-t="convo" role="img" aria-label={t.hero.islandLabel}>
+        <div class="convo__list" data-t="list">
+          <div class="msg msg--info" data-t="info"><span class="dim">✻ Sonnet 5.5 · Max · sitio · v2.1.292</span></div>
+          <div class="msg msg--user" data-t="user">{c.user}</div>
+          <div class="msg msg--tool" data-t="tool1">{c.working[0]}</div>
+          <div class="msg msg--tool" data-t="tool2">{c.working[1]}</div>
+          <div class="msg msg--ai" data-t="reply1">{c.reply[0]}</div>
+          <div class="msg msg--ai" data-t="reply2">{c.reply[1]}</div>
+        </div>
+      </div>
+      <IslandComposer slot="composer" placeholder={c.placeholder} status={c.status} />
+    </Island>
+    <p class="hero__hint" data-hero-hint data-say={JSON.stringify({ mew: t.cat.say.mew, cheer: t.cat.say.cheer, wake: t.cat.say.wake, woke: t.cat.say.woke, light: t.cat.say.light, sleepy: t.cat.say.sleepy })} aria-live="polite">
+      <span class="hint-awake">
+        <span class="hint-pointer">{t.hero.hintPointer}</span>
+        <span class="hint-touch">{t.hero.hintTouch}</span>
+      </span>
+      <span class="hint-asleep">
+        <span class="hint-pointer">{t.hero.hintAsleepPointer}</span>
+        <span class="hint-touch">{t.hero.hintAsleepTouch}</span>
+      </span>
+    </p>
+  </div>
+
+  <div class="hero__copy container">
+    <p class="eyebrow" data-rise style="--i:0">{t.hero.eyebrow}</p>
+    <h1 class="h-hero" id="hero-title" data-rise style="--i:1"><span class="h-line">{t.hero.titleLines[0]}</span> <span class="h-line">{t.hero.titleLines[1]}</span></h1>
+    <p class="lede" data-rise style="--i:2">{t.hero.lede}</p>
+    <div class="hero__cta" data-rise style="--i:3">
+      <a class="btn btn--primary" href={urls.download} rel="noopener" data-download>
+        <Icon name="download" /> {t.hero.ctaPrimary}
+      </a>
+      <a class="btn btn--ghost" href={urls.repo} rel="noopener">
+        {t.hero.ctaSecondary} <Icon name="arrow-up-right" />
+      </a>
+    </div>
+    <ul class="hero__facts" data-rise style="--i:4">
+      {t.hero.facts.map((f) => <li>{f}</li>)}
+    </ul>
+    <p class="hero__nonmac" data-nonmac hidden>{t.download.nonMac}</p>
+  </div>
+</section>

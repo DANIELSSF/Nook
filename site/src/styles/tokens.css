@@ -1,0 +1,138 @@
+/*
+ * Design tokens. Light and dark are written once with light-dark(): the browser picks the side that matches the used
+ * color-scheme, which follows the system (`color-scheme: light dark`) unless the visitor chose a theme (`data-theme`).
+ *
+ * The palette is Nook's own: the island is black hardware; mint is the accent (done, on, Nook), terracotta is Claude,
+ * amber is a question, coral an error. On the light theme the page is a warm paper, as the app's light island is.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  /* The hero's title also minds the screen's height, so on a laptop the download button is in the first screen. */
+  --fs-hero: clamp(2.5rem, min(1.1rem + 5.4vw, 9.6vh), 5.5rem);
+  --fs-h2: clamp(2.05rem, 1.15rem + 3.4vw, 3.9rem);
+  --fs-h3: clamp(1.55rem, 1.1rem + 1.5vw, 2.3rem);
+  --fs-lede: clamp(1.125rem, 1.02rem + 0.55vw, 1.4rem);
+  --fs-body: 1.0625rem;
+  --fs-small: 0.9rem;
+  --fs-eyebrow: 0.8125rem;
+
+  /* Surfaces */
+  --bg: light-dark(#f3f0e9, #0a0c0b);
+  --bg-soft: light-dark(#ece8de, #0f1211);
+  --surface: light-dark(#ffffff, #151918);
+  --surface-2: light-dark(#f8f5ee, #1b201e);
+  --line: light-dark(rgb(28 27 24 / 0.12), rgb(255 255 255 / 0.1));
+  --line-strong: light-dark(rgb(28 27 24 / 0.22), rgb(255 255 255 / 0.2));
+  /* light-dark() takes colors only, so the shadows switch their color, not their whole value (a whole value made them vanish). */
+  --shadow-soft: 0 1px 2px light-dark(rgb(40 30 10 / 0.06), rgb(0 0 0 / 0.4));
+  --shadow-lift: 0 26px 64px -26px light-dark(rgb(60 40 10 / 0.28), rgb(0 0 0 / 0.8));
+
+  /* Ink */
+  --ink: light-dark(#1c1b18, #f2f5f3);
+  --ink-2: light-dark(rgb(28 27 24 / 0.78), rgb(242 245 243 / 0.74));
+  --ink-3: light-dark(rgb(28 27 24 / 0.67), rgb(242 245 243 / 0.6));
+
+  /* What colors say (text values read on the page; fill values are for what is drawn) */
+  --mint: light-dark(#1c745a, #51d9ad);
+  --mint-fill: light-dark(#2fb48d, #51d9ad);
+  --mint-soft: light-dark(rgb(47 180 141 / 0.16), rgb(81 217 173 / 0.14));
+  --terracotta: light-dark(#b74926, #e67855);
+  --terracotta-fill: light-dark(#d06a43, #e67855);
+  --amber: light-dark(#8a6617, #fdc860);
+  --amber-fill: light-dark(#e0a01a, #fdc860);
+  --coral: light-dark(#c03a3c, #f86a67);
+  --coral-fill: light-dark(#e0524f, #f86a67);
+  --info: light-dark(#186bb3, #7fbdfb);
+
+  /* Buttons: the primary one is the island itself on paper, and Nook's mint on black */
+  --btn-bg: light-dark(#14130f, #5be0b5);
+  --btn-ink: light-dark(#ffffff, #04251a);
+  --btn-bg-hover: light-dark(#2a2924, #7beac6);
+  --focus: light-dark(#17684f, #7beac6);
+
+  /*
+   * The island is hardware first: its strip, the collapsed island and the alert are black in any theme, and so is its body unless a
+   * scene turns it to paper (the app's light theme, island.css). Its palette is its own, independent of the page theme. The washes
+   * (hairlines, fills, hovers) are made of one set of channels, white on black and warm ink on paper.
+   */
+  --i-body: #050706;
+  --i-body-2: #0a0f0d;
+  --i-paper: #f3f0e9;
+  --i-ink: #f3f6f4;
+  --i-dim: rgb(255 255 255 / 0.56);
+  --i-faint: rgb(255 255 255 / 0.42);
+  --i-line: rgb(255 255 255 / 0.08);
+  --i-field: rgb(255 255 255 / 0.07);
+  --i-wash: 255 255 255;
+  --i-text: #e9efea;
+  --i-strong: #ffffff;
+  --i-chipink: #cfd6d2;
+  --i-ph: rgb(255 255 255 / 0.42);
+  --i-hair: rgb(255 255 255 / 0.12);
+  --i-cardline: rgb(229 246 235 / 0.07);
+  --i-cardshadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --i-user-mix: 22%;
+  --i-user-base: #000000;
+  --i-pop: rgb(20 24 22 / 0.98);
+  --i-pop-line: rgb(255 255 255 / 0.12);
+  --i-pop-shadow: 0 18px 40px -10px rgb(0 0 0 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --i-settings: #1b1b1b;
+  /* What colors say: the vivid ones read on black; `-fill` is for what is drawn and not read (a dot, a bar, a badge) */
+  --i-mint: #51d9ad;
+  --i-terracotta: #e67855;
+  --i-amber: #fdc860;
+  --i-coral: #f86a67;
+  --i-info: #7fbdfc;
+  --i-mint-fill: #51d9ad;
+  --i-terracotta-fill: #e67855;
+  --i-amber-fill: #fdc860;
+  --i-coral-fill: #f86a67;
+  /* Code in a diff */
+  --i-add-n: #7fe3b8;
+  --i-del-n: #f59a98;
+  --i-kw: #f2a07b;
+  --i-st: #a8dfb8;
+  --i-fn: #8fc7ff;
+
+  /* Layout */
+  /* The side margin; on a notched phone held sideways it also keeps clear of the notch and the rounded corners. */
+  --gutter: max(clamp(16px, 4.2vw, 40px), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+  --section: clamp(88px, 12vw, 176px);
+  --maxw: 1180px;
+  --radius: 20px;
+  --radius-lg: 30px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+
+/*
+ * Browsers without light-dark() (Safari before 17.5, older Chromium and Firefox) get the same palette spelled out per theme.
+ * Generated from the tokens above: keep the two in step.
+ */
+@supports not (color: light-dark(#000, #fff)) {
+  :root { --bg: #f3f0e9; --bg-soft: #ece8de; --surface: #ffffff; --surface-2: #f8f5ee; --line: rgb(28 27 24 / 0.12); --line-strong: rgb(28 27 24 / 0.22); --shadow-soft: 0 1px 2px rgb(40 30 10 / 0.06); --shadow-lift: 0 26px 64px -26px rgb(60 40 10 / 0.28); --ink: #1c1b18; --ink-2: rgb(28 27 24 / 0.78); --ink-3: rgb(28 27 24 / 0.67); --mint: #1c745a; --mint-fill: #2fb48d; --mint-soft: rgb(47 180 141 / 0.16); --terracotta: #b74926; --terracotta-fill: #d06a43; --amber: #8a6617; --amber-fill: #e0a01a; --coral: #c03a3c; --coral-fill: #e0524f; --info: #186bb3; --btn-bg: #14130f; --btn-ink: #ffffff; --btn-bg-hover: #2a2924; --focus: #17684f; }
+  :root[data-theme='dark'] { --bg: #0a0c0b; --bg-soft: #0f1211; --surface: #151918; --surface-2: #1b201e; --line: rgb(255 255 255 / 0.1); --line-strong: rgb(255 255 255 / 0.2); --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4); --shadow-lift: 0 26px 64px -26px rgb(0 0 0 / 0.8); --ink: #f2f5f3; --ink-2: rgb(242 245 243 / 0.74); --ink-3: rgb(242 245 243 / 0.6); --mint: #51d9ad; --mint-fill: #51d9ad; --mint-soft: rgb(81 217 173 / 0.14); --terracotta: #e67855; --terracotta-fill: #e67855; --amber: #fdc860; --amber-fill: #fdc860; --coral: #f86a67; --coral-fill: #f86a67; --info: #7fbdfb; --btn-bg: #5be0b5; --btn-ink: #04251a; --btn-bg-hover: #7beac6; --focus: #7beac6; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) { --bg: #0a0c0b; --bg-soft: #0f1211; --surface: #151918; --surface-2: #1b201e; --line: rgb(255 255 255 / 0.1); --line-strong: rgb(255 255 255 / 0.2); --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4); --shadow-lift: 0 26px 64px -26px rgb(0 0 0 / 0.8); --ink: #f2f5f3; --ink-2: rgb(242 245 243 / 0.74); --ink-3: rgb(242 245 243 / 0.6); --mint: #51d9ad; --mint-fill: #51d9ad; --mint-soft: rgb(81 217 173 / 0.14); --terracotta: #e67855; --terracotta-fill: #e67855; --amber: #fdc860; --amber-fill: #fdc860; --coral: #f86a67; --coral-fill: #f86a67; --info: #7fbdfb; --btn-bg: #5be0b5; --btn-ink: #04251a; --btn-bg-hover: #7beac6; --focus: #7beac6; }
+  }
+}
+
+/* More contrast on request: stronger hairlines, fuller secondary text. */
+@media (prefers-contrast: more) {
+  :root {
+    --line: light-dark(rgb(28 27 24 / 0.4), rgb(255 255 255 / 0.4));
+    --line-strong: light-dark(rgb(28 27 24 / 0.6), rgb(255 255 255 / 0.6));
+    --ink-2: light-dark(#1c1b18, #f2f5f3);
+    --ink-3: light-dark(rgb(28 27 24 / 0.85), rgb(242 245 243 / 0.85));
+  }
+}

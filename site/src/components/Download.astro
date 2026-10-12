@@ -1,0 +1,71 @@
+---
+import Icon from './Icon.astro';
+import { catMarkup } from '../cat/render';
+import { t } from '../i18n';
+import { urls, config } from '../config';
+
+const d = t.download;
+---
+<section class="download" id="descargar" aria-labelledby="download-title" data-download-section>
+  <div class="container">
+    <header class="section-head section-head--center reveal">
+      <p class="eyebrow">{d.eyebrow}</p>
+      <h2 class="h-2" id="download-title">{d.title}</h2>
+      <p class="lede">{d.lede}</p>
+    </header>
+
+    <div class="dcard reveal">
+      <div class="dcard__stage" data-vignette="download" data-strings={JSON.stringify({ say: t.cat.say, wakeLabel: t.cat.wakeLabel })}>
+        <div class="dcard__glow" aria-hidden="true"></div>
+        <div class="dcard__cat" set:html={catMarkup(undefined, undefined, { title: d.catLabel, unit: 6 })} />
+        <div class="dcard__floor" aria-hidden="true"></div>
+        <p class="bubble" data-bubble role="status" aria-live="polite"></p>
+      </div>
+      <div class="dcard__body">
+        <p class="dcard__file"><Icon name="file" size={15} /> {config.asset}</p>
+        <a class="btn btn--mint btn--xl" href={urls.download} rel="noopener" data-download>
+          <Icon name="download" size={20} /> {d.cta}
+        </a>
+        <p class="dcard__thanks" data-thanks role="status" aria-live="polite" hidden>{d.thanks}</p>
+        <p class="dcard__nonmac" data-nonmac hidden>{d.nonMac}</p>
+        <div class="dcard__links">
+          <a href={urls.repo} rel="noopener">{d.repo} <Icon name="arrow-up-right" size={14} /></a>
+          <a href={urls.releases} rel="noopener">{d.releases} <Icon name="arrow-up-right" size={14} /></a>
+        </div>
+        <div class="dcard__reqs">
+          <p class="dcard__reqs-title">{d.requirementsTitle}</p>
+          <ul>
+            {d.requirements.map((r) => <li><Icon name="check" size={15} />{r}</li>)}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="dguide">
+      <div class="dguide__steps reveal">
+        <h3 class="h-3">{d.stepsTitle}</h3>
+        <p class="dguide__intro">{d.stepsIntro}</p>
+        <ol class="steps">
+          {d.steps.map((s, i) => (
+            <li class="step">
+              <span class="step__n">{i + 1}</span>
+              <div><h4>{s.title}</h4><p>{s.text}</p></div>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <div class="dguide__perms reveal" style="--d: .1s">
+        <h3 class="h-3">{d.permissionsTitle}</h3>
+        <p class="dguide__intro">{d.permissionsIntro}</p>
+        <ul class="perms">
+          {d.permissions.map((p) => (
+            <li class="perm">
+              <div class="perm__head"><h4>{p.name}</h4><span class:list={['perm__tag', { 'perm__tag--req': p.need === d.needLabel.required }]}>{p.need}</span></div>
+              <p>{p.text}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>

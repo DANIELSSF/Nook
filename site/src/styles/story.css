@@ -1,0 +1,179 @@
+/*
+ * The story: a stage that stays put while the page scrolls past it. Everything on it is a layer that moves a different amount as
+ * you scroll (the sky, the sun, the clouds, ghosts of other windows far behind, the terminal, the visitor's own window, the
+ * blurred shapes in front), and the day goes by from dawn to night. The cat, the cursor and the island are driven from the
+ * scroll position by src/scripts/story.ts. With motion reduced it is one still scene and a list.
+ */
+.story { position: relative; }
+.story__intro { display: grid; gap: 18px; justify-items: center; text-align: center; padding-block: var(--section) clamp(48px, 7vw, 96px); }
+.story__intro .lede { max-width: 50ch; text-align: center; }
+.story__track { position: relative; height: calc(100svh * (var(--beats, 5) + 0.6)); }
+/*
+ * The stage is as tall as the screen with the browser's bars hidden (lvh), so no strip of page shows under it when a phone's
+ * toolbar slides away; what must stay in sight (the captions, the dots) sits above the toolbar's height (`--bar`).
+ * Its layout: `--cu` is the size of the cat's unit, `--fw`/`--fx` the frame the windows are laid out in (the whole width, up to
+ * a limit on very wide screens, centred), `--tt` the terminal's top: low enough that the cat sitting on it clears the notice the
+ * island drops.
+ */
+.story__stage {
+  position: sticky; top: 0; height: 100vh; height: 100lvh; overflow: hidden; isolation: isolate; color: #fff; background: #0b1226;
+  --sky-ink: #fff;
+  --bar: 0px;
+  --cu: clamp(3.3px, 0.2vw, 4.2px);
+  --fw: min(100%, 1680px);
+  --fx: calc((100% - var(--fw)) / 2);
+  --tt: max(28%, calc(116px + 34 * var(--cu)));
+}
+@supports (height: 100lvh) { .story__stage { --bar: calc(100lvh - 100svh); } }
+
+/* The sky: four skies stacked, the upper ones fade out one after another */
+.sky { position: absolute; inset: 0; z-index: 0; }
+.sky--dawn { background: linear-gradient(180deg, #2a2f60 0%, #5d5496 34%, #c9788a 66%, #f6b98d 100%); }
+.sky--day { background: linear-gradient(180deg, #1c4a82 0%, #3a82b4 46%, #8ccbdb 100%); }
+.sky--dusk { background: linear-gradient(180deg, #281f4f 0%, #763d76 40%, #df706b 76%, #f5a36a 100%); }
+.sky--night { background: linear-gradient(180deg, #050812 0%, #0c1630 55%, #172745 100%); }
+.stars { position: absolute; inset: 0; z-index: 1; opacity: 0; background-image:
+  radial-gradient(1.4px 1.4px at 8% 12%, #fff, transparent), radial-gradient(1px 1px at 17% 31%, #fff, transparent), radial-gradient(1.6px 1.6px at 24% 8%, #dfe8ff, transparent),
+  radial-gradient(1px 1px at 33% 22%, #fff, transparent), radial-gradient(1.4px 1.4px at 41% 14%, #fff, transparent), radial-gradient(1px 1px at 52% 6%, #fff, transparent),
+  radial-gradient(1.6px 1.6px at 61% 19%, #cfe0ff, transparent), radial-gradient(1px 1px at 69% 9%, #fff, transparent), radial-gradient(1.4px 1.4px at 77% 27%, #fff, transparent),
+  radial-gradient(1px 1px at 86% 13%, #fff, transparent), radial-gradient(1.6px 1.6px at 93% 24%, #dfe8ff, transparent), radial-gradient(1px 1px at 12% 44%, #fff, transparent),
+  radial-gradient(1.2px 1.2px at 29% 40%, #fff, transparent), radial-gradient(1px 1px at 47% 36%, #fff, transparent), radial-gradient(1.2px 1.2px at 66% 42%, #fff, transparent),
+  radial-gradient(1px 1px at 82% 46%, #fff, transparent), radial-gradient(1.4px 1.4px at 96% 40%, #fff, transparent), radial-gradient(1px 1px at 3% 26%, #fff, transparent);
+}
+.orb { position: absolute; left: 0; top: 0; z-index: 2; width: clamp(64px, 8vw, 116px); aspect-ratio: 1; margin: calc(clamp(64px, 8vw, 116px) / -2) 0 0 calc(clamp(64px, 8vw, 116px) / -2); border-radius: 50%; }
+.orb--sun { background: radial-gradient(circle at 42% 40%, #fffdf2 0%, #fff0c2 46%, #ffd99a 88%); box-shadow: 0 0 70px 22px rgb(255 214 150 / 0.28), 0 0 220px 70px rgb(255 190 130 / 0.14); opacity: 0.94; }
+.orb--moon { opacity: 0; background: radial-gradient(circle at 38% 36%, #ffffff 0%, #eef2ff 40%, #c4cde6 100%); box-shadow: 0 0 70px 18px rgb(190 205 255 / 0.28); width: clamp(46px, 5.6vw, 84px); margin: calc(clamp(46px, 5.6vw, 84px) / -2) 0 0 calc(clamp(46px, 5.6vw, 84px) / -2); }
+.layer { position: absolute; inset: 0; pointer-events: none; will-change: transform; transition: translate 1.4s var(--ease-out); }
+.clouds { z-index: 3; }
+.cloud { position: absolute; border-radius: 50%; background: radial-gradient(closest-side, rgb(255 255 255 / 0.5), transparent); filter: blur(10px); }
+.cloud.c1 { left: 6%; top: 17%; width: 30vw; height: 9vw; }
+.cloud.c2 { left: 56%; top: 12%; width: 26vw; height: 8vw; opacity: 0.8; }
+.cloud.c3 { left: 28%; top: 33%; width: 22vw; height: 6vw; opacity: 0.6; }
+.far { z-index: 4; }
+.ghost { position: absolute; border-radius: 14px; background: linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.05)); border: 1px solid rgb(255 255 255 / 0.12); filter: blur(2.5px); }
+.ghost.g1 { left: 64%; top: 22%; width: 24vw; height: 17vh; }
+.ghost.g2 { left: 1%; top: 50%; width: 19vw; height: 25vh; }
+.ghost.g3 { left: 42%; top: 66%; width: 22vw; height: 19vh; }
+.desk--story { z-index: 5; }
+.desk--story .desk__menubar { background: rgb(14 14 26 / 0.35); }
+
+/* Windows */
+.win {
+  position: absolute; z-index: 10; border-radius: 14px; overflow: hidden; will-change: transform;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 40px 70px -20px rgb(0 0 0 / 0.55), 0 14px 24px -12px rgb(0 0 0 / 0.4);
+}
+/* The windows are opaque: nothing behind one shows through it (a live backdrop blur was redone every frame as they drift, and a fill
+   that is not quite opaque let the terminal's lines read through the window over it). A faint sheen down the glass stands in for the frost. */
+.win--terminal { left: calc(var(--fx) + var(--fw) * 0.07); top: var(--tt); width: calc(var(--fw) * 0.5); height: clamp(150px, calc(100% - var(--tt) - 240px), 42%); overflow: visible; background: linear-gradient(180deg, #1b2022, #111516 40%, #0c0f10); }
+.win--terminal .win__body { border-radius: 0 0 14px 14px; }
+.win--user { left: calc(var(--fx) + var(--fw) * 0.62); top: calc(var(--tt) + 6%); width: calc(var(--fw) * 0.31); height: 34%; z-index: 11; background: linear-gradient(180deg, #fbfbf9, #f4f4f1); color: #1c1b18; opacity: 0; }
+.win__bar { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px; border-radius: 14px 14px 0 0; background: rgb(255 255 255 / 0.07); }
+.win--user .win__bar { background: rgb(0 0 0 / 0.05); }
+.win__lights { display: inline-flex; gap: 7px; }
+.win__lights i { width: 11px; height: 11px; border-radius: 50%; background: #ff6058; }
+.win__lights i:nth-child(2) { background: #ffbd2e; } .win__lights i:nth-child(3) { background: #29c840; }
+.win__title { flex: 1; margin-right: 54px; text-align: center; font: 600 12px/1 var(--font-sans); color: rgb(255 255 255 / 0.6); }
+.win--user .win__title { color: rgb(28 27 24 / 0.6); }
+.win__body { position: relative; height: calc(100% - 34px); overflow: hidden; }
+.term { padding: 14px 18px; font: 500 clamp(11px, 0.95vw, 13.5px) / 1.65 var(--font-mono); color: #d9e2dd; will-change: transform; }
+.term__line { white-space: pre; }
+.term__line--prompt { color: #8ee6c6; } .term__line--dim { color: rgb(217 226 221 / 0.45); } .term__line--user { color: #fff; font-weight: 700; }
+.term__line--ai { color: #e9efea; }
+.term__line--ai::first-letter { color: var(--i-terracotta); }
+.term__caret { display: inline-block; width: 8px; height: 1.15em; vertical-align: -0.2em; background: #8ee6c6; animation: caret 1s steps(2, jump-none) infinite; }
+.win__connected {
+  position: absolute; right: 16px; top: -42px; display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px 7px 11px; border-radius: 999px; opacity: 0; visibility: hidden;
+  font: 650 12.5px/1 var(--font-sans); color: #06241a; background: #5be0b5; box-shadow: 0 12px 28px -8px rgb(81 217 173 / 0.55);
+}
+.win__connected i { width: 8px; height: 8px; border-radius: 50%; background: #06241a; }
+.win__body--doc { padding: 16px 20px 18px; display: grid; align-content: start; gap: 11px; }
+.doc__h { height: 13px; width: 48%; border-radius: 6px; background: rgb(28 27 24 / 0.34); }
+.doc__line { height: 8px; width: var(--w, 80%); border-radius: 4px; background: rgb(28 27 24 / 0.14); transform-origin: 0 50%; }
+.doc__img { height: clamp(36px, 7vh, 72px); border-radius: 10px; background: linear-gradient(135deg, #9fd8c6, #b7a7ee 55%, #f4b79a); }
+.night-veil { position: absolute; inset: 0; z-index: 12; pointer-events: none; opacity: 0; background: linear-gradient(180deg, rgb(8 12 30 / 0.35), rgb(8 12 30 / 0.55)); }
+
+/* The island hangs from the top, in the middle */
+.story__island { position: absolute; top: 0; left: 50%; z-index: 20; width: min(572px, calc(100vw - 24px)); transform: translateX(-50%); --iw: min(572px, calc(100vw - 24px)); }
+.story__island .island { --oh: 300px; --th: 300px; }
+.story__island .island__panel { display: none; }
+
+/* The cat, the cursor, and what floats in front */
+.story-cat { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; --u: var(--cu); opacity: 0; }
+.story-cat__inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.story-cat .cat { position: absolute; left: calc(-22 * var(--u)); top: calc(-34 * var(--u)); filter: drop-shadow(0 6px 10px rgb(0 0 0 / 0.35)); }
+.story-cursor { position: absolute; left: 0; top: 0; z-index: 31; width: 20px; height: 26px; margin: -1.7px 0 0 -2.4px; opacity: 0; pointer-events: none; transform-origin: 2.4px 1.7px; filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.4)); }
+.story-cursor svg { width: 100%; height: 100%; }
+.fg { z-index: 32; }
+.bokeh { position: absolute; border-radius: 50%; filter: blur(22px); background: radial-gradient(closest-side, rgb(255 255 255 / 0.3), transparent); }
+.bokeh.b1 { left: -4%; top: 64%; width: 22vw; height: 22vw; }
+.bokeh.b2 { left: 80%; top: 6%; width: 16vw; height: 16vw; opacity: 0.8; }
+.bokeh.b3 { left: 38%; top: 80%; width: 26vw; height: 26vw; opacity: 0.7; }
+.bokeh.b4 { left: 94%; top: 58%; width: 14vw; height: 14vw; }
+
+/* Captions: one at a time, bottom left, over a soft scrim */
+.caps { position: absolute; left: max(var(--gutter), calc(var(--fx) + var(--gutter))); bottom: calc(clamp(30px, 8vh, 88px) + var(--bar) + env(safe-area-inset-bottom, 0px)); z-index: 40; width: min(27rem, calc(100% - 2 * var(--gutter) - 28px)); pointer-events: none; }
+.story__stage::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 56%; z-index: 39; pointer-events: none; background: linear-gradient(to top, rgb(3 6 18 / 0.72), rgb(3 6 18 / 0.4) 45%, transparent); }
+.cap { position: absolute; left: 0; bottom: 0; width: 100%; opacity: 0; visibility: hidden; }
+.cap__part { display: flex; align-items: center; gap: 0.55em; margin-bottom: 12px; font: 650 0.78rem/1 var(--font-sans); letter-spacing: 0.15em; text-transform: uppercase; color: #9ae8cb; }
+.cap__title { margin-bottom: 10px; font-size: clamp(1.7rem, 1.1rem + 2vw, 2.7rem); font-weight: 680; line-height: 1.06; letter-spacing: -0.032em; text-wrap: balance; }
+.cap__text { font-size: 1.0625rem; line-height: 1.55; color: rgb(255 255 255 / 0.84); text-wrap: pretty; }
+.beat-dots { position: absolute; right: max(calc(var(--gutter) - 4px), calc(var(--fx) + var(--gutter) - 4px)); top: 50%; z-index: 40; display: grid; gap: 11px; transform: translateY(-50%); }
+.beat-dots i { width: 6px; height: 6px; border-radius: 50%; background: rgb(255 255 255 / 0.32); transition: transform 0.4s var(--ease-out), background-color 0.4s; }
+.beat-dots i.is-on { background: #fff; transform: scale(1.5); }
+
+/* What a screen reader (and Reduce Motion) gets instead of the scroll: the beats, as a list */
+.story__list { counter-reset: beat; display: grid; gap: 14px; padding-block: 0; }
+.story__list li { display: grid; gap: 3px; }
+.story__part { font: 650 0.75rem/1 var(--font-sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--mint); }
+.story__list strong { font-size: 1.15rem; letter-spacing: -0.015em; }
+.story__list li span:last-child { color: var(--ink-2); }
+.story__list { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Very wide screens: the scene keeps its proportions in the middle, and the words grow a little with it. */
+@media (min-width: 1800px) {
+  .term { font-size: 15px; }
+  .win__title { font-size: 13px; }
+  .caps { width: 31rem; }
+  .cap__title { font-size: 3rem; }
+  .cap__text { font-size: 1.15rem; }
+}
+
+/* Narrow screens: the windows stack under the island and the captions take the bottom, the header steps aside */
+@media (max-width: 760px) {
+  .story__stage { --cu: 2.6px; --tt: max(19%, calc(112px + 34 * var(--cu))); }
+  .win--terminal { left: 5%; width: 90%; height: clamp(120px, calc(66% - var(--tt) - 40px), 34%); }
+  .win--user { left: 14%; width: 72%; top: calc(var(--tt) + 22%); height: clamp(72px, calc(66% - var(--tt) - 22%), 20%); }
+  .win__connected { top: -38px; }
+  .caps { width: calc(100% - 2 * var(--gutter)); bottom: calc(clamp(24px, 5vh, 48px) + var(--bar) + env(safe-area-inset-bottom, 0px)); }
+  .cap__text { font-size: 0.98rem; }
+  .beat-dots { top: auto; bottom: calc(18px + var(--bar) + env(safe-area-inset-bottom, 0px)); right: 50%; transform: translateX(50%); display: flex; gap: 9px; }
+  .ghost.g1 { top: 14%; } .cloud.c1 { top: 12%; }
+}
+/* Short phones: a smaller cat and tighter captions, so the windows and the words do not meet. */
+@media (max-width: 760px) and (max-height: 700px) {
+  .story__stage { --cu: 2.3px; }
+  .win--user { top: calc(var(--tt) + 15%); height: clamp(72px, calc(64% - var(--tt) - 15%), 22%); }
+  .cap__part { margin-bottom: 8px; }
+  .cap__title { font-size: 1.5rem; margin-bottom: 6px; }
+  .cap__text { font-size: 0.92rem; line-height: 1.45; }
+}
+/* Short screens (a phone on its side): the words take the left, the windows the right, clear of the notice the island drops in the
+   middle (the cat walks to the right of it), and low enough that the cat on the terminal is not cut by the top edge. */
+@media (max-height: 560px) and (min-width: 561px) {
+  .story__stage { --cu: 2px; --tt: max(19%, calc(12px + 34 * var(--cu))); }
+  .win--terminal { left: 50%; width: 46%; height: 46%; }
+  .win--user { left: 64%; top: 54%; width: 32%; height: 34%; }
+  .win__connected { top: 6px; right: calc(100% + 12px); }
+  .caps { width: min(24rem, 40%); bottom: calc(12% + env(safe-area-inset-bottom, 0px)); }
+  .cap__title { font-size: clamp(1.3rem, 3.2vw, 1.8rem); }
+  .cap__text { font-size: 0.9rem; line-height: 1.45; }
+  .term { font-size: 10.5px; }
+}
+@media (max-width: 899px) { .in-story .site-header { transform: translateY(-160%); opacity: 0; } .in-story .site-header:focus-within { transform: none; opacity: 1; } }
+
+/* Reduced motion, or no script: one still scene, and the beats listed below it */
+:is(.is-reduced, :root:not(.js)) .story__track { height: auto; }
+:is(.is-reduced, :root:not(.js)) .story__stage { position: relative; height: min(82svh, 760px); }
+:is(.is-reduced, :root:not(.js)) .caps, :is(.is-reduced, :root:not(.js)) .beat-dots { display: none; }
+:is(.is-reduced, :root:not(.js)) .story__list { position: static; width: min(100% - 2 * var(--gutter), var(--maxw)); height: auto; margin: clamp(36px, 5vw, 64px) auto 0; overflow: visible; clip-path: none; white-space: normal; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 22px; }
+.is-reduced .term__caret, .is-reduced .stars { animation: none; }

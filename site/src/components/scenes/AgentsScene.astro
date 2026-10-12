@@ -1,0 +1,62 @@
+---
+import Demo from '../Demo.astro';
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import { t, feature } from '../../i18n';
+
+const item = feature('agents');
+const c = t.demo.agents;
+const u = c.usage;
+---
+<Demo id="agents" alt={item.alt} steps={item.steps} tint="terracotta" copy={c}>
+  <Island id="island" state="open" oh={316} th={388} iw="572px" tabs={[{ name: c.tabs[0]!.name, color: 'mint', active: true, agents: 2 }, { name: c.tabs[1]!.name, color: 'blue' }]} working>
+    <div slot="convo" class="island__convo" data-t="convo">
+      <div class="convo__list" data-t="list">
+        <div class="msg msg--user">{c.prev.user}</div>
+        <div class="msg msg--ai">{c.prev.ai}</div>
+        <div class="msg msg--tool">Agent(explorador) <span class="dim">· Haiku</span></div>
+        <div class="msg msg--tool">Agent(revisor) <span class="dim">· Sonnet</span></div>
+        <div class="msg msg--tool">Agent(pruebas) <span class="dim">· Sonnet</span></div>
+      </div>
+    </div>
+    <IslandComposer slot="composer" busy status="Claude · esperando a 3 agentes">
+      <span slot="capsule" class="capsule" data-t="capsule">
+        <span class="capsule__dots"><i class="d-work" data-t="cd-0"></i><i class="d-work" data-t="cd-1"></i><i class="d-done" data-t="cd-2"></i></span>
+        <span data-t="capsule-text">{c.capsule}</span>
+      </span>
+    </IslandComposer>
+    <Fragment slot="overlays">
+      <div class="pop agents is-transient" data-t="agents">
+        <div class="agents__title">{c.listTitle}</div>
+        {c.agents.map((a, i) => (
+          <div class="agent" data-t={`agent-${i}`}>
+            <i class:list={['agent__dot', a.state === 'done' ? 'd-done' : 'd-work']} data-t={`ad-${i}`}></i>
+            <span class="agent__name">{a.name}<small>{a.meta}</small></span>
+            <span class="agent__time" data-t={`at-${i}`}>{a.time}</span>
+            <span class="agent__call" data-t={`ac-${i}`}>{a.call}</span>
+          </div>
+        ))}
+        <div class="agents__foot"><span class="btn-mini">{c.manage}</span></div>
+      </div>
+      <div class="usage is-transient" data-t="usage">
+        <div class="usage__head"><b>{u.title}</b><span>Claude Code<i class="live-dot"></i> {u.live}</span></div>
+        <div class="usage__limits">
+          {u.limits.map((l, i) => (
+            <div class="limit">
+              <div class="limit__name">{l.name}</div>
+              <div class="limit__pct">{l.pct} %</div>
+              <div class:list={['meter', { 'meter--warn': l.level === 'warn' }]}><div class="meter__fill" data-t={`meter-${i}`} data-pct={l.pct}></div></div>
+              <div class="limit__reset">{l.reset}</div>
+            </div>
+          ))}
+        </div>
+        <div class="usage__stats">
+          <div class="stat"><div class="stat__k">{u.cost}</div><div class="stat__v">{u.costValue}</div></div>
+          <div class="stat"><div class="stat__k">{u.duration}</div><div class="stat__v">{u.durationValue}</div></div>
+          <div class="stat"><div class="stat__k">{u.changes}</div><div class="stat__v">{u.changesValue}</div></div>
+          <div class="stat"><div class="stat__k">{u.context}</div><div class="stat__v">{u.contextValue}</div></div>
+        </div>
+      </div>
+    </Fragment>
+  </Island>
+</Demo>

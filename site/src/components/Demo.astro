@@ -1,0 +1,56 @@
+---
+/**
+ * The frame every demo plays in, in the style of a Recordly export: a window on a soft wallpaper, with rounded corners and a
+ * deep shadow. The window shows the top of a Mac screen (a menu bar, the island hanging from it) at a fixed design size that
+ * the camera scales to fit. The animated cursor, the ripple, the keystroke chips and the captions are drawn over it.
+ *
+ * With motion reduced the player shows one still frame and the steps are listed next to it. The list is always in the DOM:
+ * it is the text alternative of the animation.
+ */
+import { DESIGN } from '../demo/designs';
+import { CURSOR_SVG } from '../demo/cursor';
+import { t } from '../i18n';
+
+export interface Props {
+  id: string;
+  alt: string;
+  steps: string[];
+  tint?: 'mint' | 'amber' | 'blue' | 'terracotta' | 'rose' | 'violet' | 'sand';
+  /** What the scene's script needs to type or label (read as JSON by the player). */
+  copy?: unknown;
+  /** The scene's design height in px (its width is always `DESIGN.w`): a scene with a card under the island needs more room. */
+  h?: number;
+  class?: string;
+}
+const { id, alt, steps, tint = 'mint', copy = {}, h = DESIGN.h, class: cls } = Astro.props;
+---
+<figure class:list={['demo', cls]} data-demo={id} data-tint={tint} style={`--sw:${DESIGN.w}px;--sh:${h}px;--ar:${DESIGN.w} / ${h};--ratio:${(DESIGN.w / h).toFixed(4)}`}>
+  <div class="demo__frame">
+    <div class="demo__wallpaper" aria-hidden="true"></div>
+    <div class="demo__window" role="img" aria-label={alt}>
+      <div class="demo__screen" data-screen>
+        <div class="demo__camera" data-camera>
+          <div class="demo__scene" data-scene>
+            <div class="desk" aria-hidden="true">
+              <div class="desk__menubar">
+                <i class="desk__dot"></i><i class="desk__bar desk__bar--bold"></i><i class="desk__bar"></i><i class="desk__bar"></i><i class="desk__bar"></i>
+                <span class="desk__spacer"></span>
+                <i class="desk__bar desk__bar--sm"></i><i class="desk__bar desk__bar--sm"></i><span class="desk__clock">9:41</span>
+              </div>
+              <slot name="desk" />
+            </div>
+            <slot />
+            <div class="demo__ripple" data-ripple></div>
+            <div class="demo__cursor" data-cursor aria-hidden="true"><div class="demo__cursor-inner" data-cursor-inner set:html={CURSOR_SVG} /></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="demo__caption" data-caption aria-hidden="true"></div>
+    <div class="demo__keys" data-keys aria-hidden="true"></div>
+  </div>
+  <ol class="demo__steps" data-steps aria-label={t.a11y.demoCaptionsTitle}>
+    {steps.map((s) => <li>{s}</li>)}
+  </ol>
+  <script type="application/json" data-demo-copy set:html={JSON.stringify(copy)} />
+</figure>
