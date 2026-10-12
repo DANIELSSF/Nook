@@ -128,6 +128,8 @@ struct SessionRecapButton: View {
                 .overlay(alignment: .topTrailing) {
                     if open {
                         SessionRecapCard(text: text, isNew: openedAsNew, pasteboard: pasteboard, width: cardWidth, maxBodyHeight: maxBodyHeight)
+                            // It hangs over the conversation: the arrow shows over it, not the text's I-beam.
+                            .pointerHole()
                             .onHover { overCard = $0 }
                             // Hangs from the button's top edge, then drops below the tab row.
                             .offset(y: Self.height + 8)
@@ -162,19 +164,19 @@ struct SessionRecapButton: View {
             }
             .fixedSize()
             // Unread: brighter than the quiet resting state, plus a mint badge like the one on the collapsed notch.
-            .foregroundStyle(new || open ? Color.primary.opacity(0.88) : Color.secondary)
+            .foregroundStyle(new || open ? Color.primary.opacity(0.88) : Color.nookSecondary)
             .padding(.horizontal, 7).frame(height: Self.height)
-            .background(Color.white.opacity(open ? 0.12 : (new ? 0.09 : 0.055)), in: RoundedRectangle(cornerRadius: 7))
+            .background(Color.nookWash(open ? 0.12 : (new ? 0.09 : 0.055)), in: RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .topTrailing) {
                 if new {
                     Circle().fill(RecapPalette.accent).frame(width: 5.5, height: 5.5)
-                        .overlay(Circle().stroke(Color.black, lineWidth: 1.2).padding(-1.2))
+                        .overlay(Circle().stroke(Color.nookScreenSolid, lineWidth: 1.2).padding(-1.2))
                         .offset(x: 2, y: -2)
                 }
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .nookPress(.pop)
         .onHover { overButton = $0 }
         .help(new ? "Resumen nuevo de esta sesión" : "Resumen de esta sesión")
         .accessibilityLabel("Resumen de la sesión")
@@ -208,7 +210,7 @@ struct ObservedRecapButton<Object: ObservableObject>: View {
 
 private enum RecapPalette {
     /// Nook's mint accent.
-    static let accent = Color(red: 0.32, green: 0.73, blue: 0.61)
+    static let accent = Color.nookMint
 }
 
 // MARK: - Card
@@ -263,7 +265,7 @@ struct SessionRecapCard: View {
         }
         .frame(width: width)
         .nookGlassCard(radius: 11, clipsContent: true, fill: Self.surface)
-        .shadow(color: .black.opacity(0.55), radius: 14, y: 5)
+        .nookCardShadow(0.55, radius: 14, y: 5)
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.4))
@@ -273,7 +275,7 @@ struct SessionRecapCard: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text("※").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Text("※").font(.system(size: 10)).foregroundStyle(Color.nookTertiary)
             Text("Resumen").font(.system(size: 9, weight: .semibold))
             if isNew {
                 Text("nuevo").font(.system(size: 7.5, weight: .semibold)).foregroundStyle(RecapPalette.accent)
@@ -285,9 +287,9 @@ struct SessionRecapCard: View {
                 HStack(spacing: 4) {
                     Text(copied ? "Copiado" : "Copiar").font(.system(size: 8.5))
                     Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 7, weight: .semibold)).frame(width: 15, height: 11)
-                        .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 3))
-                }.foregroundStyle(copied ? RecapPalette.accent : Color.secondary)
-            }.buttonStyle(.plain).help("Copiar el resumen")
+                        .background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 3))
+                }.foregroundStyle(copied ? RecapPalette.accent : Color.nookSecondary)
+            }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).help("Copiar el resumen")
         }.padding(.horizontal, 12).frame(height: 26)
     }
 
@@ -297,7 +299,7 @@ struct SessionRecapCard: View {
         copied = true
     }
 
-    private static let surface = Color(white: 0.115)
+    private static let surface = Color.nookCard
     private static let topicSize: CGFloat = 11
     private static let bodySize: CGFloat = 10.5
     private static let bodySpacing: CGFloat = 2.5

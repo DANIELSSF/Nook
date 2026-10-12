@@ -6,11 +6,18 @@ final class SpeechController: ObservableObject {
     @Published var recording = false
     @Published var transcript = ""
     @Published var error: String?
-    private let engine = AVAudioEngine()
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-CO"))
+    /// Both are made the first time dictation starts. A pane makes its controller every time the island is drawn again, and each
+    /// recognizer made up front stayed alive for good (its dictation connection, queue and observers): one more per reading of
+    /// Terminal, for as long as Nook ran.
+    private var engine: AVAudioEngine?
+    private lazy var recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-CO"))
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var tapInstalled = false
+
+    /// `error` seeds the message a preview or test shows. Cheap: nothing is made until dictation starts, so a view may build one on
+    /// every redraw (inside `StateObject(wrappedValue:)`'s autoclosure only one is kept).
+    init(error: String? = nil) { self.error = error }
 
     func toggle() {
         if recording { stop(); return }
@@ -34,6 +41,8 @@ final class SpeechController: ObservableObject {
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         self.request = request
+        let engine = self.engine ?? AVAudioEngine()
+        self.engine = engine
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { error = "No hay un micrófono disponible."; return }
@@ -50,8 +59,10 @@ final class SpeechController: ObservableObject {
         catch { self.error = error.localizedDescription; stop() }
     }
     func stop() {
-        engine.stop()
-        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        if let engine {
+            engine.stop()
+            if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        }
         request?.endAudio(); task?.cancel()
         request = nil; task = nil; recording = false
     }

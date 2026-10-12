@@ -27,4 +27,9 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(NookPermission.speechState(.denied), .denied)
         XCTAssertEqual(NookPermission.speechState(.notDetermined), .notAsked)
     }
+
+    func testAccessibilityResetForgetsOnlyNooksOwnRecord() {
+        XCTAssertEqual(DirectKeys.resetArguments(bundle: "dev.nook.mac"), ["reset", "Accessibility", "dev.nook.mac"],
+                       "Naming the service and the bundle: a bare reset would clear every app's Accessibility.")
+    }
 }

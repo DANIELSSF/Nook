@@ -27,6 +27,9 @@ final class DictationPermissionTests: XCTestCase {
         let host = NSHostingView(rootView: AnyView(view))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 204)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.setFrameOrigin(NSPoint(x: -40000, y: -40000))
+        window.isReleasedWhenClosed = false
+        addTeardownBlock { window.close() }
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)

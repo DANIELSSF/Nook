@@ -30,6 +30,30 @@ final class TerminalPresentationTests: XCTestCase {
         XCTAssertNil(ClaudeComposer.split("~ % ls").input)
     }
 
+    func testBoxWithTheSessionNameInItsTopRuleIsStillTheBox() {
+        // A fresh Claude in a narrow terminal, its session named: the label outweighs the dashes.
+        for (width, name) in [(40, "ui-designer"), (62, "ui-designer"), (80, "diseño de la isla y sus pestañas de colores")] {
+            let label = " \(name) "
+            let top = String(repeating: "─", count: width - label.count - 1) + label + "─"
+            let screen = ["⏺ Hola", "", top, "❯ Try \"refactor <filepath>\"", String(repeating: "─", count: width), footer].joined(separator: "\n")
+            let split = ClaudeComposer.split(screen)
+            XCTAssertEqual(split.conversation, "⏺ Hola", "width \(width)")
+            XCTAssertEqual(split.input, "Try \"refactor <filepath>\"", "width \(width)")
+            XCTAssertNil(split.panel, "width \(width): the box is not a panel")
+        }
+        // Text with dashes around it is not a labelled rule: two labels, a label without its padding, too short a lead.
+        for line in ["──── two  labels ─── here ─", "─── not a padded label here─", "── Mira esto, no es un borde ──"] {
+            XCTAssertFalse(ClaudeComposer.isRule(line), line)
+        }
+    }
+
+    func testClaudesModeLineAloneNeverMakesAPanel() {
+        // A box caught mid-redraw (no bottom rule yet) leaves only the mode line's "shift+tab to cycle".
+        let screen = ["⏺ Hola", rule, "❯ ", footer].joined(separator: "\n")
+        XCTAssertNil(ClaudeComposer.split(screen).panel)
+        XCTAssertNotNil(ClaudeComposer.panel(["⏺ Hola", "╭──────────╮", "│ Model │", "╰──────────╯", "  Enter to confirm · Esc to cancel"]), "A real panel's hint still counts.")
+    }
+
     func testKeepsSlashCommandSuggestionsVisible() {
         let suggestions = ["  /help                       Show help and available commands", "  /hooks                      Manage hook configurations"]
         let screen = (["⏺ Respuesta", rule, "❯ /h", rule] + suggestions).joined(separator: "\n")
@@ -153,33 +177,39 @@ final class TerminalPresentationTests: XCTestCase {
 
     private func claudeScreen(_ input: String) -> String { ["⏺ Hola", rule, "❯ " + input, rule, footer].joined(separator: "\n") }
 
-    func testEnterWaitsUntilClaudeShowsTheMessage() throws {
+    func testEnterWaitsUntilClaudeHoldsTheMessage() throws {
         var log: [String] = []
         var reads = 0
-        try TerminalAppBridge.deliver("/usage", agent: .claude, timing: .init(poll: 0.01, echo: 0.5, settle: 0.2), run: { action in
+        var shownAt: Date?, enterAt: Date?
+        let hold = 0.2
+        // Claude read the text as a paste: Terminal's Return became a new line and the message waits in the box. Measured in time,
+        // not in readings: a slow (throttled) run reads less often, and Enter must still wait the whole hold.
+        try TerminalAppBridge.deliver("/usage", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: hold, settle: 0.2), run: { action in
             log.append(action == TerminalAppBridge.returnAction ? "return" : "type")
+            if action == TerminalAppBridge.returnAction, enterAt == nil { enterAt = Date() }
         }, read: {
             reads += 1
-            log.append("read")
             // Busy for two reads, then the message shows in the box; after Enter the box is empty.
             if log.contains("return") { return self.claudeScreen("") }
-            return self.claudeScreen(reads < 3 ? "" : "/usage")
+            guard log.contains("type"), reads >= 3 else { return self.claudeScreen("") }
+            if shownAt == nil { shownAt = Date() }
+            return self.claudeScreen("/usage")
         })
-        XCTAssertEqual(log.first(where: { $0 != "read" }), "type", "Nook first checks the box, then pastes.")
-        let firstReturn = try XCTUnwrap(log.firstIndex(of: "return"))
-        XCTAssertEqual(log.prefix(firstReturn).filter { $0 == "read" }.count, 3, "Enter goes only after the box shows the message.")
+        XCTAssertEqual(log.first, "type", "Nook first checks the box, then types.")
+        let shown = try XCTUnwrap(shownAt), enter = try XCTUnwrap(enterAt)
+        XCTAssertGreaterThanOrEqual(enter.timeIntervalSince(shown), hold, "Enter goes only once the box has held the message for the hold.")
         XCTAssertEqual(log.filter { $0 == "return" }.count, 1, "An emptied box means Claude took it: no second Enter.")
     }
 
     func testClaudeGetsOneMoreEnterOnlyWhenItKeptTheMessage() throws {
         var returns = 0
-        try TerminalAppBridge.deliver("hola gato", agent: .claude, timing: .init(poll: 0.01, echo: 0.2, settle: 0.1), run: { action in
+        try TerminalAppBridge.deliver("hola gato", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.1), run: { action in
             if action == TerminalAppBridge.returnAction { returns += 1 }
         }, read: { self.claudeScreen(returns < 2 ? "hola gato" : "") })
         XCTAssertEqual(returns, 2)
 
         var codexReturns = 0
-        try TerminalAppBridge.deliver("hola", agent: .codex, timing: .init(poll: 0.01, echo: 0.1, settle: 0.1), run: { action in
+        try TerminalAppBridge.deliver("hola", agent: .codex, timing: .init(poll: 0.01, echo: 5, settle: 0.1), run: { action in
             if action == TerminalAppBridge.returnAction { codexReturns += 1 }
         }, read: { "› hola" })
         XCTAssertEqual(codexReturns, 1, "Without a known box, Codex never gets a second Enter.")
@@ -187,7 +217,7 @@ final class TerminalPresentationTests: XCTestCase {
 
     func testTextAlreadyTypedInFrontOfTheMessageStopsTheEnter() {
         var actions: [String] = []
-        XCTAssertThrowsError(try TerminalAppBridge.deliver("/usage", agent: .claude, timing: .init(poll: 0.01, echo: 0.2, settle: 0.1), run: { actions.append($0) }, read: { self.claudeScreen("t/usage") })) { error in
+        XCTAssertThrowsError(try TerminalAppBridge.deliver("/usage", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.1), run: { actions.append($0) }, read: { self.claudeScreen("t/usage") })) { error in
             guard case DeliveryError.joined(let box) = error else { return XCTFail("\(error)") }
             XCTAssertEqual(box, "t/usage")
         }
@@ -199,11 +229,11 @@ final class TerminalPresentationTests: XCTestCase {
 
     func testMessageAlreadyInTheBoxOnlyNeedsEnter() throws {
         var actions: [String] = []
-        // An accepted grey suggestion: the first Enter fills the box, the second sends it.
+        // Typed in the terminal's box already: Enter sends it and the box empties.
         try TerminalAppBridge.deliver("ok avísame cuando esté listo", agent: .claude, timing: .init(poll: 0.01, echo: 0.2, settle: 0.1), run: { actions.append($0) }, read: {
-            self.claudeScreen(actions.filter { $0 == TerminalAppBridge.returnAction }.count < 2 ? "ok avísame cuando esté listo" : "")
+            self.claudeScreen(actions.isEmpty ? "ok avísame cuando esté listo" : "")
         })
-        XCTAssertEqual(actions, [TerminalAppBridge.returnAction, TerminalAppBridge.returnAction], "Nothing is pasted, so the box never holds two copies.")
+        XCTAssertEqual(actions, [TerminalAppBridge.returnAction], "Nothing is typed, so the box never holds two copies.")
         XCTAssertTrue(MessageEcho.same("ok avísame cuando\nesté listo", "ok avísame cuando esté listo"))
         XCTAssertFalse(MessageEcho.same("ok avísame", "ok"))
     }
@@ -222,25 +252,28 @@ final class TerminalPresentationTests: XCTestCase {
         var actions: [String] = []
         var steps: [String] = []
         // After Enter, Claude suggests "sí, hazlo también en Codex": that is not the message still waiting.
-        try TerminalAppBridge.deliver("sí", agent: .claude, timing: .init(poll: 0.01, echo: 0.2, settle: 0.1), run: { actions.append($0) }, read: {
+        try TerminalAppBridge.deliver("sí", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.1), run: { actions.append($0) }, read: {
             actions.contains(TerminalAppBridge.returnAction) ? self.claudeScreen("sí, hazlo también en Codex") : self.claudeScreen(actions.isEmpty ? "" : "sí")
         }, trace: { steps.append($0) })
         XCTAssertEqual(actions, [TerminalAppBridge.typeAction("sí"), TerminalAppBridge.returnAction], "No extra Enter on the suggestion.")
         XCTAssertEqual(steps.last, "caja vacía: enviado")
-        XCTAssertTrue(steps.contains("pegado"))
+        XCTAssertTrue(steps.contains("escrito con su Enter"))
     }
 
     func testRetriesAreCappedAndAFailureAfterPastingNeverPastesAgain() throws {
-        var returns = 0
-        // Claude keeps the whole message no matter what: one Enter plus two retries, then it stops.
-        try TerminalAppBridge.deliver("hola gato", agent: .claude, timing: .init(poll: 0.01, echo: 0.1, settle: 0.05), run: { action in
-            if action == TerminalAppBridge.returnAction { returns += 1 }
-        }, read: { self.claudeScreen("hola gato") })
+        var returns = 0, typed = 0
+        // Claude keeps the whole message no matter what: one Enter plus two retries, then it stops and says so.
+        XCTAssertThrowsError(try TerminalAppBridge.deliver("hola gato", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.05), run: { action in
+            if action == TerminalAppBridge.returnAction { returns += 1 } else { typed += 1 }
+        }, read: { self.claudeScreen(typed == 0 ? "" : "hola gato") })) { error in
+            guard case DeliveryError.stuck = error else { return XCTFail("\(error)") }
+        }
         XCTAssertEqual(returns, 3)
+        XCTAssertEqual(typed, 1)
 
         struct Busy: Error {}
         var actions: [String] = []
-        XCTAssertThrowsError(try TerminalAppBridge.deliver("revisa esto", agent: .claude, timing: .init(poll: 0.01, echo: 0.1, settle: 0.05), run: { action in
+        XCTAssertThrowsError(try TerminalAppBridge.deliver("revisa esto", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.05), run: { action in
             actions.append(action)
             if action == TerminalAppBridge.returnAction { throw Busy() }
         }, read: { self.claudeScreen(actions.isEmpty ? "" : "revisa esto") })) { error in
@@ -254,7 +287,7 @@ final class TerminalPresentationTests: XCTestCase {
         var returns = 0
         // After the answer, Claude opens another question whose screen still shows the text just sent.
         let dialog = ["⏺ Usaré PostgreSQL para el servicio nuevo", " Do you want to proceed?", " ❯ 1. Yes", "   2. No"].joined(separator: "\n")
-        try TerminalAppBridge.deliver("Usaré PostgreSQL para el servicio nuevo", agent: .claude, timing: .init(poll: 0.01, echo: 0.1, settle: 0.05), run: { action in
+        try TerminalAppBridge.deliver("Usaré PostgreSQL para el servicio nuevo", agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.05), run: { action in
             if action == TerminalAppBridge.returnAction { returns += 1 }
         }, read: { returns == 0 ? self.claudeScreen("Usaré PostgreSQL para el servicio nuevo") : dialog })
         XCTAssertEqual(returns, 1, "The new dialog's «Yes» must not be accepted by a retry.")
@@ -262,21 +295,73 @@ final class TerminalPresentationTests: XCTestCase {
 
     func testAMessageOfSeveralLinesIsPastedWholeAndSentOnce() throws {
         let message = "revisa esto:\n1. el notch\n2. el gato"
+        // Claude still holds it (the Return reached it before the paste was in): one more Enter.
         for box in ["revisa esto:\n  1. el notch\n  2. el gato", "[Pasted text #1 +2 lines]"] {
             var actions: [String] = []
-            try TerminalAppBridge.deliver(message, agent: .claude, timing: .init(poll: 0.01, echo: 0.2, settle: 0.05), run: { actions.append($0) },
+            try TerminalAppBridge.deliver(message, agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.05), run: { actions.append($0) },
                                           read: { actions.contains(TerminalAppBridge.returnAction) ? self.claudeScreen("") : self.claudeScreen(actions.isEmpty ? "" : box) })
-            XCTAssertEqual(actions, [TerminalAppBridge.typeAction(message), TerminalAppBridge.returnAction], "One paste with its line breaks, then one Enter (\(box)).")
+            XCTAssertEqual(actions, [TerminalAppBridge.messageAction(message), TerminalAppBridge.returnAction], "One paste with its line breaks, then one Enter (\(box)).")
         }
-        XCTAssertTrue(TerminalAppBridge.typeAction(message).contains("\\n"), "Line breaks travel inside the one AppleScript string.")
+        // The usual case: the Return after the paste marks sends it, and nothing follows.
+        var actions: [String] = []
+        try TerminalAppBridge.deliver(message, agent: .claude, timing: .init(poll: 0.01, echo: 5, hold: 0.03, settle: 0.05), run: { actions.append($0) },
+                                      read: { actions.isEmpty ? self.claudeScreen("") : "> revisa esto:\n  1. el notch\n  2. el gato\n" + self.claudeScreen("") })
+        XCTAssertEqual(actions, [TerminalAppBridge.messageAction(message)])
+        XCTAssertTrue(TerminalAppBridge.messageAction(message).contains("\\n"), "Line breaks travel inside the one AppleScript string.")
+        XCTAssertTrue(TerminalAppBridge.messageAction(message).contains("(character id 27) & \"[200~\""), "Between bracketed-paste marks.")
         XCTAssertTrue(MessageEcho.pending(String(repeating: "texto largo ", count: 200), in: "salida\n› [Pasted Content 2400 chars]", agent: .codex),
                       "Codex's placeholder for a long paste is the message too.")
     }
 
-    func testEnterStillGoesWhenTheScreenCannotBeRead() throws {
+    func testClaudesPanelsShowInsteadOfTheBox() {
+        let boxed = ["⏺ Listo, ya está.", "", "╭────────────────────────────────────────╮", "│ Settings:  Status   Config   Usage      │", "│                                        │",
+                     "│ Current session                        │", "│ ████████░░░░  42% used                 │", "╰────────────────────────────────────────╯",
+                     "  ←/→ tab to switch · Esc to exit"].joined(separator: "\n")
+        let screen = ClaudeComposer.split(boxed)
+        XCTAssertNil(screen.input)
+        XCTAssertEqual(screen.panel?.components(separatedBy: "\n").first, "╭────────────────────────────────────────╮")
+        XCTAssertTrue(screen.panel?.hasSuffix("Esc to exit") == true)
+        XCTAssertFalse(screen.panel?.contains("Listo") == true, "The conversation stays out of it.")
+
+        let ruled = ["> /usage", "", rule, " Usage", "", " Current week (all models)", " ██████░░░░ 61% used · resets Oct 7", "", " Esc to cancel"].joined(separator: "\n")
+        XCTAssertEqual(ClaudeComposer.split(ruled).panel, [rule, " Usage", "", " Current week (all models)", " ██████░░░░ 61% used · resets Oct 7", "", " Esc to cancel"].joined(separator: "\n"))
+
+        // Sample's screen with /usage open (Claude Code 2.1.288, fullscreen): no hint in view, only a "↓".
+        let usage = ["✻ Waiting for 1 background agent to finish", String(repeating: "─", count: 110), "",
+                     "   Settings   Status   Config   Usage   Stats", "", "   Session", "",
+                     "   Total cost:            $253.64", "   Total duration (API):  9h 56m 36s",
+                     "   Usage by model:", "        claude-opus-5-5:  17.9k input, 888.7k output ($87.40)", "",
+                     "   Current session", "   █████████░░░░░░░░░░░░░░░░░░░░   25% used", "   Resets 8:59pm (America/Bogota)",
+                     String(repeating: " ", count: 100) + "↓"].joined(separator: "\n")
+        let settings = ClaudeComposer.split(usage)
+        XCTAssertNil(settings.input)
+        XCTAssertTrue(settings.panel?.hasPrefix(String(repeating: "─", count: 110)) == true, "From its top rule…")
+        XCTAssertTrue(settings.panel?.contains("Total cost:            $253.64") == true)
+        XCTAssertTrue(settings.panel?.hasSuffix("↓") == true, "…to the end of the screen.")
+        XCTAssertFalse(settings.panel?.contains("Waiting for") == true)
+        // The same panel with its edge drawn in block characters, and with no edge at all.
+        let blocky = usage.replacingOccurrences(of: String(repeating: "─", count: 110), with: String(repeating: "▔", count: 110))
+        XCTAssertTrue(ClaudeComposer.split(blocky).panel?.hasPrefix(String(repeating: "▔", count: 110)) == true)
+        let bare = usage.replacingOccurrences(of: String(repeating: "─", count: 110) + "\n", with: "")
+        XCTAssertTrue(ClaudeComposer.split(bare).panel?.hasPrefix("   Settings   Status") == true, "A tab row opening the screen is enough.")
+        XCTAssertTrue(ClaudeComposer.isTabRow("   Settings   Status   Config   Usage   Stats"))
+        XCTAssertFalse(ClaudeComposer.isTabRow("  Name    Type"), "Two words are not a tab row.")
+        let table = ["⏺ Aquí tienes la tabla:", "  ──────────────────────────────", "  Name    Type    Size", "  a.swift   file   2k"].joined(separator: "\n")
+        XCTAssertNil(ClaudeComposer.split(table).panel, "A table in a reply has its rule indented: not a panel.")
+        XCTAssertFalse(ClaudeComposer.isTabRow("   Total cost:            $253.64"))
+
+        XCTAssertNil(ClaudeComposer.split(claudeScreen("hola")).panel, "With the box there is no panel.")
+        XCTAssertNil(ClaudeComposer.split("⏺ salida a medio dibujar\n  sin pistas de teclas").panel, "No key hint, no panel.")
+        XCTAssertEqual(TerminalKey.left.tmuxName, "Left")
+        XCTAssertEqual(TerminalKey.right.keyCode, 124)
+        XCTAssertFalse(TerminalKey.menuKeys.contains(.left), "The composer's key strip stays as it was.")
+    }
+
+    func testNoBlindEnterWhenTheScreenCannotBeRead() throws {
         var actions: [String] = []
+        // Terminal's own Return already went with the text; another one on a guess could answer a dialog.
         try TerminalAppBridge.deliver("hola", agent: .claude, timing: .init(poll: 0.01, echo: 0.05, settle: 0.05), run: { actions.append($0) }, read: { nil })
-        XCTAssertEqual(actions, [TerminalAppBridge.typeAction("hola"), TerminalAppBridge.returnAction])
+        XCTAssertEqual(actions, [TerminalAppBridge.typeAction("hola")])
     }
 
     func testMessageEchoToleratesWrappingAndPastePlaceholders() {
@@ -293,7 +378,9 @@ final class TerminalPresentationTests: XCTestCase {
     }
 
     func testKeyAndMessageScriptsCompileWithInstalledTerminalDictionary() {
-        for action in [TerminalAppBridge.typeAction("Hola \"gato\"\nlínea"), TerminalAppBridge.returnAction, TerminalAppBridge.presentForKeysAction] {
+        let long = String(repeating: "línea con \"comillas\", $VAR y \\barra\n", count: 40)
+        for action in [TerminalAppBridge.typeAction("Hola \"gato\"\nlínea"), TerminalAppBridge.returnAction, TerminalAppBridge.presentForKeysAction,
+                       TerminalAppBridge.messageAction(long), TerminalAppBridge.messageAction("!" + long)] {
             var details: NSDictionary?
             let source = TerminalAppBridge.targetScript(windowID: 42, tty: "/dev/ttys003", action: action)
             XCTAssertTrue(NSAppleScript(source: source)!.compileAndReturnError(&details), details?.description ?? "")

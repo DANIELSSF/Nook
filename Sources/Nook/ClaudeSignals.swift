@@ -65,7 +65,7 @@ final class ClaudeSignalReceiver {
         guard status == 0 else { Darwin.close(fd); return }
         chmod(path, 0o600)
         _ = fcntl(fd, F_SETFL, O_NONBLOCK)
-        let reader = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue(label: "dev.nook.claude-signals"))
+        let reader = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue(label: "dev.nook.claude-signals", autoreleaseFrequency: .workItem))
         reader.setEventHandler { [weak self] in
             var bytes = [UInt8](repeating: 0, count: 4096)
             while true {
@@ -138,50 +138,90 @@ enum ClaudeHooks {
         try write(enabled: enabled, to: folders())
     }
 
-    /// Nook's hooks in or out of each folder's settings, keeping everything else and a backup of each
-    /// file it changes. A folder whose settings can't be read is left as it was, and nothing is written.
+    /// Nook's hooks in or out of each folder's settings, keeping everything else and a backup of each file it changes. A folder
+    /// whose settings can't be read is left as it was, and nothing is written; a file is written where it really is (through a
+    /// link), only if it still holds what was read, private from its creation (`ClaudeSettingsFile`).
     static func write(enabled: Bool, to folders: [URL], command: String = command) throws {
-        let manager = FileManager.default
-        var updates: [(URL, [String: Any], Data?)] = []
-        for folder in folders {
-            let url = settingsURL(in: folder)
-            guard manager.fileExists(atPath: url.path) else { updates.append((url, [:], nil)); continue }
-            let data = try Data(contentsOf: url)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw TerminalBridgeError.failed("No se pudo leer \(describe([folder])). No se modificó nada.")
-            }
-            updates.append((url, json, data))
-        }
-        for (url, settings, original) in updates {
-            if let original {
-                let backup = url.deletingLastPathComponent().appendingPathComponent("settings.nook-backup-\(UUID().uuidString.prefix(8)).json")
-                try original.write(to: backup, options: .atomic)
-                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
-            }
-            let updated = merging(settings, command: command, enabled: enabled)
-            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONSerialization.data(withJSONObject: updated, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: .atomic)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        }
+        try ClaudeSettingsFile.change(folders) { _, settings in merging(settings, command: command, enabled: enabled) }
     }
 
     /// The hook runs a private copy of Nook's executable, so moving or rebuilding the app never breaks it.
-    static func installHelper() throws {
+    static func installHelper(from executable: URL? = Bundle.main.executableURL, to helper: URL = helperURL) throws {
         let manager = FileManager.default
-        guard let executable = Bundle.main.executableURL else { throw TerminalBridgeError.failed("No se encontró el componente de avisos de Nook.") }
-        try manager.createDirectory(at: helperURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let staging = helperURL.deletingLastPathComponent().appendingPathComponent("nook-hook-" + UUID().uuidString)
+        guard let executable else { throw TerminalBridgeError.failed("No se encontró el componente de avisos de Nook.") }
+        try manager.createDirectory(at: helper.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let staging = helper.deletingLastPathComponent().appendingPathComponent("nook-hook-" + UUID().uuidString)
         try manager.copyItem(at: executable, to: staging)
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: staging.path)
-        if manager.fileExists(atPath: helperURL.path) { _ = try manager.replaceItemAt(helperURL, withItemAt: staging) }
-        else { try manager.moveItem(at: staging, to: helperURL) }
+        if manager.fileExists(atPath: helper.path) { _ = try manager.replaceItemAt(helper, withItemAt: staging) }
+        else { try manager.moveItem(at: staging, to: helper) }
+    }
+
+    /// At launch, off the main thread: a newer Nook replaces the hook's copy of itself, so fixes to the hook (the terminal it
+    /// reports, say) reach Claude without turning the alerts off and on. Only while some folder's settings run Nook's hook;
+    /// settings are never touched, so hooks the user did not turn on are never added. Screen vision's tool runs the same helper and
+    /// keeps it fresh itself (`ensureHelper`), whether or not the hooks are on.
+    static func refreshHelperInBackground() {
+        helperQueue.async {
+            let inUse = folders().contains { isEnabled(in: $0) }
+            do { if try refreshHelper(inUse: inUse) { NSLog("Nook: hook helper refreshed") } }
+            catch { NSLog("Nook: hook helper not refreshed: \(error.localizedDescription)") }
+        }
+    }
+
+    /// Copies of the helper are made one at a time: two racing to replace it could leave neither in place.
+    static let helperQueue = DispatchQueue(label: "dev.nook.hook-helper", qos: .utility)
+
+    /// The helper in place and current, for screen vision's MCP server (`ClaudeMCPRegistrar`). Waits for the copy; call it off the
+    /// main thread and never from `helperQueue`.
+    static func ensureHelper(from executable: URL? = Bundle.main.executableURL, to helper: URL = helperURL) throws {
+        try helperQueue.sync { _ = try refreshHelper(inUse: true, from: executable, to: helper) }
+        guard FileManager.default.isExecutableFile(atPath: helper.path) else {
+            throw TerminalBridgeError.failed("No se pudo instalar el componente de Nook que abre Claude (\(helper.lastPathComponent)).")
+        }
+    }
+
+    /// Copies `executable` over `helper` when hooks use it and the copy is missing or differs (size first, then bytes).
+    /// True when it copied.
+    @discardableResult static func refreshHelper(inUse: Bool, from executable: URL? = Bundle.main.executableURL, to helper: URL = helperURL) throws -> Bool {
+        guard inUse, let executable, !helperMatches(executable, helper) else { return false }
+        try installHelper(from: executable, to: helper)
+        return true
+    }
+
+    static func helperMatches(_ executable: URL, _ helper: URL) -> Bool {
+        let manager = FileManager.default
+        guard let mine = try? manager.attributesOfItem(atPath: executable.path)[.size] as? Int,
+              let theirs = try? manager.attributesOfItem(atPath: helper.path)[.size] as? Int, mine == theirs else { return false }
+        return manager.contentsEqual(atPath: executable.path, andPath: helper.path)
     }
 
     static func forwardFromCLI() {
         guard let data = try? FileHandle.standardInput.readToEnd() else { return }
-        let rawTTY = (try? Shell.run("/bin/ps", ["-o", "tty=", "-p", String(getpid())]).1.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        let tty = rawTTY == "??" || rawTTY.isEmpty ? "" : rawTTY.hasPrefix("/dev/") ? rawTTY : "/dev/" + rawTTY
+        let tty = terminal(from: getpid())
         if let signal = ClaudeSignal.fromHook(data, tty: tty, environment: ProcessInfo.processInfo.environment) { LocalSignalSocket.send(signal) }
         // No stdout, decisions, prompts, transcripts, network traffic or persisted events.
+    }
+
+    /// The terminal of the Claude that ran the hook ("/dev/ttys009"), or "" when there is none. Claude starts its hooks (like
+    /// its commands) without a terminal of their own ("??"), so the parents are asked in turn, hook → shell → claude, until
+    /// one has it. Without it a Terminal tab's Claude was never matched to its tab, and the tab never found its record.
+    static func terminal(from pid: pid_t, depth: Int = 6, process: (pid_t) -> (tty: String, parent: pid_t)? = processTerminal) -> String {
+        var current = pid
+        for _ in 0..<depth {
+            guard current > 1, let found = process(current) else { return "" }
+            let raw = found.tty.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !raw.isEmpty, raw != "??", raw != "-" { return raw.hasPrefix("/dev/") ? raw : "/dev/" + raw }
+            current = found.parent
+        }
+        return ""
+    }
+
+    /// `ps`'s terminal and parent for one process.
+    static func processTerminal(_ pid: pid_t) -> (tty: String, parent: pid_t)? {
+        guard let output = try? Shell.run("/bin/ps", ["-o", "tty=,ppid=", "-p", String(pid)]).1 else { return nil }
+        let parts = output.split(whereSeparator: \.isWhitespace)
+        guard parts.count == 2, let parent = pid_t(parts[1]) else { return nil }
+        return (String(parts[0]), parent)
     }
 }

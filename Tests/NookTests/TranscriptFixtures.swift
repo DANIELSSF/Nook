@@ -74,5 +74,5 @@ enum TranscriptFixtures {
     }
 
     /// A reply with a fenced Swift block between two paragraphs.
-    static let fencedReply = "Así queda la función:\n\n```swift\nfunc greet(name: String) -> String {\n    // Say hello\n    let text = \"Hola, \\(name)\"\n    return text.uppercased()\n}\n```\n\nY se llama así: `greet(name: \"Daniel\")`."
+    static let fencedReply = "Así queda la función:\n\n```swift\nfunc greet(name: String) -> String {\n    // Say hello\n    let text = \"Hola, \\(name)\"\n    return text.uppercased()\n}\n```\n\nY se llama así: `greet(name: \"Sample\")`."
 }

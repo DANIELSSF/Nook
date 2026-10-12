@@ -9,7 +9,9 @@ swift build -c "$configuration" --cache-path .build/cache --config-path .build/c
 binary_directory="$(swift build -c "$configuration" --show-bin-path --cache-path .build/cache --config-path .build/config --security-path .build/security --disable-sandbox)"
 app_directory="$PWD/dist/Nook.app"
 mkdir -p "$app_directory/Contents/MacOS" "$app_directory/Contents/Resources/Licenses"
-cp "$binary_directory/Nook" "$app_directory/Contents/MacOS/Nook"
+# Replaced, not overwritten: a running Nook keeps executing the old file instead of being killed for a changed signature.
+cp "$binary_directory/Nook" "$app_directory/Contents/MacOS/Nook.new"
+mv -f "$app_directory/Contents/MacOS/Nook.new" "$app_directory/Contents/MacOS/Nook"
 cp Resources/Info.plist "$app_directory/Contents/Info.plist"
 cp Resources/tmux.conf "$app_directory/Contents/Resources/tmux.conf"
 cp Resources/claude-commands.json Resources/codex-commands.json "$app_directory/Contents/Resources/"

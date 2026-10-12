@@ -402,19 +402,22 @@ final class PetAnimationTests: XCTestCase {
         XCTAssertEqual(pet.frameInterval, 0)
     }
 
-    func testAnimatedViewsOnlyKeepTheSlowWatchdogWhileTheyCannotBeSeen() {
+    func testAnimatedViewsKeepNoTimerAtAllWhileTheyCannotBeSeen() {
         let model = AppModel(receivesSignals: false)
         let pet = PetView(frame: NSRect(x: 0, y: 0, width: 246, height: 32))
         pet.injectedModel = model
-        // No window on screen: no frames, only the slow check that wakes the cat when the island is back.
-        XCTAssertEqual(pet.frameInterval, PetAnimation.watchdogInterval)
+        // No window on screen: no frames, and no slow check either (what brings the island back wakes the cat: `PetSight`).
+        XCTAssertEqual(pet.frameInterval, 0)
+        XCTAssertEqual(pet.ticks, 0)
         // A header that is in a window that is not on screen.
         let header = HeaderPetView(frame: NSRect(x: 0, y: 0, width: 164, height: 32))
         let window = NSWindow(contentRect: header.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = header
-        XCTAssertEqual(header.frameInterval, PetAnimation.watchdogInterval)
+        XCTAssertEqual(header.frameInterval, 0)
+        header.wake()
+        XCTAssertEqual(header.frameInterval, 0, "told to look again, it still cannot be seen")
         window.contentView = nil
-        XCTAssertEqual(header.frameInterval, 0, "and none at all once it has left its window")
+        XCTAssertEqual(header.frameInterval, 0, "and none once it has left its window")
     }
 
     // MARK: Blending

@@ -146,6 +146,55 @@ final class DisplaySettingsTests: XCTestCase {
         XCTAssertEqual(defaults.double(forKey: DisplaySettings.Key.chatSize), 12)
     }
 
+    // MARK: The theme
+
+    func testTheThemeFollowsMacOSUntilTheUserChoosesOne() {
+        XCTAssertEqual(DisplaySettings().theme, .system, "Sistema is the default: a Mac in dark mode sees the island as it always was")
+        XCTAssertEqual(DisplaySettings.load(from: suite()).theme, .system)
+    }
+
+    func testTheThemeIsSavedAndLoadedBack() {
+        for theme in ThemePreference.allCases {
+            let defaults = suite()
+            var settings = DisplaySettings()
+            settings.theme = theme
+            settings.save(to: defaults)
+            XCTAssertEqual(DisplaySettings.load(from: defaults).theme, theme)
+            XCTAssertEqual(defaults.string(forKey: DisplaySettings.Key.theme), theme.rawValue)
+        }
+    }
+
+    func testAThemeNobodyKnowsIsTheDefault() {
+        let defaults = suite()
+        defaults.set("sepia", forKey: DisplaySettings.Key.theme)
+        XCTAssertEqual(DisplaySettings.load(from: defaults).theme, .system)
+        defaults.set(3, forKey: DisplaySettings.Key.theme)
+        XCTAssertEqual(DisplaySettings.load(from: defaults).theme, .system, "A number is not a theme")
+    }
+
+    func testTheModelSavesTheThemeAsItChangesAndANewRunStartsWithIt() {
+        let defaults = suite()
+        let model = AppModel(receivesSignals: false, defaults: defaults)
+        model.display.theme = .light
+        XCTAssertEqual(defaults.string(forKey: DisplaySettings.Key.theme), "light")
+        XCTAssertEqual(AppModel(receivesSignals: false, defaults: defaults).display.theme, .light)
+        model.display.theme = .system
+        XCTAssertEqual(AppModel(receivesSignals: false, defaults: defaults).display.theme, .system)
+    }
+
+    func testRestablecerKeepsTheTheme() {
+        var settings = DisplaySettings()
+        settings.theme = .dark
+        XCTAssertTrue(settings.isDefault, "The theme is not a measure of the island: a dark island of its usual size is still at its defaults")
+        settings.chatSize = 15; settings.widthExtra = 148
+        XCTAssertFalse(settings.isDefault)
+        let reset = settings.resetKeepingTheme()
+        XCTAssertEqual(reset.theme, .dark, "putting the island back to its size must not turn it from dark to light")
+        XCTAssertEqual(reset.chatSize, 11)
+        XCTAssertEqual(reset.widthExtra, 0)
+        XCTAssertTrue(reset.isDefault)
+    }
+
     // MARK: Presets
 
     func testPresetsAreOffsetsFromTheNormalIslandAndAreRecognised() {
@@ -535,7 +584,8 @@ final class SettingsWindowTests: XCTestCase {
         let window = SettingsWindow(model: model, screen: screen.size, topInset: 32, level: .normal) {}
         XCTAssertEqual(window.cardSize.width, SettingsCard.width)
         XCTAssertGreaterThan(window.cardSize.height, 250)
-        XCTAssertLessThan(window.cardSize.height, 460, "The card is compact: a screen's worth of controls would not be a card.")
+        // 460 before «Apariencia» (the three pictures of the island and their names) joined the card, which takes about 115 pt.
+        XCTAssertLessThan(window.cardSize.height, 580, "The card is compact: a screen's worth of controls would not be a card.")
         let small = CGRect(x: screen.midX - 286, y: screen.maxY - 266, width: 572, height: 266)
         window.place(under: small, on: screen)
         XCTAssertFalse(window.isVisible, "Placing it does not show it.")

@@ -381,6 +381,9 @@ final class TranscriptStylerTests: XCTestCase {
             // A change's summary and rows, a new file's, and the fences of a reply (also unclosed, and as the reply's first line).
             "  ⎿  Actualizado Sources/a.swift (+1 -1)", "  ⎿  Creado notas.md (2 líneas)", "      12 - let a = 1", "      12 + let b = \"x\" // y", "      13   contexto",
             "          … ", "      … +4 líneas", "      14", "  ```swift", "  let x = 1", "  ```", "⏺ ```py", "  ```", "  ~~~", "    return 1",
+            // Markdown in replies (and the look-alikes that must stay as they are).
+            "⏺ **Cómo queda:** hola `x` y *cursiva*", "  ## Título **fuerte**", "  - punto con `código`", "  * otro _punto_", "  2 * 3 * 4 y file_name_here", "  [guía](https://x.com/a_b) y más",
+            "  `sin cerrar", "> **mi** mensaje `x`", "  ⎿  **salida** `y`", "  ```raro", "  **dentro** de una valla",
         ]
         for round in 0..<150 {
             var lines = (0..<Int(random.next(below: 14)) + 1).map { _ in pool[Int(random.next(below: UInt64(pool.count)))] }

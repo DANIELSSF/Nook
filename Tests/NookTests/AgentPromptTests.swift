@@ -260,8 +260,8 @@ final class AgentPromptTests: XCTestCase {
 
     // MARK: - Answering
 
-    /// A model whose Terminal transport is a recorder, with one Claude tab showing the permission prompt.
-    private func recordingModel(keysAllowed: Bool = true) -> (AppModel, TerminalSession, () -> [String], () -> [TerminalKey]) {
+    /// A model whose Terminal transport is a recorder, with one Claude tab showing the permission prompt (or `screen`).
+    private func recordingModel(keysAllowed: Bool = true, screen: [String]? = nil) -> (AppModel, TerminalSession, () -> [String], () -> [TerminalKey]) {
         let model = AppModel(receivesSignals: false)
         let lock = NSLock()
         var scripts: [String] = []
@@ -270,12 +270,12 @@ final class AgentPromptTests: XCTestCase {
         model.terminalBridge.terminalProcess = { 4242 }
         model.terminalBridge.runScript = { script in lock.lock(); scripts.append(script); lock.unlock() }
         model.terminalBridge.postKey = { key, _ in lock.lock(); keys.append(key); lock.unlock() }
-        let session = TerminalSession(tab: tab(lines(permission)), backend: .bundled, bridge: model.terminalBridge)
+        let session = TerminalSession(tab: tab(lines(screen ?? permission)), backend: .bundled, bridge: model.terminalBridge)
         model.sessions = [session]; model.selectedID = session.id
         return (model, session, { lock.lock(); defer { lock.unlock() }; return scripts }, { lock.lock(); defer { lock.unlock() }; return keys })
     }
 
-    func testAnsweringPressesTheArrowsThenEnterInOrder() throws {
+    func testAnsweringWritesTheArrowsAndEnterInOneScript() throws {
         let (model, session, scripts, keys) = recordingModel()
         let prompt = try XCTUnwrap(session.prompt)
         let done = expectation(description: "answered")
@@ -284,16 +284,16 @@ final class AgentPromptTests: XCTestCase {
         XCTAssertTrue(session.answering)
         wait(for: [done], timeout: 3)
         XCTAssertEqual(delivery, .sent)
-        XCTAssertEqual(keys(), [.down, .down], "The arrows travel as keys; Enter goes through Terminal's own Return.")
-        XCTAssertEqual(scripts().count, 3)
-        XCTAssertTrue(scripts()[0].contains("frontmost") && scripts()[1].contains("frontmost"))
-        XCTAssertEqual(scripts()[2].components(separatedBy: "do script \"\" in t").count, 2, "The last step is the isolated Return.")
+        XCTAssertEqual(keys(), [], "No key events: the arrows travel as their bytes, Enter as Terminal's own Return.")
+        XCTAssertEqual(scripts().count, 1)
+        XCTAssertTrue(scripts()[0].contains(#"do script ((character id 27) & "[B" & (character id 27) & "[B") in t"#), scripts()[0])
+        XCTAssertFalse(scripts()[0].contains("frontmost") || scripts()[0].contains("activate"), "Terminal is never brought forward.")
         XCTAssertTrue(session.answering, "The card stays quiet until the screen shows the result.")
         // A second click while the first answer is on its way is refused.
         let refused = expectation(description: "refused")
         model.answer(prompt, option: 0, on: session) { XCTAssertEqual($0, .failed); refused.fulfill() }
         wait(for: [refused], timeout: 1)
-        XCTAssertEqual(scripts().count, 3)
+        XCTAssertEqual(scripts().count, 1)
         // The dialog closing is the result.
         session.update(tab(lines(permission + ["", "⏺ Listo."])))
         XCTAssertFalse(session.answering)
@@ -306,29 +306,29 @@ final class AgentPromptTests: XCTestCase {
         let prompt = try XCTUnwrap(session.prompt)
         let done = expectation(description: "answered")
         model.answer(prompt, option: 2, on: session) { XCTAssertEqual($0, .sent); done.fulfill() }
-        // The first arrow already moved the highlight on screen while the other keys are still to come.
+        // The first arrow already moved the highlight on screen while the script that writes the answer has not returned yet.
         let moved = lines(permission).replacingOccurrences(of: " ❯ 1.", with: "   1.").replacingOccurrences(of: "   2. Yes, and", with: " ❯ 2. Yes, and")
         session.update(tab(moved))
         XCTAssertTrue(session.answering, "A second click now would compute its keys from a highlight that is still moving.")
-        for _ in 0..<3 { gate.signal() }
+        gate.signal()
         wait(for: [done], timeout: 3)
         XCTAssertFalse(session.answering, "Once the keys are done and the screen differs, the result is already on screen.")
     }
 
-    func testTheRestOfTheKeysAreNotSentOnceTheDialogIsGone() throws {
-        let (model, session, scripts, keys) = recordingModel()
-        let gate = DispatchSemaphore(value: 0)
-        model.terminalBridge.runScript = { _ in gate.wait() }
+    func testAFieldChosenOnACardThatWentAwayTakesNoMessage() throws {
+        // The text field chosen on the card waits for the composer's message; Claude moves on (the user answered at the
+        // terminal) before it comes: the message is a message again, for Claude's box.
+        let (model, session, scripts, keys) = recordingModel(screen: question)
         let prompt = try XCTUnwrap(session.prompt)
-        let done = expectation(description: "stopped")
-        model.answer(prompt, option: 2, on: session) { XCTAssertEqual($0, .failed); done.fulfill() }
-        // Claude moves on (the user answered at the terminal) while the first arrow is on its way.
-        session.update(tab(lines(permission + ["", "⏺ Listo."])))
-        gate.signal()
-        wait(for: [done], timeout: 3)
-        XCTAssertEqual(keys(), [.down], "Only the arrow already in flight went out; the second one and Enter were held back.")
+        let done = expectation(description: "chosen")
+        model.answer(prompt, option: 2, on: session) { XCTAssertEqual($0, .sent); done.fulfill() }
+        wait(for: [done], timeout: 1)
+        XCTAssertEqual(model.fieldAnswer(for: session)?.option, 2)
+        session.update(tab(lines(question + ["", "⏺ Listo."])))
+        XCTAssertNil(model.fieldAnswer(for: session))
+        XCTAssertFalse(model.sendToField("Usa MongoDB", on: session) { _ in XCTFail("Not a field answer") })
+        XCTAssertEqual(keys(), [])
         XCTAssertEqual(scripts().count, 0)
-        XCTAssertTrue(model.notice?.contains("La pregunta cambió") == true)
         XCTAssertFalse(session.answering)
     }
 
@@ -343,7 +343,9 @@ final class AgentPromptTests: XCTestCase {
         XCTAssertTrue(scripts()[0].contains("do script \"\" in t"))
     }
 
-    func testATextFieldOptionOnlyMovesTheHighlight() throws {
+    /// A text field chosen on the card presses nothing: its arrows go with the answer's text (`AppModel.answer(_:option:text:on:)`).
+    /// Arrows alone used to be key events that brought Terminal forward (Sample, 9/10).
+    func testATextFieldOptionPressesNothingUntilItsAnswer() throws {
         let model = AppModel(receivesSignals: false)
         var keys: [TerminalKey] = []
         model.terminalBridge.directKeysAllowed = { true }
@@ -357,8 +359,12 @@ final class AgentPromptTests: XCTestCase {
         let done = expectation(description: "answered")
         model.answer(prompt, option: 2, on: session) { XCTAssertEqual($0, .sent); done.fulfill() }
         wait(for: [done], timeout: 3)
-        XCTAssertEqual(keys, [.down, .down])
-        XCTAssertFalse(scripts.contains { $0.contains("do script \"\" in t") }, "No Enter: the user types the answer first.")
+        let settled = expectation(description: "settled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { settled.fulfill() }
+        wait(for: [settled], timeout: 1)
+        XCTAssertEqual(keys, [], "No arrow posted.")
+        XCTAssertEqual(scripts, [], "No write either: no Enter on an empty field, which would cancel the question.")
+        XCTAssertEqual(session.chosenField?.option, 2)
     }
 
     func testAFailureStopsTheSequence() throws {

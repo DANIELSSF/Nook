@@ -26,7 +26,7 @@ extension AppModel {
     var agentPill: AgentPillSummary? {
         guard let session = selected else { return nil }
         let running = session.subagents.filter { $0.role == .agent && $0.isRunning }
-        return running.isEmpty ? nil : AgentPillSummary(tab: session.displayTitle, names: running.map(\.name))
+        return running.isEmpty ? nil : AgentPillSummary(tab: session.displayTitle, names: running.map(\.pillLabel))
     }
 }
 
@@ -119,18 +119,22 @@ final class AgentPillTipView: NSView {
 
 /// The pill's tooltip, in a small panel under the collapsed island. It never takes the pointer or the keyboard.
 final class AgentPillTip {
-    private let panel: NSPanel
+    private let panel: NotchPanel
+    private let prepare: (NotchPanel) -> Void
     private let view = AgentPillTipView()
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private(set) var isShown = false
 
-    init() {
-        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    init(prepare: @escaping (NotchPanel) -> Void = { _ in }) {
+        self.prepare = prepare
+        panel = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.allowsKey = false
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.ignoresMouseEvents = true
         panel.isReleasedWhenClosed = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 2)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.spaceRole = "globo de subagentes"
         panel.hidesOnDeactivate = false
         panel.contentView = view
     }
@@ -143,10 +147,12 @@ final class AgentPillTip {
 
     /// Shows `text` (or changes it, when it is already up). `pill` and `island` are in screen coordinates.
     func show(_ text: String, pill: NSRect, island: NSRect, screen: NSRect) {
+        prepare(panel)
         view.setText(text)
         let size = AgentPillTipView.size(for: text)
         panel.setFrame(Self.frame(size: size, pill: pill, island: island, screen: screen), display: true)
         view.frame = NSRect(origin: .zero, size: size)
+        defer { panel.invalidateShadow() }
         guard !isShown else { return }
         isShown = true
         panel.alphaValue = reduceMotion ? 1 : 0

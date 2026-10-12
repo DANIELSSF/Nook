@@ -1,5 +1,7 @@
 import AppKit
+#if !PETLAB
 @testable import Nook
+#endif
 
 /// Runs the cat's player on simulated time and simulated state, so scheduling, priorities and interruptions can be
 /// checked (and rendered) without a window, a display link or a real session.
@@ -35,20 +37,49 @@ extension PetSim {
     /// Poses from every moment of every gesture the collapsed cat can make, `step` seconds apart: whatever it might
     /// be doing when something happens to it.
     static func compactPoses(step: Double, height: CGFloat = 32) -> [PetPose] {
-        let stage = PetStage.compact(height: height)
         var poses: [PetPose] = []
         for kind in PetDirector.Kind.allCases where kind != .stroll && kind != .home {
-            var player = PetPlayer(layout: .compact, seed: 3)
-            player.begin(kind, layout: .compact(height: height))
-            var t = 0.0
-            while let running = player.director.running, t < 120 {
-                poses.append(player.pose(now: 1000 + t, layout: .compact(height: height), motion: true, input: PetInput()))
-                _ = running
-                t += step
+            // Every way the gesture can go (a glance to the right or left, a hunt that catches or misses, either way of facing).
+            for pick in 0..<6 {
+                var player = PetPlayer(layout: .compact, seed: 3 + pick * 17)
+                for _ in 0..<pick { player.begin(.wave, layout: .compact(height: height)) }
+                player.begin(kind, layout: .compact(height: height))
+                var t = 0.0
+                while player.director.running?.kind == kind, t < 120 {
+                    poses.append(player.pose(now: 1000 + t, layout: .compact(height: height), motion: true, input: PetInput()))
+                    t += step
+                }
             }
         }
-        for u in stride(from: 0, through: PetAnimation.celebrateLength, by: step) { poses.append(PetAnimation.celebrate(u: u, time: u)) }
-        _ = stage
+        for style in [PetCheer.hop, .doubleHop, .content] {
+            for u in stride(from: 0, through: PetAnimation.cheerLength(style), by: step) { poses.append(PetAnimation.celebrate(u: u, time: u, style: style)) }
+        }
         return poses
+    }
+}
+
+extension PetSim {
+    /// A seed for which `kind`, started first, goes the way asked: its variant (a glance to the right or left, a hunt that catches
+    /// or misses, a groom of the paw or the chest) and, where it turns round, the side it faces.
+    static func seed(for kind: PetDirector.Kind, layout: PetLayout = .compact, variant: Int? = nil, facing: CGFloat? = nil) -> Int {
+        for seed in 0..<2000 {
+            var director = PetDirector(layout: layout, seed: seed)
+            director.start(kind, stage: layout == .compact ? .compact(height: 32) : .header(travel: 100))
+            guard let r = director.running else { continue }
+            if (variant == nil || r.variant == variant) && (facing == nil || r.facing == facing) { return seed }
+        }
+        return 0
+    }
+
+    /// The frames of one gesture started at once (every frame at `fps`, plus `extra` seconds of the cat settling afterwards), with
+    /// the world asked for by `input`.
+    static func gesture(_ kind: PetDirector.Kind, in stage: PetRender.Stage, variant: Int? = nil, facing: CGFloat? = nil, extra: Double = 1.2, fps: Double = PetRender.fps,
+                        input: @escaping (Double) -> PetInput = { _ in PetInput(idle: 10) }) -> [PetPose] {
+        let layout: PetLayout = stage.isHeader ? .header : .compact
+        let chosen = seed(for: kind, layout: layout, variant: variant, facing: facing)
+        var probe = PetDirector(layout: layout, seed: chosen)
+        probe.start(kind, stage: stage.layout.stage)
+        let seconds = (probe.running?.length ?? 5) + extra
+        return run(stage.layout, seconds: seconds, fps: fps, seed: chosen, before: { $0.begin(kind, layout: stage.layout) }, input: input).map(\.pose)
     }
 }

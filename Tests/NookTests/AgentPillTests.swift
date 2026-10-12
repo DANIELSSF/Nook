@@ -90,6 +90,34 @@ final class AgentPillTests: XCTestCase {
         XCTAssertLessThan(hit.width * hit.height, 36 * bounds.height / 3)
     }
 
+    // MARK: The collapsed island's view
+
+    func testTheCollapsedViewTracksThePillOnlyWhileAgentsWork() throws {
+        let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-pill-" + UUID().uuidString)!)
+        let tab = TerminalTabSnapshot(windowID: 1, windowTitle: "IA", index: 1, tty: "/dev/ttys074", customTitle: "nook", processes: ["claude"], busy: false, selected: true, text: "⏺ hola")
+        let session = TerminalSession(tab: tab, backend: .bundled, bridge: model.terminalBridge)
+        model.sessions = [session]; model.selectedID = session.id
+        let pet = PetView(frame: NSRect(x: 0, y: 0, width: 245, height: 32))
+        pet.injectedModel = model
+        pet.updateTrackingAreas()
+        let baseline = pet.trackingAreas.count
+        func pillAreas() -> [NSTrackingArea] { pet.trackingAreas.filter { $0.rect == AgentNotchBadge.hitRect(running: 1, in: pet.bounds) } }
+        XCTAssertTrue(pillAreas().isEmpty, "Without agents the wing has only the island's own tracking.")
+
+        session.subagents = [agent("a", "Diseñar el gato")]
+        model.updateActivity()
+        settle(0.2)
+        XCTAssertEqual(pet.trackingAreas.count, baseline + 1, "The pill gets an area of its own.")
+        let pill = try XCTUnwrap(pillAreas().first)
+        XCTAssertTrue(pill.options.contains(.mouseEnteredAndExited))
+        XCTAssertFalse(pill.options.contains(.inVisibleRect), "It is the pill's rectangle, not the whole wing.")
+
+        session.subagents = []
+        model.updateActivity()
+        settle(0.2)
+        XCTAssertEqual(pet.trackingAreas.count, baseline, "…and loses it when the last agent ends.")
+    }
+
     // MARK: The tooltip's surface
 
     func testTheTooltipGoesUnderTheIslandCentredOnThePillAndInsideTheScreen() {

@@ -22,7 +22,7 @@ enum NotchGeometry {
     }
 }
 
-final class NotchPanel: NSPanel {
+final class NotchPanel: CapturePrivacyPanel {
     var allowsKey = true
     override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
@@ -32,6 +32,35 @@ final class NotchPanel: NSPanel {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.type == .keyDown, onKeyEquivalent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// What the panel is, in the Spaces log (`SpacesJournal`).
+    var spaceRole: String?
+    // Ordered in again, a panel keeps the Spaces it had; one that lost a Space (a wake reconfigured the display while it was put away) would
+    // come back missing it, so each time it comes on screen it is made a member of every Space of its display again (`SpaceMembership`).
+    // Only on the way in: a panel already showing (the drag ghost follows the pointer with an order per move) asks nothing.
+    override func orderFrontRegardless() {
+        let shown = isVisible
+        super.orderFrontRegardless()
+        if !shown { rejoinSpaces() }
+    }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        let shown = isVisible
+        super.order(place, relativeTo: otherWin)
+        if place != .out, !shown { rejoinSpaces() }
+        // What moves in it stops at once, without waiting for its occlusion to be reported (`PetSight`).
+        if place == .out, shown { NotificationCenter.default.post(name: PetSight.wentOffScreen, object: self) }
+    }
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        let shown = isVisible
+        super.makeKeyAndOrderFront(sender)
+        if !shown { rejoinSpaces() }
+    }
+    private func rejoinSpaces() {
+        guard isVisible else { return }
+        SpaceMembership.shared.rejoin(self, reason: "al mostrarse")
+        // The cats in it keep no timer while it is away; this wakes them at once, without waiting for its occlusion to be reported.
+        NotificationCenter.default.post(name: PetSight.cameOnScreen, object: self)
     }
 }
 
@@ -45,23 +74,38 @@ final class PetView: NSView {
     var perk: ((Double) -> CGFloat)?
     private var perkSince: Double?
     private var boostUntil = 0.0
-    private var player = PetPlayer(layout: .compact, seed: PetPlayer.randomSeed())
+    private var driver = PetDriver(layout: .compact)
+    /// The cat that sleeps when Nook opens at night is this cat too (`PetBedtime`).
+    private var bedtime = PetBedtimeFollower()
+    private var petBedtime: PetBedtime? { model?.petBedtime }
     var pose = PetPose()
-    private lazy var ticker = PetTicker { [weak self] in self?.step() }
-    /// Seconds between the cat's frames right now: 0 when it has no timer at all (a still cat), the watchdog's while hidden.
+    /// How the cat is dressed now (`AppModel.pet.look`), read whenever the model changes, so a change in the settings shows at once.
+    private(set) var look = PetLook()
+    private lazy var ticker = PetTicker(timed: { [weak self] lead in self?.step(lead: lead) })
+    /// Seconds between the cat's frames right now: 0 when it has no timer at all (a still cat, or one nobody can see).
     var frameInterval: TimeInterval { ticker.interval }
-    private var pace = PetPace(fast: PetAnimation.compactInterval)
+    /// The ticks the cat has taken (each computes a pose and may repaint): tests count them.
+    private(set) var ticks = 0
     private var user = PetUserProbe()
+    private var dayClock = PetClock()
+    private var dots = PetDotsClock()
+    private var lastNow = 0.0
     /// The pointer was already within the cat's notice, so it has to go a little further to be forgotten.
     private var noticed = false
     private var modelWatch: AnyCancellable?
+    /// A refresh is already on its way for the model's changes of this turn of the run loop.
+    private var refreshQueued = false
+    /// What the cat and the dots were last told by the model: only a change in it calls for a frame (`refresh`).
+    private var heard: PetHeard?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
-    private var windowObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
     private var tracking: NSTrackingArea?
     /// The agent pill's own tracking area: the pointer resting on it explains it (a tooltip) instead of opening the island.
     private var pillTracking: NSTrackingArea?
     private var overPill = false
-    private let pillTip = AgentPillTip()
+    private lazy var pillTip = AgentPillTip { [weak self] panel in
+        panel.capturePrivacy = self?.model?.capturePrivacy
+    }
     private var pillTipWork: DispatchWorkItem?
     private var mouseDownPoint: CGPoint?
     private var dragStarted = false
@@ -69,8 +113,10 @@ final class PetView: NSView {
     private var wasVisible = false
     private var animating = false
     private var shown: (unread: Int, working: Bool, connected: Bool, glyph: String?, agents: Int) = (0, false, false, nil, 0)
-    /// Claude's spinner color, so the symbol in the notch matches the terminal.
-    static let claudeSpinner = NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+    /// The working dots' colour, resolved once: the island's mint on black, the one the open island's header has (`NookTheme.swift`).
+    private static let dotColor = NookPalette.mintOnBlack.cgColor
+    /// Claude's spinner color, so the symbol in the notch matches the terminal (and the open island's: terracotta on black).
+    static let claudeSpinner = NookPalette.terracottaOnBlack
     private var tooltip = "Acércate para abrir Nook. Arrastra el gatito a una terminal para conectarla."
     /// Takes the files dragged onto the collapsed island: after a short hover the island opens so they can be dropped on
     /// it. Transparent and above the cat, so the cat's own drag and the hover are untouched.
@@ -87,19 +133,32 @@ final class PetView: NSView {
         setAccessibilityLabel("Abrir Nook")
         setAccessibilityHelp("También puedes arrastrar aquí un archivo o una carpeta para añadir su ruta al mensaje.")
         let center = NSWorkspace.shared.notificationCenter
-        observers.append((center, center.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }))
+        observers.append((center, center.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh(asked: true) }))
+        // A Mac that starts saving power, or running hot, changes what the cat may do; screens that sleep or wake, whether it is seen.
+        let defaults = NotificationCenter.default
+        observers.append((defaults, defaults.addObserver(forName: PetPowerMonitor.didChange, object: nil, queue: .main) { [weak self] _ in self?.refresh(asked: true) }))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     deinit {
         observers.forEach { $0.0.removeObserver($0.1) }
-        windowObserver.map(NotificationCenter.default.removeObserver)
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        windowObserver.map(NotificationCenter.default.removeObserver); windowObserver = nil
+        windowObservers.forEach(NotificationCenter.default.removeObserver); windowObservers = []
         guard let window else { ticker.stop(); wasVisible = false; return }
-        windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in self?.step() }
+        driver.pace.backing = window.backingScaleFactor
+        // Nobody can see a cat whose window is away or covered, and it keeps no timer: these wake it when it can be seen again.
+        windowObservers = PetSight.wakeups(for: window) { [weak self] in self?.step() }
+        petBedtime?.lights(dark: effectiveAppearance.nookIsDark)
+        refresh()
+    }
+    override func viewDidUnhide() { super.viewDidUnhide(); step() }
+    /// The island's light, as this window shows it: a sleeping cat wakes when it turns light (`PetBedtime.lights`).
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        petBedtime?.lights(dark: effectiveAppearance.nookIsDark)
         refresh()
     }
     override func updateTrackingAreas() {
@@ -177,7 +236,11 @@ final class PetView: NSView {
         else if convert(event.locationInWindow, from: nil).x > bounds.width - 36, controller?.model.unreadCount ?? 0 > 0 { controller?.model.openLatestNotice() }
         // The island with an alert's peek around it is one thing to click: it opens the tab that is calling.
         else if let alert = controller?.peekingAlert { controller?.openAlertTab(alert) }
-        else { controller?.expand(focus: true) }
+        else {
+            // The click that opens the island wakes a sleeping cat: it wakes, gently, in the header the island opens with (hovering to open it does not).
+            petBedtime?.click()
+            controller?.expand(focus: true)
+        }
         mouseDownPoint = nil; dragStarted = false
         controller?.positionPet()
     }
@@ -190,16 +253,26 @@ final class PetView: NSView {
         if accessibilityCustomActions()?.count ?? 0 != actions.count { setAccessibilityCustomActions(actions) }
     }
 
+    /// The model announces every change of anything in it (tabs, snapshots of Terminal, text), several a second while Claude works:
+    /// one refresh answers all the changes of a turn of the run loop.
     private func watchModel() {
-        modelWatch = model?.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+        modelWatch = model?.objectWillChange.sink { [weak self] _ in
+            guard let self, !self.refreshQueued else { return }
+            self.refreshQueued = true
+            DispatchQueue.main.async { [weak self] in self?.refreshQueued = false; self?.refresh() }
+        }
     }
 
-    /// Re-evaluates what to show: indicators, tooltip and whether the cat moves at all (a still cat has no timer).
-    private func refresh() {
+    /// Re-evaluates what to show: indicators, tooltip and whether the cat moves at all (a still cat has no timer). `asked`: the Mac's
+    /// state changed (power, the screens, Reduce Motion), and the cat looks again at once whether it may run and be seen.
+    private func refresh(asked: Bool = false) {
         guard let model else { return }
-        toolTip = overPill ? nil : model.unreadCount > 0 ? "Una terminal tiene un aviso. Haz clic a la derecha para verlo." : tooltip
+        // Only when it changed: this runs on every change of the model, and setting a tooltip re-registers it with the window.
+        let tip = overPill ? nil : model.unreadCount > 0 ? "Una terminal tiene un aviso. Haz clic a la derecha para verlo." : tooltip
+        if toolTip != tip { toolTip = tip }
         let state = (unread: model.unreadCount, working: model.working, connected: model.selected != nil, glyph: model.activityGlyph, agents: model.runningSubagents)
         var dirty = state != shown
+        if look != model.pet.look { look = model.pet.look; dirty = true }
         // The pill's area (and its width at ten agents) follows the count.
         let reshaped = (state.agents > 0) != (shown.agents > 0) || (state.agents > 9) != (shown.agents > 9)
         shown = state
@@ -210,16 +283,20 @@ final class PetView: NSView {
             else if pillTip.isShown { showPillTip() }
         }
         syncAccessibility(agents: state.agents)
-        animating = model.animations && !PetAnimation.motionReduced
+        animating = model.animations && !PetAnimation.motionReduced && PetPowerMonitor.shared.state != .minimal
         if animating {
-            if ticker.interval == 0 { ticker.run(every: PetAnimation.watchdogInterval) }
             if dirty { needsDisplay = true }
-            step()
+            // A frame now only for what the cat or the dots show, or for a cat that has no timer (it may have just come into sight).
+            // The rest of the model's traffic (tabs, Terminal's snapshots every two seconds, text) waits for the cat's next tick: a frame
+            // for each would wake the Mac and repaint out of the cat's own rhythm.
+            let news = PetHeard(model)
+            if news != heard || ticker.interval == 0 || asked { heard = news; step() }
             return
         }
         // A still cat has no timer: its pose says what is going on instead of moving to say it.
-        ticker.stop(); player.settle(); wasVisible = false
-        let still = PetAnimation.staticPose(working: model.working, attention: model.unreadCount > 0)
+        heard = nil
+        ticker.stop(); driver.settle(); wasVisible = false
+        let still = PetAnimation.staticPose(working: model.working, attention: model.unreadCount > 0, asleep: model.petBedtime.isAsleep)
         if pose != still { pose = still; dirty = true }
         if dirty { needsDisplay = true }
     }
@@ -231,33 +308,39 @@ final class PetView: NSView {
         step()
     }
 
-    private func step() {
+    /// One tick: from the display link (with how far ahead its frame will be shown), from the timer, or from something that happened.
+    private func step(lead: CFTimeInterval? = nil) {
         guard animating, let model else { return }
-        // A hidden island only keeps a slow watchdog alive so the cat wakes up when it collapses again.
-        // A window can stay "visible" while fully covered (a full-screen app): only occlusion says it is seen.
-        guard window?.isVisible == true, window?.occlusionState.contains(.visible) == true, !isHidden else { wasVisible = false; hovering = false; ticker.run(every: PetAnimation.watchdogInterval); return }
-        if !wasVisible { wasVisible = true; player.settle(); ticker.host = self; ticker.run(every: PetAnimation.compactInterval) }
-        let now = ProcessInfo.processInfo.systemUptime
+        // Nobody can see it (the island is open, a full-screen app covers it, the screens sleep or are locked): no timer at all, until
+        // what brings it back wakes it (`PetSight`).
+        guard PetSight.canSee(self) else { wasVisible = false; hovering = false; ticker.pause(); return }
+        ticks += 1
+        if !wasVisible { wasVisible = true; driver.settle(); ticker.host = self; ticker.run(every: PetCadence.fast(.compact, power: PetPowerMonitor.shared.state)) }
+        let now = max(ProcessInfo.processInfo.systemUptime + (lead ?? 0), lastNow)
+        lastNow = now
+        // In bed at night, or woken since it last looked.
+        bedtime.follow(petBedtime, player: &driver.player, now: ProcessInfo.processInfo.systemUptime)
         // The pointer: noticed from a little way off (the cat looks at it), or anywhere over the island.
         let head = CGPoint(x: PetAnimation.compactAnchor + pose.x + pose.head.x * PetAnimation.compactScale, y: bounds.height / 2 - 9 + (pose.head.y + pose.y) * PetAnimation.compactScale)
         let gaze = petGaze(head: head, enter: 48, leave: 64, noticed: &noticed, over: hovering || mouseDownPoint != nil)
-        user.read(now: now)
+        user.read(now: now); dayClock.read(now: now)
         var input = PetInput(working: model.working, gaze: gaze, dragging: dragStarted || controller?.isDraggingPet == true, completions: model.completions,
                              focus: .from(keyAge: user.keyAge, scrollAge: user.scrollAge), idle: user.idle, needsAttention: model.unreadCount > 0)
+        input.prefs = model.pet; input.power = PetPowerMonitor.shared.state; input.dayPart = dayClock.part
         if let amount = perk?(now), amount > 0.001 {
             let since = perkSince ?? now
             perkSince = since
             input.perk = amount; input.perkAge = now - since
         } else { perkSince = nil }
-        let next = player.pose(now: now, layout: .compact(height: bounds.height), motion: true, input: input)
-        let dots = model.working && model.unreadCount == 0 && model.activityGlyph == nil
-        // The working dots wave on their own, so they keep at least 15 frames a second. A gesture under way runs at the full rate.
-        var wanted = pace.interval(for: next, now: now)
-        if player.isBusy { wanted = PetAnimation.compactInterval }
-        ticker.run(every: min(now < boostUntil ? PetAnimation.compactInterval : wanted, dots ? 1.0 / 15 : .infinity))
-        // Frames repaint only what moved: the cat's wing, and the dots while they wave.
-        if next.distance(to: pose) > 0.01 || next.action != pose.action { pose = next; setNeedsDisplay(Self.catArea(bounds)) }
-        if dots { setNeedsDisplay(Self.indicatorArea(bounds)) }
+        driver.pace.backing = window?.backingScaleFactor ?? 2
+        let tick = driver.tick(now: now, layout: .compact(height: bounds.height), input: input)
+        // The working dots wave on their own, so they keep a frame rate of their own (and only theirs, however often the cat ticks).
+        // A reaction that has just begun runs at the full rate even if the cat was only breathing.
+        let dotFrame = dots.frame(now: now, waving: model.working && model.unreadCount == 0 && model.activityGlyph == nil)
+        ticker.run(every: min(now < boostUntil ? min(tick.interval, 1.0 / 20) : tick.interval, dotFrame.within ?? .infinity))
+        // Frames repaint only what moved: the cat's wing, and the dots when their frame is due.
+        if tick.draw { pose = tick.pose; setNeedsDisplay(Self.catArea(bounds)) }
+        if dotFrame.draw { setNeedsDisplay(Self.indicatorArea(bounds)) }
     }
 
     static func catArea(_ bounds: NSRect) -> NSRect { NSRect(x: 0, y: 0, width: 40, height: bounds.height) }
@@ -278,21 +361,18 @@ final class PetView: NSView {
 
     /// Paints the cat in the wing of an island of `bounds` (origin at its bottom left). The island's own shape is the
     /// mask: a cat peeking over the edge is cut by it, and nothing can land outside what the island draws.
-    static func drawCat(_ pose: PetPose, bounds: NSRect) {
-        NSGraphicsContext.saveGraphicsState()
-        defer { NSGraphicsContext.restoreGraphicsState() }
-        islandPath(bounds).addClip()
-        let ground = bounds.height / 2 - 9
-        NSGraphicsContext.current?.cgContext.translateBy(x: PetAnimation.compactAnchor + pose.x, y: ground)
-        NSGraphicsContext.current?.cgContext.scaleBy(x: PetAnimation.compactScale, y: PetAnimation.compactScale)
-        PetAnimation.draw(pose, color: .white, ledge: -ground / PetAnimation.compactScale)
+    static func drawCat(_ pose: PetPose, look: PetLook = PetLook(), bounds: NSRect) {
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        PetWing.drawCat(pose, look: look, bounds: bounds, in: cg)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill()
-        Self.islandPath(bounds).fill()
-        // Animation frames only dirty the cat's wing; text in the other wing is laid out only when it changes.
-        if dirtyRect.intersects(Self.catArea(bounds)) { Self.drawCat(pose, bounds: bounds) }
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        // The island's black, and over it the cat; the path is made once per size. Animation frames only dirty the cat's wing; text in
+        // the other wing is laid out only when it changes.
+        cg.setFillColor(CGColor(gray: 0, alpha: 1))
+        cg.addPath(PetWing.islandPath(bounds)); cg.fillPath()
+        if dirtyRect.intersects(Self.catArea(bounds)) { PetWing.drawCat(pose, look: look, bounds: bounds, in: cg) }
         if dirtyRect.intersects(Self.indicatorArea(bounds)) { drawIndicators() }
     }
 
@@ -300,7 +380,7 @@ final class PetView: NSView {
         let working = model?.working == true
         if model?.unreadCount ?? 0 > 0 {
             let rect = NSRect(x: bounds.width - 25, y: bounds.midY - 6, width: 12, height: 12)
-            NSColor(red: 0.91, green: 0.79, blue: 0.54, alpha: 1).setFill()
+            NookPalette.amberOnBlack.setFill()
             NSBezierPath(ovalIn: rect).fill()
             ("!" as NSString).draw(at: NSPoint(x: rect.minX + 4.1, y: rect.minY + 0.5), withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .bold), .foregroundColor: NSColor.black])
         } else if working, let glyph = model?.activityGlyph {
@@ -308,48 +388,92 @@ final class PetView: NSView {
             let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: Self.claudeSpinner]
             let size = (glyph as NSString).size(withAttributes: attributes)
             (glyph as NSString).draw(at: NSPoint(x: bounds.width - 19 - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attributes)
-        } else if working {
+        } else if working, let cg = NSGraphicsContext.current?.cgContext {
+            // Three dots that wave (drawn straight into the context: this is repainted eight times a second while Claude works).
+            cg.setFillColor(Self.dotColor)
             for i in 0..<3 {
-                NSColor.systemMint.setFill()
-                let offset = animating ? sin(player.wall * 5 + CGFloat(i)) * 2 : 0
-                NSBezierPath(ovalIn: NSRect(x: bounds.width - 27 + CGFloat(i) * 5, y: bounds.midY - 1.5 + offset, width: 3, height: 3)).fill()
+                let offset = animating ? sin(driver.player.wall * 5 + CGFloat(i)) * 2 : 0
+                cg.fillEllipse(in: CGRect(x: bounds.width - 27 + CGFloat(i) * 5, y: bounds.midY - 1.5 + offset, width: 3, height: 3))
             }
         } else if model?.selected != nil {
-            NSColor.systemMint.setFill()
+            NookPalette.mintOnBlack.withAlphaComponent(0.65).setFill()
             NSBezierPath(ovalIn: NSRect(x: bounds.width - 18, y: bounds.midY - 2, width: 4, height: 4)).fill()
         }
         AgentNotchBadge.draw(running: model?.runningSubagents ?? 0, in: bounds)
     }
 }
 
+/// What the collapsed cat and its dots take from the model: Claude working, the completions it cheers, a notice waiting, what the notch
+/// shows instead of the dots, and the user's choices. A change in anything else of the model is no reason for a frame.
+private struct PetHeard: Equatable {
+    var working: Bool, completions: Int, attention: Bool, glyph: Bool, pet: PetPreferences
+    init(_ model: AppModel) {
+        working = model.working; completions = model.completions; attention = model.unreadCount > 0
+        glyph = model.activityGlyph != nil; pet = model.pet
+    }
+}
+
 import SwiftUI
 /// The cat as a standalone icon: the transition overlay in the panel and, with `scaleFactor`, the drag ghost.
 struct CatIcon: NSViewRepresentable {
+    /// Kept for callers that pass one: the cat's colour is its coat (`look`).
     var color: NSColor = .labelColor
     var animated = false
     var working = false
     var controller: NotchController?
+    /// How the user dressed the cat (`AppModel.pet`).
+    var look = PetLook()
+    /// The cat is in bed for the night (`PetBedtime`): the overlay stands in for the collapsed cat, which is asleep.
+    var asleep = false
     func makeNSView(context: Context) -> CatIconView { let view = CatIconView(); view.xOffset = CatIconView.overlayOffset; return view }
-    func updateNSView(_ nsView: CatIconView, context: Context) { nsView.color = color; nsView.animated = animated; nsView.working = working; nsView.controller = controller; nsView.needsDisplay = true }
+    func updateNSView(_ nsView: CatIconView, context: Context) {
+        nsView.controller = controller
+        nsView.show(color: color, look: look, animated: animated, working: working, asleep: asleep)
+    }
 }
 final class CatIconView: NSView {
     /// Puts the overlay cat where the compact one sits: the panel lays a 24 pt icon out at x 8 and scales it by 0.6 around its centre.
     static let overlayOffset: CGFloat = (PetAnimation.compactAnchor - 20) / 0.6
     var color: NSColor = .labelColor
+    /// The coat and what the cat wears, as the collapsed island's cat has them.
+    var look = PetLook()
     var animated = false
     var working = false
+    /// Asleep in bed for the night: a still, curled cat.
+    var asleep = false
     var scaleFactor: CGFloat = 1
     var xOffset: CGFloat = 0
     weak var controller: NotchController?
+    /// The frame last painted caught the cat with its eyes closing or closed (`CatIcon` repaints it at its next update).
+    private(set) var holdsBlink = false
     private var dragStart: CGPoint?
     private var dragging = false
     private lazy var ticker = PetTicker { [weak self] in self?.step() }
     private var windowObserver: NSObjectProtocol?
     /// The drag ghost owns its panel; it dangles from the pointer instead of sitting.
     private var isGhost: Bool { window?.contentView === self }
+    /// How far the dangling cat has swung, in radians: a pendulum hung from the pointer. It swings against the way the pointer moves,
+    /// overshoots, and hangs straight again when the pointer stops.
+    private(set) var swing = PetSpring()
+    private var lastOrigin: (point: CGPoint, time: Double)?
+    /// The swing a pointer moving sideways at `velocity` points a second pulls the cat toward: against the motion, and never far enough
+    /// to leave the little window the ghost lives in.
+    static func swingTarget(velocity: CGFloat) -> CGFloat { max(-0.4, min(0.4, -velocity * 0.0006)) }
     override init(frame frameRect: NSRect) { super.init(frame: frameRect) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { windowObserver.map(NotificationCenter.default.removeObserver) }
+
+    /// What `CatIcon` hands the view on an update of the panel. It is repainted only when what it shows changed, or when the frame it
+    /// holds caught a blink (it stands in for the collapsed cat, whose eyes are open nearly always): SwiftUI updates it whenever the
+    /// panel passes it something it cannot tell is the same, it is drawn even while the panel hides it (opacity 0), and a repaint costs
+    /// far more than the drawing in it. Returns whether it is repainted.
+    @discardableResult func show(color: NSColor, look: PetLook, animated: Bool, working: Bool, asleep: Bool = false) -> Bool {
+        let changed = self.color != color || self.look != look || self.animated != animated || self.working != working || self.asleep != asleep
+        self.color = color; self.look = look; self.animated = animated; self.working = working; self.asleep = asleep
+        guard changed || holdsBlink else { return false }
+        needsDisplay = true
+        return true
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -360,9 +484,18 @@ final class CatIconView: NSView {
     }
     private func step() {
         // The drag ghost follows the same "Animaciones de la mascota" preference as the other cats.
-        guard isGhost, animated, window?.isVisible == true, !PetAnimation.motionReduced else { ticker.stop(); needsDisplay = true; return }
+        guard isGhost, animated, window?.isVisible == true, !PetAnimation.motionReduced else { ticker.stop(); swing = PetSpring(); lastOrigin = nil; needsDisplay = true; return }
         ticker.host = self
-        ticker.run(every: 1.0 / 60)
+        ticker.run(every: PetAnimation.ghostInterval)
+        // Swung by the way the pointer carries it.
+        if let window {
+            let now = ProcessInfo.processInfo.systemUptime, origin = window.frame.origin
+            if let last = lastOrigin, now > last.time {
+                let dt = min(now - last.time, 0.1)
+                _ = swing.advance(to: Self.swingTarget(velocity: (origin.x - last.point.x) / CGFloat(dt)), PetSpring.Step(w: 8, zeta: 0.28, dt: CGFloat(dt)))
+            }
+            lastOrigin = (origin, now)
+        }
         needsDisplay = true
     }
     override func mouseDown(with event: NSEvent) { dragStart = NSEvent.mouseLocation; dragging = false; controller?.cancelScheduledExpand() }
@@ -381,11 +514,20 @@ final class CatIconView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let moving = !PetAnimation.motionReduced
         let now = ProcessInfo.processInfo.systemUptime
-        let pose = isGhost ? PetAnimation.lifted(time: animated && moving ? now : 0) : (animated && moving ? PetAnimation.sit(time: now) : PetPose())
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current?.cgContext.translateBy(x: bounds.midX + xOffset * scaleFactor, y: bounds.midY - 15 * scaleFactor)
-        NSGraphicsContext.current?.cgContext.scaleBy(x: scaleFactor, y: scaleFactor)
-        PetAnimation.draw(pose, color: color)
-        NSGraphicsContext.restoreGraphicsState()
+        var pose = isGhost ? PetAnimation.lifted(time: animated && moving ? now : 0) : (animated && moving ? PetAnimation.sit(time: now) : PetPose())
+        // The cat of the overlay blinks like the one it stands in for; one that sleeps is curled up, still.
+        let open = pose.eyes
+        let sleeping = asleep && !isGhost
+        if sleeping { pose = PetAnimation.asleepPose() }
+        if !isGhost, animated, moving, !sleeping { PetLife.apply(&pose, PetLife.Context(time: now)) }
+        holdsBlink = pose.eyes < open * 0.9
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        cg.saveGState()
+        cg.translateBy(x: bounds.midX + xOffset * scaleFactor, y: bounds.midY - 15 * scaleFactor)
+        cg.scaleBy(x: scaleFactor, y: scaleFactor)
+        // Held by the scruff, at the top of the head: the whole cat swings from there.
+        if isGhost, swing.x != 0 { cg.translateBy(x: 0, y: 28); cg.rotate(by: swing.x); cg.translateBy(x: 0, y: -28) }
+        PetPainter.draw(pose, look: look, in: cg)
+        cg.restoreGState()
     }
 }

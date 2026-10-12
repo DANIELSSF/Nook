@@ -1,38 +1,45 @@
 import SwiftUI
 import Combine
 
-// A session tab shows when its Claude has subagents: a small badge after the tab's title (a spinner and the number
-// of agents working, in Claude's terracotta; a quiet mint check for finished ones, an amber mark for failed ones).
-// Pointing at it, or clicking it, opens that tab's list (`SubagentList`) under the tab row.
+// A session tab shows when its Claude has subagents or background shells: a small badge after the tab's title (a spinner and the number of agents and
+// shells working, in Claude's terracotta; a quiet mint check for finished ones, an amber mark for failed ones). Pointing at it, or clicking it, opens
+// that tab's list (`SubagentList`) under the tab row.
 //
 // The list is drawn by `TabAgentListHost`, an overlay of the tab row, and not by the badge itself: the tabs sit in a
 // horizontal ScrollView, which would clip a card hanging from one of them. The badge only tells the shared
 // `TabAgentListPresenter` where it is and when the pointer is over it.
 //
-// Cheap on purpose: the badge is driven by `TabAgentState`, which changes when an agent starts or ends and not
+// Cheap on purpose: the badge is driven by `TabAgentState`, which changes when an agent or a shell starts or ends and not
 // when a counter ticks, and nothing here owns a repeating timer. The only schedules are SwiftUI's own, for the
 // spinner, and they pause with Reduce Motion, with the animations preference and while the island is collapsed.
+//
+// The shells are the ones Claude's record names. The count Claude's mode line gives (`ShellHint`) is a hint read from a screen that is not always
+// fresh, and a tab's badge is seen from the other tabs: only the composer's capsule goes by it.
 
 // MARK: - State
 
-/// What a tab shows of its agent's subagents: working ones clearly, finished or failed ones quietly for a while after
-/// the last one ends.
+/// What a tab shows of its Claude's subagents and background shells: working ones clearly, finished or failed ones quietly for a while after the last one
+/// ends.
 struct TabAgentState: Equatable {
     enum Kind: Equatable { case running, failed, done }
 
-    private(set) var running = 0
-    private(set) var failed = 0
-    private(set) var done = 0
-    /// The last working agent ended a moment ago, so finished and failed ones may still show.
+    private(set) var agents = SubagentSummary([])
+    private(set) var shells = ShellSummary()
+    /// The last working agent or shell ended a moment ago, so finished and failed ones may still show.
     private(set) var lingering = false
 
-    init(_ summary: SubagentSummary = SubagentSummary([]), lingering: Bool = false) {
-        running = summary.running; failed = summary.failed; done = summary.done
+    var running: Int { agents.running + shells.active }
+    var failed: Int { agents.failed + shells.failed }
+    var done: Int { agents.done + shells.done }
+
+    init(_ summary: SubagentSummary = SubagentSummary([]), shells: ShellSummary = ShellSummary(), lingering: Bool = false) {
+        agents = summary
+        self.shells = shells
         self.lingering = lingering
     }
 
-    init(_ agents: [SubagentActivity], lingering: Bool = false) {
-        self.init(SubagentSummary(agents), lingering: lingering)
+    init(_ agents: [SubagentActivity], shells: [ShellActivity] = [], lingering: Bool = false) {
+        self.init(SubagentSummary(agents), shells: ShellSummary(shells), lingering: lingering)
     }
 
     /// What the badge says, or nil when the tab shows nothing. Working beats failed beats finished.
@@ -43,7 +50,7 @@ struct TabAgentState: Equatable {
         return done > 0 ? .done : nil
     }
 
-    /// The number beside the symbol: the agents of the state the badge shows.
+    /// The number beside the symbol: the agents and shells of the state the badge shows.
     var count: Int {
         switch kind { case .running: running; case .failed: failed; case .done: done; case nil: 0 }
     }
@@ -55,19 +62,40 @@ struct TabAgentState: Equatable {
 
     private static func agents(_ count: Int) -> String { count == 1 ? "1 agente" : "\(count) agentes" }
 
+    /// "2 agentes y 1 shell": whichever of the two there are.
+    private static func things(agents: Int, shells: Int) -> String {
+        [agents > 0 ? Self.agents(agents) : nil, shells > 0 ? ShellWords.count(shells) : nil].compactMap { $0 }.joined(separator: " y ")
+    }
+
+    /// What the badge's list is about, for VoiceOver.
+    var title: String {
+        switch (agents.total > 0, shells.total > 0) {
+        case (_, false): return "Agentes de Claude"
+        case (false, true): return "Shells de Claude"
+        case (true, true): return "Agentes y shells de Claude"
+        }
+    }
+
     /// The badge in words, for VoiceOver.
     var label: String {
         switch kind {
-        case .running: Self.agents(running) + " trabajando" + (failed > 0 ? ", \(failed) con error" : "")
-        case .failed: failed == 1 ? "1 agente con error" : "\(failed) agentes con error"
-        case .done: Self.agents(done) + (done == 1 ? " listo" : " listos")
+        case .running: Self.things(agents: agents.running, shells: shells.active) + " trabajando" + (failed > 0 ? ", \(failed) con error" : "")
+        case .failed: Self.things(agents: agents.failed, shells: shells.failed) + " con error"
+        case .done: Self.things(agents: agents.done, shells: shells.done) + (done == 1 ? " listo" : " listos")
         case nil: ""
         }
     }
 }
 
-/// Follows one session's subagents and says what its tab should show. Finished agents show for a minute after the last
-/// working one ends; a tab that is only ever seen with old, finished agents stays quiet. It publishes only when the
+/// What a tracker counts: the agents and the shells, which is all the badge needs of them.
+private struct TabAgentCounts: Equatable {
+    var agents: SubagentSummary
+    var shells: ShellSummary
+    var running: Int { agents.running + shells.active }
+}
+
+/// Follows one session's subagents and shells and says what its tab should show. Finished ones show for a minute after the last
+/// working one ends; a tab that is only ever seen with old, finished ones stays quiet. It publishes only when the
 /// badge would change, so the tab does not redraw for every counter that ticks.
 @MainActor
 final class TabAgentTracker: ObservableObject {
@@ -75,31 +103,32 @@ final class TabAgentTracker: ObservableObject {
     nonisolated static let lingerSeconds = 60.0
 
     @Published private(set) var state = TabAgentState()
-    private var summary = SubagentSummary([])
+    private var counts = TabAgentCounts(agents: SubagentSummary([]), shells: ShellSummary())
     private var lingering = false
     private var lingerTask: Task<Void, Never>?
     private var subscription: AnyCancellable?
     private let linger: Double
 
-    init(agents: AnyPublisher<[SubagentActivity], Never>, linger: Double = lingerSeconds) {
+    init(agents: AnyPublisher<[SubagentActivity], Never>, shells: AnyPublisher<[ShellActivity], Never> = Just([]).eraseToAnyPublisher(), linger: Double = lingerSeconds) {
         self.linger = linger
-        // Only a change in how many agents are in each state matters; durations and activity lines tick on their own.
-        subscription = agents.map(SubagentSummary.init).removeDuplicates().sink { [weak self] summary in
+        // Only a change in how many are in each state matters; durations and activity lines tick on their own.
+        subscription = Publishers.CombineLatest(agents.map(SubagentSummary.init), shells.map { ShellSummary($0) })
+            .map { TabAgentCounts(agents: $0, shells: $1) }.removeDuplicates().sink { [weak self] counts in
             // The session publishes on the main thread; anything else hops there instead of touching the state from outside.
-            if Thread.isMainThread { MainActor.assumeIsolated { self?.update(summary) } }
-            else { DispatchQueue.main.async { self?.update(summary) } }
+            if Thread.isMainThread { MainActor.assumeIsolated { self?.update(counts) } }
+            else { DispatchQueue.main.async { self?.update(counts) } }
         }
     }
 
     convenience init(session: TerminalSession, linger: Double = lingerSeconds) {
-        self.init(agents: session.$subagents.eraseToAnyPublisher(), linger: linger)
+        self.init(agents: session.$subagents.eraseToAnyPublisher(), shells: session.$shells.eraseToAnyPublisher(), linger: linger)
     }
 
     deinit { lingerTask?.cancel() }
 
-    private func update(_ next: SubagentSummary) {
-        let wasWorking = summary.running > 0
-        summary = next
+    private func update(_ next: TabAgentCounts) {
+        let wasWorking = counts.running > 0
+        counts = next
         if next.running > 0 {
             lingerTask?.cancel(); lingering = false
         } else if wasWorking {
@@ -120,7 +149,7 @@ final class TabAgentTracker: ObservableObject {
     }
 
     private func publish() {
-        let next = TabAgentState(summary, lingering: lingering)
+        let next = TabAgentState(counts.agents, shells: counts.shells, lingering: lingering)
         if next != state { state = next }
     }
 }
@@ -259,6 +288,8 @@ struct TabAgentBadge: View {
     /// False holds the spinner still (the preference, a collapsed island); Reduce Motion does the same.
     var animated: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Nobody can see the island (`\.islandSeen`): what moves here pauses.
+    @Environment(\.islandSeen) private var seen
 
     static let height: CGFloat = 14
 
@@ -274,8 +305,8 @@ struct TabAgentBadge: View {
             .overlay(alignment: .topTrailing) {
                 // Something failed while the others still work.
                 if state.warns {
-                    Circle().fill(AgentPalette.failed).frame(width: 5, height: 5)
-                        .overlay(Circle().stroke(Color.black, lineWidth: 1).padding(-1))
+                    Circle().fill(AgentPalette.failedFill).frame(width: 5, height: 5)
+                        .overlay(Circle().stroke(Color.nookScreenSolid, lineWidth: 1).padding(-1))
                         .offset(x: 1.5, y: -1.5)
                 }
             }
@@ -294,10 +325,9 @@ struct TabAgentBadge: View {
     @ViewBuilder private func symbol(_ kind: TabAgentState.Kind) -> some View {
         switch kind {
         case .running:
-            let still = !animated || reduceMotion
-            TimelineView(.animation(minimumInterval: 0.16, paused: still)) { context in
-                Text(SubagentStateGlyph.symbol(at: context.date, still: still)).font(.system(size: 10, weight: .bold)).foregroundStyle(tint(kind))
-            }
+            // Turned by an AppKit view of its own (`SpinnerGlyphView`), which repaints only itself; still with Reduce Motion or the animations
+            // off, and paused while nobody can see the island (`\.islandSeen`).
+            SpinnerGlyph(size: 10, color: tint(kind), still: !animated || reduceMotion, seen: seen)
         case .failed:
             Image(systemName: "exclamationmark").font(.system(size: 8.5, weight: .bold)).foregroundStyle(tint(kind))
         case .done:
@@ -321,13 +351,13 @@ struct TabAgentIndicator: View {
             TabAgentBadge(state: state, animated: animated)
                 .padding(.vertical, 4).contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .nookPress(.none, depth: PressDepth.card)
         .onHover { presenter.badgeHover(sessionID, frame: frame, over: $0) }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(TabAgentListPresenter.space)) } action: { new in
             frame = new
             presenter.move(sessionID, to: new)
         }
-        .accessibilityLabel("Agentes de Claude")
+        .accessibilityLabel(state.title)
         .accessibilityValue(state.label)
     }
 }
@@ -347,11 +377,14 @@ struct TabAgentListHost: View {
     var maxHeight: CGFloat = TabAgentListLayout.maxHeight
     /// A click on an agent's row: its conversation opens (the tab's list goes away with it).
     var onOpen: ((TerminalSession, SubagentActivity) -> Void)?
+    /// A click on a shell's row: its output opens, the same way.
+    var onOpenShell: ((TerminalSession, ShellActivity) -> Void)?
 
     var body: some View {
         Group {
             if let open = presenter.open, let session = sessions.first(where: { $0.id == open.id }) {
-                TabAgentListCard(session: session, animated: animated, width: width, maxHeight: maxHeight, onOpen: onOpen.map { open in { agent in open(session, agent) } })
+                TabAgentListCard(session: session, animated: animated, width: width, maxHeight: maxHeight, onOpen: onOpen.map { open in { agent in open(session, agent) } },
+                                 onOpenShell: onOpenShell.map { open in { shell in open(session, shell) } })
                     .onHover { presenter.cardHover($0) }
                     .offset(x: TabAgentListLayout.originX(badge: open.frame, width: width, container: containerWidth), y: TabAgentListLayout.originY)
                     // A fade only: it is no motion, so Reduce Motion keeps it.
@@ -370,9 +403,10 @@ private struct TabAgentListCard: View {
     var width: CGFloat
     var maxHeight: CGFloat
     var onOpen: ((SubagentActivity) -> Void)?
+    var onOpenShell: ((ShellActivity) -> Void)?
 
     var body: some View {
-        SubagentList(agents: session.subagents, animated: animated, title: session.displayTitle, tint: session.tint.color,
-                     width: width, maxHeight: maxHeight, dim: TabAgentListLayout.dim, onOpen: onOpen)
+        SubagentList(agents: session.subagents, shells: session.shells, animated: animated, title: session.displayTitle, tint: session.tint.color,
+                     width: width, maxHeight: maxHeight, dim: TabAgentListLayout.dim, onOpen: onOpen, onOpenShell: onOpenShell)
     }
 }

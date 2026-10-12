@@ -5,7 +5,7 @@ import Speech
 /// The macOS permissions Nook uses: what each one is for, whether it is on, and how to turn it on
 /// (asking macOS where it can still ask, else opening the exact pane of System Settings).
 enum NookPermission: String, CaseIterable, Identifiable {
-    case automation, accessibility, microphone, speech
+    case automation, accessibility, microphone, speech, screenRecording
     var id: String { rawValue }
 
     enum State: Equatable {
@@ -24,6 +24,7 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .accessibility: "Accesibilidad"
         case .microphone: "Micrófono"
         case .speech: "Reconocimiento de voz"
+        case .screenRecording: "Grabación de pantalla"
         }
     }
 
@@ -33,15 +34,17 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .accessibility: "keyboard"
         case .microphone: "mic"
         case .speech: "waveform"
+        case .screenRecording: "rectangle.dashed.badge.record"
         }
     }
 
     var purpose: String {
         switch self {
         case .automation: "Leer tus pestañas de Terminal y escribir en ellas tus mensajes. Sin él, Nook no puede seguir pestañas de Terminal."
-        case .accessibility: "Pulsar flechas, Tab, Esc y ⌃V en tu pestaña de Terminal: menús de Claude, tarjetas de preguntas y pegar imágenes como [Image #1]. Los mensajes y Enter funcionan sin él."
+        case .accessibility: "Pulsar flechas, Tab y Esc en menús, selectores (modelos) y paneles (/usage), ⇧⇥ para el modo y ⌘T para abrir pestañas (sin él, en una ventana). Mensajes, Enter, elegir opciones en la tarjeta de preguntas y pegar imágenes funcionan sin él."
         case .microphone: "Escuchar tu voz para dictar el borrador."
         case .speech: "Convertir lo que dictas en texto. Usa el reconocimiento del Mac cuando está disponible."
+        case .screenRecording: "Que Claude vea tu pantalla (visión de pantalla): capturas sin las ventanas de Nook al enviar un mensaje o cuando Claude las pide. Solo se usa si activas la visión de pantalla."
         }
     }
 
@@ -55,6 +58,7 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .accessibility: "Privacy_Accessibility"
         case .microphone: "Privacy_Microphone"
         case .speech: "Privacy_SpeechRecognition"
+        case .screenRecording: "Privacy_ScreenCapture"
         }
         return URL(string: "x-apple.systempreferences:com.apple.preference.security?" + pane)!
     }
@@ -68,9 +72,12 @@ enum NookPermission: String, CaseIterable, Identifiable {
                     "Si Nook no aparece, pulsa «Pedir permiso» aquí: macOS muestra su aviso la primera vez que Nook habla con Terminal (Terminal tiene que estar abierta)."]
         case .accessibility:
             return [open, "Activa Nook. Si no está en la lista, pulsa «+» y elige Nook.app (en la carpeta dist del proyecto o donde lo tengas).",
-                    "Si ya estaba activado y aun así no funciona, quítalo con «−» y vuelve a añadirlo."]
+                    "Si Ajustes lo muestra activado pero Nook dice que no lo está, pulsa «Abrir Ajustes» aquí: Nook se registra de nuevo y solo tienes que activarlo una vez."]
         case .microphone, .speech:
             return [open, "Activa Nook.", "Si no aparece, pulsa «Pedir permiso» aquí o usa el micrófono de Nook: macOS pregunta la primera vez."]
+        case .screenRecording:
+            return [open, "Activa Nook. Si no está en la lista, pulsa «Pedir permiso» aquí: macOS lo añade la primera vez.",
+                    "Si macOS te ofrece «Salir y volver a abrir», acéptalo: el permiso cuenta desde que Nook vuelve a abrirse."]
         }
     }
 
@@ -80,8 +87,12 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .accessibility: "Accesibilidad"
         case .microphone: "Micrófono"
         case .speech: "Reconocimiento de voz"
+        case .screenRecording: Self.screenRecordingPane
         }
     }
+
+    /// Screen Recording's pane, by the name macOS gives it.
+    static let screenRecordingPane = "Grabación de pantalla y audio del sistema"
 
     /// The state now, without prompting. Reading Terminal's permission talks to the system, so call
     /// this off the main thread.
@@ -91,6 +102,7 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .automation: return Self.automationState(Self.automationStatus(ask: false))
         case .microphone: return Self.captureState(AVCaptureDevice.authorizationStatus(for: .audio))
         case .speech: return Self.speechState(SFSpeechRecognizer.authorizationStatus())
+        case .screenRecording: return ScreenRecordingAccess.state()
         }
     }
 
@@ -111,10 +123,16 @@ enum NookPermission: String, CaseIterable, Identifiable {
             AVCaptureDevice.requestAccess(for: .audio) { _ in finish(self.state()) }
         case .speech:
             SFSpeechRecognizer.requestAuthorization { _ in finish(self.state()) }
+        case .screenRecording:
+            // macOS shows its prompt once and answers at once; the switch itself is in System Settings.
+            ScreenRecordingAccess.request(); finish(state())
         }
     }
 
-    func openSettings() { NSWorkspace.shared.open(settingsURL) }
+    func openSettings() {
+        // Accessibility's pane goes through its request, which first clears a record macOS no longer honours.
+        if self == .accessibility && !DirectKeys.allowed { DirectKeys.request() } else { NSWorkspace.shared.open(settingsURL) }
+    }
 
     static func automationStatus(ask: Bool) -> OSStatus {
         let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.Terminal")
@@ -146,6 +164,12 @@ enum NookPermission: String, CaseIterable, Identifiable {
         case .denied, .restricted: .denied
         @unknown default: .unknown
         }
+    }
+
+    /// macOS only says whether Screen Recording is granted. Once Nook has asked, its prompt never shows again, so "not granted"
+    /// means refused or switched off.
+    static func screenRecordingState(granted: Bool, asked: Bool) -> State {
+        granted ? .granted : asked ? .denied : .notAsked
     }
 
     /// Every permission's state, read off the main thread and delivered on it.

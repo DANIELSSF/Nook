@@ -3,12 +3,12 @@ import Combine
 
 /// Colors and words of the alert peek, from the island's own palette.
 enum AlertPeekStyle {
-    /// Nook's mint accent: an agent finished.
-    static let finished = NSColor(red: 0.32, green: 0.73, blue: 0.61, alpha: 1)
+    /// Nook's mint: an agent finished. The peek is black in both themes (it grows out of the notch), so these are the colours that read on black.
+    static let finished = NookPalette.mintOnBlack
     /// The amber of the unread badge: an agent asks for something.
-    static let question = NSColor(red: 0.91, green: 0.79, blue: 0.54, alpha: 1)
+    static let question = NookPalette.amberOnBlack
     /// A soft red: an agent stopped with an error.
-    static let failed = NSColor(red: 0.94, green: 0.42, blue: 0.42, alpha: 1)
+    static let failed = NookPalette.coralOnBlack
 
     static func color(_ kind: NookAlert.Kind) -> NSColor {
         switch kind { case .finished: finished; case .question: question; case .failed: failed }
@@ -251,11 +251,13 @@ final class AlertPeekController {
     private func peekPanel(_ view: AlertPeekView, level: NSWindow.Level) -> NotchPanel {
         if let panel { return panel }
         let panel = NotchPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.capturePrivacy = model.capturePrivacy
         panel.allowsKey = false
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.spaceRole = "aviso"
         panel.level = level
         panel.contentView = view
         self.panel = panel

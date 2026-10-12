@@ -258,14 +258,14 @@ final class AgentViewTests: XCTestCase {
     // MARK: Clicking a row
 
     /// A left click in the window, `point` measured from the content's top left like SwiftUI does.
-    private func click(_ window: NSWindow, at point: NSPoint) {
+    private func click(_ window: NSWindow, at point: NSPoint, settle seconds: TimeInterval = 0.3) {
         let location = NSPoint(x: point.x, y: window.contentView!.bounds.height - point.y)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                            context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
             window.sendEvent(event)
         }
-        settle(0.3)
+        settle(seconds)
     }
 
     func testAClickOnARowOfATabsListEntersThatAgentAndClosesTheList() throws {
@@ -283,6 +283,7 @@ final class AgentViewTests: XCTestCase {
         let host = NSHostingView(rootView: NookPanel(model: model, agentList: presenter).environment(\.colorScheme, .dark).environment(\.nookTintedGlass, false))
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.setFrameOrigin(NSPoint(x: -40000, y: -40000))
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
         settle(0.6)
@@ -304,20 +305,28 @@ final class AgentViewTests: XCTestCase {
     func testAClickOnARowOfTheComposersListEntersThatAgent() throws {
         var picked: [String] = []
         let working = agent("call-run", "Diseñar el gato")
-        let view = ZStack(alignment: .topTrailing) {
-            Color.black
-            HStack { Spacer(); SubagentCapsule(agents: [working, agent("call-done", "Revisar el notch", state: .done)], alwaysVisible: true, initiallyOpen: true, onOpen: { picked.append($0.id) }) }
-                .padding(.trailing, 25).padding(.top, 196)
-        }.frame(width: 572, height: 266).environment(\.colorScheme, .dark).environment(\.nookDarkBackdrop, true)
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(x: 0, y: 0, width: 572, height: 266)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView = host
-        window.makeKeyAndOrderFront(nil)
-        settle(0.5)
-        // The list floats over the capsule: its first row is the working agent, a click on it opens that agent.
-        var y: CGFloat = 4
-        while picked.isEmpty, y < 200 { click(window, at: NSPoint(x: 330, y: y)); y += 5 }
+        // The list closes by itself 0.6 s after it opens when the pointer is not over it, so the click comes quickly; on a busy
+        // machine the window may not be laid out in time, and the attempt is made again.
+        for _ in 0..<3 where picked.isEmpty {
+            let view = ZStack(alignment: .topTrailing) {
+                Color.black
+                HStack { Spacer(); SubagentCapsule(agents: [working, agent("call-done", "Revisar el notch", state: .done)], alwaysVisible: true, initiallyOpen: true, onOpen: { picked.append($0.id) }) }
+                    .padding(.trailing, 25).padding(.top, 196)
+            }.frame(width: 572, height: 266).environment(\.colorScheme, .dark).environment(\.nookDarkBackdrop, true)
+            let host = NSHostingView(rootView: view)
+            host.frame = NSRect(x: 0, y: 0, width: 572, height: 266)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.setFrameOrigin(NSPoint(x: -40000, y: -40000))
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            // The list floats over the capsule: its bottom 6 pt over the capsule's top (196); the header, then the working agent's row.
+            settle(0.2)
+            let rows = SubagentListLayout.headerHeight + SubagentListLayout.verticalPadding * 2 + SubagentListLayout.workingRowHeight + SubagentListLayout.rowHeight
+            let listTop = 196 - 6 - rows
+            let firstRow = listTop + SubagentListLayout.verticalPadding + SubagentListLayout.headerHeight + SubagentListLayout.workingRowHeight / 2
+            click(window, at: NSPoint(x: 330, y: firstRow), settle: 0.05)
+            window.orderOut(nil)
+        }
         XCTAssertEqual(picked.first, "call-run")
     }
 

@@ -149,6 +149,13 @@ final class ComposerPaneTests: XCTestCase {
         XCTAssertEqual(rig.field.selectedRange().location, ("ok avísame cuando esté listo" as NSString).length)
     }
 
+    func testEnterTakesTheExampleOfClaudesTrySuggestionAsTabDoesAndNotItsWrapper() throws {
+        let rig = try Rig(suggestion: "Try \"write a test for <filepath>\"")
+        rig.press(.enter)
+        XCTAssertEqual(rig.draft, "write a test for <filepath>", "The example, as ⇥ takes it: not Claude's «Try» with its quotes.")
+        XCTAssertTrue(rig.session.sentHistory.isEmpty, "…and nothing is sent.")
+    }
+
     func testTabAcceptsClaudesSuggestionOnAnEmptyFieldWithoutSendingIt() throws {
         let suggestion = "ok avísame cuando esté listo"
         let rig = try Rig(suggestion: suggestion)

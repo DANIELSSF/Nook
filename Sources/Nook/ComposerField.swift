@@ -23,8 +23,17 @@ import UniformTypeIdentifiers
 //   ⌃V                 pastes the clipboard's image into the agent; ⌘V does too when the clipboard holds an image and no text
 
 /// A key the pane is asked about before the text view acts on it.
-enum ComposerKey: Equatable {
+enum ComposerKey: Hashable {
     case submit, newline, up, down, right, tab, escape, pasteImage
+    /// A plain letter the pane has asked for (`ComposerTextView.capturedLetters`): the model list's "s" while it is out.
+    case letter(Character)
+
+    /// The letter a key press is, when it is one of `captured` and nothing else is held with it (⇧ aside): the pane may take it before the field types it.
+    static func capturedLetter(characters: String?, modifiers: NSEvent.ModifierFlags, among captured: Set<Character>) -> ComposerKey? {
+        let flags = modifiers.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock, .shift])
+        guard flags.isEmpty, let characters, characters.count == 1, let letter = characters.lowercased().first, captured.contains(letter) else { return nil }
+        return .letter(letter)
+    }
 
     /// What a key stands for in the composer, or nil when it is an ordinary key for the text view (letters, ←, →,
     /// ⇧↑ to extend a selection, ⌘C…). `characters` are the key's characters ignoring modifiers.
@@ -69,9 +78,18 @@ struct ComposerCaret: Equatable {
 
 // MARK: - Text view
 
-final class ComposerTextView: NSTextView {
+final class ComposerTextView: NSTextView, PointerClaiming {
     /// The keys the pane answers; returns whether it took the key.
     var onKey: ((ComposerKey, ComposerCaret) -> Bool)?
+    /// Plain letters the pane answers before the field types them: none, except while a list is out that has a letter for a key (the model list's
+    /// "s": this session only). A letter the pane does not take is typed as any other.
+    var capturedLetters: Set<Character> = []
+    /// False while Claude's panel covers the pane (`setClaimsPointer`): then no I-beam, which would show over the panel's card. The same where
+    /// chrome floats over the field (`pointerHole()`).
+    var claimsPointer = true
+    override func cursorUpdate(with event: NSEvent) {
+        if pointerHeldBack(at: event) { NSCursor.arrow.set() } else { super.cursorUpdate(with: event) }
+    }
     /// What ⌘V reads to choose between text and an image.
     var pasteboard = NSPasteboard.general
     /// The grey text shown while the field is empty (Claude's suggestion, or what to write).
@@ -103,7 +121,8 @@ final class ComposerTextView: NSTextView {
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.minimumLineHeight = height
         paragraph.maximumLineHeight = height
-        return [.font: DisplaySettings.inputFont(size: size), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+        // The island's text colour (white on the dark island, ink on the paper): a dynamic colour, so the field follows the theme without being restyled.
+        return [.font: DisplaySettings.inputFont(size: size), .foregroundColor: NSColor.nookText, .paragraphStyle: paragraph]
     }
     var attributes: [NSAttributedString.Key: Any] { Self.attributes(size: fontSize) }
 
@@ -131,9 +150,8 @@ final class ComposerTextView: NSTextView {
         autoresizingMask = [.width]
         // The field's vertical padding is outside its scroll view (`ComposerFieldView`), so no inset here.
         textContainerInset = .zero
-        insertionPointColor = .white
-        // The island is dark in every system appearance.
-        appearance = NSAppearance(named: .darkAqua)
+        insertionPointColor = .nookText
+        // Its appearance is the island's theme (`ComposerField.updateNSView`).
         applyStyle(size: fontSize)
     }
 
@@ -179,6 +197,11 @@ final class ComposerTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         // An input method with a composition under way (accents, Japanese…) gets every key first: ↵ confirms it.
         if hasMarkedText() { super.keyDown(with: event); return }
+        if !capturedLetters.isEmpty, let letter = ComposerKey.capturedLetter(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags, among: capturedLetters) {
+            // A key held down must not choose again.
+            if event.isARepeat { return }
+            if onKey?(letter, caret) == true { return }
+        }
         guard let key = ComposerKey.classify(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags) else {
             super.keyDown(with: event); return
         }
@@ -196,6 +219,9 @@ final class ComposerTextView: NSTextView {
         case .up, .down, .right, .escape:
             // Not taken: the caret walks the draft (↑ ↓ →), or the key goes on up the responder chain (⎋ collapses the island).
             if onKey?(key, caret) != true { super.keyDown(with: event) }
+        case .letter:
+            // `classify` never says it (only `capturedLetter` does, above).
+            super.keyDown(with: event)
         }
     }
 
@@ -223,7 +249,7 @@ final class ComposerTextView: NSTextView {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty, !hasMarkedText() else { return }
         var attributes = self.attributes
-        attributes[.foregroundColor] = NSColor.placeholderTextColor
+        attributes[.foregroundColor] = NookPalette.placeholder
         if let paragraph = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
             paragraph.lineBreakMode = .byTruncatingTail
             attributes[.paragraphStyle] = paragraph
@@ -278,6 +304,8 @@ final class ComposerScrollView: NSScrollView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        // The clip view that makes the field's claim on the pointer (it leaves out the places chrome floats over it).
+        contentView = TextClipView()
         drawsBackground = false
         borderType = .noBorder
         hasVerticalScroller = true
@@ -287,7 +315,6 @@ final class ComposerScrollView: NSScrollView {
         automaticallyAdjustsContentInsets = false
         contentInsets = NSEdgeInsetsZero
         contentView.drawsBackground = false
-        appearance = NSAppearance(named: .darkAqua)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         documentView = textView
     }
@@ -339,6 +366,13 @@ struct ComposerField: NSViewRepresentable {
     var accessibilityHint = ""
     /// The pane's answer to a key (`ComposerKey`); true means it took it.
     var onKey: (ComposerKey, ComposerCaret) -> Bool
+    /// Plain letters the pane answers before the field types them (see `ComposerTextView.capturedLetters`).
+    var capturedLetters: Set<Character> = []
+    /// A card (Claude's panel) has taken the place of the pane and faded it out (`\.nookCovered`): the field gives up the pointer, whose I-beam
+    /// would otherwise show over the card. It stays where it is, draft, caret and keyboard included (Esc still reaches the island from it).
+    @Environment(\.nookCovered) private var covered
+    /// The island's theme: the field's AppKit views (its text, its caret, its scrollers) are dressed for it.
+    @Environment(\.colorScheme) private var scheme
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -359,6 +393,9 @@ struct ComposerField: NSViewRepresentable {
     }
 
     func updateNSView(_ field: ComposerFieldView, context: Context) {
+        let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        if field.appearance != appearance { field.appearance = appearance }
+        field.scroll.setClaimsPointer(!covered)
         let coordinator = context.coordinator
         coordinator.parent = self
         let view = field.textView
@@ -369,6 +406,7 @@ struct ComposerField: NSViewRepresentable {
         view.setAccessibilityLabel(accessibilityLabel)
         view.setAccessibilityHelp(accessibilityHint)
         view.onKey = { [weak coordinator] key, caret in coordinator?.parent.onKey(key, caret) ?? false }
+        view.capturedLetters = capturedLetters
         if view.string != text { coordinator.replaceText(with: text) }
         if coordinator.focusRequest != focusRequest {
             coordinator.focusRequest = focusRequest

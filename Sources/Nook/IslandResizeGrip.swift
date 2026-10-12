@@ -86,7 +86,10 @@ final class IslandResizeGrip: NSView {
         super.updateTrackingAreas()
     }
 
+    /// The resize cursor only where a drag would do something: not on a corner of an island that has the size a card gave it (the owner invalidates the rects when that
+    /// changes).
     override func resetCursorRects() {
+        guard isActive() else { return }
         for corner in [IslandResizeDrag.Corner.left, .right] { addCursorRect(square(corner), cursor: Self.cursor(for: corner)) }
     }
 
@@ -142,7 +145,8 @@ final class IslandResizeGrip: NSView {
             path.move(to: NSPoint(x: x0 + sign * reach, y: edge))
             path.line(to: NSPoint(x: x0, y: edge + reach))
         }
-        NSColor(white: 1, alpha: drag == nil ? 0.38 : 0.6).setStroke()
+        // The strokes lie on the island's body: white on the black one, ink on the paper (the view's appearance is the island's theme).
+        NSColor.nookWash(drag == nil ? 0.38 : 0.6, light: drag == nil ? 0.45 : 0.65).setStroke()
         path.stroke()
     }
 }

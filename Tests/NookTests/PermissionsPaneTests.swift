@@ -110,14 +110,46 @@ final class PermissionsPaneTests: XCTestCase {
 
     func testOnlyAccessibilityHasAnAsideAboutUpdates() throws {
         let note = try XCTUnwrap(NookPermission.accessibility.note)
-        XCTAssertTrue(note.contains("«−»") && note.contains("añadirlo"), "It tells how to put Nook back on the list.")
-        XCTAssertTrue(note.localizedCaseInsensitiveContains("actualizar") && note.localizedCaseInsensitiveContains("firma"))
+        XCTAssertTrue(note.localizedCaseInsensitiveContains("actualizar"), "It is about what happens after an update.")
+        XCTAssertTrue(note.contains("«Abrir Ajustes»") && note.localizedCaseInsensitiveContains("una vez"),
+                      "It says the one thing to do: Abrir Ajustes puts Nook back on the list and it is switched on once.")
+        XCTAssertFalse(note.contains("«−»") || note.localizedCaseInsensitiveContains("quita"), "Nobody removes Nook from the list by hand any more.")
+        XCTAssertFalse(note.localizedCaseInsensitiveContains("firma"), "It no longer promises macOS keeps the permission across versions.")
         XCTAssertNil(NookPermission.automation.note); XCTAssertNil(NookPermission.microphone.note); XCTAssertNil(NookPermission.speech.note)
     }
 
-    func testTheTabsAreIslaAndPermisos() {
-        XCTAssertEqual(SettingsTab.allCases, [.island, .permissions])
-        XCTAssertEqual(SettingsTab.allCases.map(\.title), ["Isla", "Permisos"])
+    /// The guide's last step says what the button now does, not how to undo a stale record by hand.
+    func testAccessibilityGuideSaysAbrirAjustesFixesAStaleSwitch() {
+        let steps = NookPermission.accessibility.steps
+        let last = steps.last ?? ""
+        XCTAssertTrue(last.contains("«Abrir Ajustes»") && last.localizedCaseInsensitiveContains("una vez"), last)
+        XCTAssertFalse(steps.joined(separator: " ").contains("«−»"), "No step sends the user to remove Nook with «−».")
+        // The button that step names is the one the row really has when Nook is not trusted.
+        XCTAssertEqual(NookPermission.accessibility.presentation(for: .notAsked).action?.title, "Abrir Ajustes")
+    }
+
+    /// A pasted image travels as a file now, in a Terminal tab too: Accessibility is not what pastes it.
+    func testAccessibilityDoesNotPromiseToPasteImages() {
+        let purpose = NookPermission.accessibility.purpose
+        XCTAssertFalse(purpose.contains("⌃V") || purpose.contains("[Image"), "Terminal no longer comes forward for ⌃V. \(purpose)")
+        XCTAssertTrue(purpose.localizedCaseInsensitiveContains("pegar imágenes") && purpose.localizedCaseInsensitiveContains("sin él"), "It says pasting works without it. \(purpose)")
+        XCTAssertTrue(purpose.contains("flechas") && purpose.contains("Esc"), "What it is for stays: the arrows, Tab and Esc.")
+    }
+
+    /// Accessibility is for more than the menus' keys now: ⇧⇥ (the mode chip), choosing in Claude's pickers (options, models) and ⌘T, which
+    /// opens a new terminal as a tab of the Terminal window instead of a window of its own. The row says all of it, in a few lines.
+    func testAccessibilityPurposeSaysEverythingItIsUsedFor() {
+        let purpose = NookPermission.accessibility.purpose
+        for key in ["flechas", "Tab", "Esc", "⇧⇥", "⌘T"] { XCTAssertTrue(purpose.contains(key), "\(key) is pressed with it. \(purpose)") }
+        for word in ["selectores", "opciones", "modelos", "modo"] { XCTAssertTrue(purpose.localizedCaseInsensitiveContains(word), "\(word) is something it is for. \(purpose)") }
+        XCTAssertTrue(purpose.contains("pestaña") && purpose.contains("sin él, en una ventana"), "It says ⌘T makes tabs, and what happens without it. \(purpose)")
+        XCTAssertLessThanOrEqual(purpose.count, 240, "A few lines in the card, like the other rows. \(purpose)")
+    }
+
+    func testTheTabsIncludeCapturePrivacy() {
+        // The sound tab sits after the cat's: the tabs that were there keep their order.
+        XCTAssertEqual(SettingsTab.allCases, [.island, .pet, .sound, .permissions, .privacy, .screen])
+        XCTAssertEqual(SettingsTab.allCases.map(\.title), ["Isla", "Gato", "Sonido", "Permisos", "Privacidad", "Pantalla"])
         let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-perms-tab-" + UUID().uuidString)!)
         XCTAssertEqual(model.settingsTab, .island, "The card opens on the island's settings.")
         model.showPermissions()   // no window in a test: nothing to open, nothing breaks
@@ -361,8 +393,9 @@ final class PermissionsPaneTests: XCTestCase {
         // The wording Nook's own notices have today.
         let real = [
             TerminalBridgeError.automationDenied.errorDescription!,
-            "Activa Nook en Privacidad y seguridad → Accesibilidad. Si instalas una versión nueva de Nook, macOS puede pedir el permiso otra vez.",
-            "Añadí la imagen como archivo al mensaje; Claude puede abrirla al enviarlo. Para pegarla como con ⌃V en la terminal, activa Nook en Accesibilidad.",
+            "Activa Nook en Privacidad y seguridad → Accesibilidad, una sola vez. Si ya aparecía activado, Nook se registró de nuevo y lo verás apagado.",
+            // A new terminal that had to open as a window: the one-time word that Accessibility makes it a tab.
+            "Nook abrió la terminal en una ventana nueva. Para que se abra como pestaña de una ventana de Terminal que ya tengas, activa Nook en Ajustes del Sistema → Privacidad y seguridad → Accesibilidad.",
             "Terminal tardó demasiado en responder. Si macOS muestra un permiso para Nook, acéptalo y pulsa Buscar de nuevo.",
             "No se pudo verificar el permiso de Terminal (-1).",
             "macOS no permitió abrir Terminal. Usa ‘Copiar conexión’ y pega el comando en una terminal libre.",
@@ -371,6 +404,8 @@ final class PermissionsPaneTests: XCTestCase {
         for text in real { XCTAssertTrue(PermissionHelp.opensPermissions(text), text) }
         // Everything else a notice says stays a plain notice, Claude's own messages included.
         let others = ["No hay ninguna imagen en el portapapeles.", "Pegar imágenes funciona en pestañas con Claude o Codex.", "Esta sesión ya no está disponible.",
+                      // A pasted image needs no permission any more: it travels as a file, so its notice is a plain one.
+                      "Añadí la imagen al mensaje como archivo; Claude la abrirá cuando lo reciba.",
                       "Avisos de Claude activados. En una sesión ya abierta, revisa /hooks para aprobar o cargar el cambio; algunas versiones requieren reabrir Claude.",
                       "Diagnóstico copiado. Incluye el final de la pantalla de esta pestaña; pégalo donde quieras revisarlo.",
                       "claude: Claude needs your permission to use Bash", "claude: Claude necesita tu aprobación para usar Bash", "Falta el componente de terminal. Vuelve a construir Nook."]
@@ -451,6 +486,7 @@ final class PermissionsPaneTests: XCTestCase {
     func testTheIslandsTabIsStillCompact() {
         let (window, _) = makeWindow(CGSize(width: 1512, height: 982), tab: .island)
         XCTAssertGreaterThan(window.cardSize.height, 250)
-        XCTAssertLessThan(window.cardSize.height, 460, "The tabs add a row; the sliders' card is still a card.")
+        // 460 before «Apariencia» (the three pictures of the island and their names) joined the tab, which takes about 115 pt.
+        XCTAssertLessThan(window.cardSize.height, 580, "The tabs add a row and the theme its pictures; the sliders' card is still a card.")
     }
 }

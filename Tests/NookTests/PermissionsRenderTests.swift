@@ -55,7 +55,8 @@ final class PermissionsRenderTests: XCTestCase {
     func testRenderTheOffersToOpenThePermisosTab() throws {
         let directory = try renderDirectory()
         for (name, setup) in [
-            ("notice-accessibility", { (model: AppModel) in model.notice = "Activa Nook en Privacidad y seguridad → Accesibilidad. Si instalas una versión nueva de Nook, macOS puede pedir el permiso otra vez." }),
+            ("notice-accessibility", { (model: AppModel) in model.notice = "Activa Nook en Privacidad y seguridad → Accesibilidad, una sola vez. Si ya aparecía activado, Nook se registró de nuevo y lo verás apagado." }),
+            ("notice-new-tab", { (model: AppModel) in model.notice = "Nook abrió la terminal en una ventana nueva. Para que se abra como pestaña de una ventana de Terminal que ya tengas, activa Nook en Ajustes del Sistema → Privacidad y seguridad → Accesibilidad." }),
             ("notice-plain", { (model: AppModel) in model.notice = "No hay ninguna imagen en el portapapeles." }),
             ("connection-denied", { (model: AppModel) in model.connectionSheet = true; model.terminalBridge.error = TerminalBridgeError.automationDenied.errorDescription }),
         ] as [(String, (AppModel) -> Void)] {

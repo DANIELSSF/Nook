@@ -119,7 +119,8 @@ final class ChangeClassifierTests: XCTestCase {
 
     func testAFenceWithAnUnknownLanguageOrNoneColoursNothingButStillPairs() {
         let text = ["⏺ A:", "  ```", "  no se colorea", "  ```", "  ```brainfuck", "  ++>", "  ```", "  texto"].joined(separator: "\n")
-        XCTAssertEqual(details(text), [.none, .fence, .none, .fence, .fence, .none, .fence, .none])
+        // Inside a fence of a language nobody knows the lines keep their plain look, and no Markdown is read in them.
+        XCTAssertEqual(details(text), [.none, .fence, .verbatim, .fence, .fence, .verbatim, .fence, .none])
     }
 
     func testAReplyThatStartsWithAFenceAndOtherWaysToWriteOne() {
@@ -425,6 +426,7 @@ final class ChangeIncrementalTests: XCTestCase {
         while (text as NSString).length < characters {
             var records = [TranscriptFixtures.prompt("Pregunta número \(turn): arregla el notch y agrega una prueba.")]
             records.append(TranscriptFixtures.reply(TranscriptFixtures.fencedReply))
+            records.append(TranscriptFixtures.reply("**Cómo queda:** el `código` y *énfasis* con [guía](https://example.com/a_b).\n\n## Pasos de la prueba \(turn)\n\n- **Primero:** corre `swift test` y revisa _todo_\n- Segundo: 2 * 3 * 4 y file_name_here\n  - anidado con `x`\n\nListo."))
             let patch: [[String: Any]] = [["oldStart": 10, "newStart": 10, "lines": (0..<26).map { $0 % 5 == 2 ? "-    let removed\($0) = \($0) // viejo" : $0 % 5 == 3 ? "+    let added\($0) = \"nuevo \($0)\" // cambio" : "     func keep\($0)(value: Int) -> Bool { value > \($0) }" }]]
             records.append(TranscriptFixtures.call("e\(turn)", "Edit", ["file_path": TranscriptFixtures.cwd + "/Sources/File\(turn).swift"]))
             records.append(TranscriptFixtures.result("e\(turn)", "ok", details: ["filePath": TranscriptFixtures.cwd + "/Sources/File\(turn).swift", "structuredPatch": patch]))
@@ -498,5 +500,102 @@ private final class EditRecorder: NSObject, NSTextStorageDelegate {
     var edited: [NSRange] = []
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
         edited.append(editedRange)
+    }
+}
+
+// MARK: - The task label
+
+@MainActor
+final class TaskLabelTests: XCTestCase {
+    private let task = "> Revisa el notch\n  y avisa.\n\n⏺ Empiezo.\n\n> Otro mensaje\n"
+
+    private func scroll(label: String?) -> LiveTerminalScrollView {
+        let scroll = LiveTerminalScrollView(frame: NSRect(x: 0, y: 0, width: 540, height: 160))
+        scroll.setTheme(dark: true, transcript: true)
+        scroll.setTaskLabel(label)
+        return scroll
+    }
+
+    private func bubble(_ scroll: LiveTerminalScrollView, at text: String) -> TranscriptBubble? {
+        let storage = scroll.textView.textStorage!
+        return storage.attribute(.transcriptBubble, at: (storage.string as NSString).range(of: text).location, effectiveRange: nil) as? TranscriptBubble
+    }
+
+    func testTheLabelGoesOnTheFirstMessageOnly() {
+        let live = scroll(label: "Tarea")
+        live.setText(task)
+        XCTAssertEqual(bubble(live, at: "Revisa")?.label, "Tarea")
+        XCTAssertEqual(bubble(live, at: "y avisa")?.label, "Tarea", "A wrapped line belongs to the same message.")
+        XCTAssertNil(bubble(live, at: "Otro")?.label, "Later messages are plain.")
+        XCTAssertNotEqual(bubble(live, at: "Revisa"), bubble(live, at: "Otro"))
+        // Without a label nothing is added.
+        let plain = scroll(label: nil)
+        plain.setText(task)
+        XCTAssertNil(bubble(plain, at: "Revisa")?.label)
+    }
+
+    func testAMessageThatIsNotFirstGetsNoLabel() {
+        let live = scroll(label: "Tarea")
+        live.setText("⏺ Antes de todo.\n\n> Mi mensaje\n")
+        XCTAssertNil(bubble(live, at: "Mi mensaje")?.label, "Only a text that opens with a message has a task.")
+    }
+
+    func testTheLabelMakesRoomAboveTheTextAndGivesItBack() {
+        let live = scroll(label: nil)
+        let usual = live.textView.textContainerInset.height
+        live.setText(task)
+        live.setTaskLabel("Tarea")
+        XCTAssertEqual(live.textView.textContainerInset.height, usual + TranscriptBubble.tabRoom)
+        XCTAssertNotNil(bubble(live, at: "Revisa")?.label)
+        live.setTaskLabel(nil)
+        XCTAssertEqual(live.textView.textContainerInset.height, usual)
+        XCTAssertNil(bubble(live, at: "Revisa")?.label, "What is shown is restyled without it.")
+    }
+
+    func testUpdatesKeepTheLabelAndMatchAFreshPass() {
+        let live = scroll(label: "Tarea")
+        live.setText("> Revisa el notch")
+        live.setText("> Revisa el notch\n  y avisa.\n")
+        live.setText(task)
+        live.setText(task + "\n⏺ Más texto.")
+        let fresh = scroll(label: "Tarea")
+        fresh.setText(task + "\n⏺ Más texto.")
+        let a = live.textView.textStorage!, b = fresh.textView.textStorage!
+        XCTAssertEqual(a.string, b.string)
+        for index in 0..<a.length {
+            XCTAssertTrue((a.attributes(at: index, effectiveRange: nil) as NSDictionary).isEqual(b.attributes(at: index, effectiveRange: nil)), "at \(index)")
+        }
+        // Setting the label after the text gives the same as before it.
+        let late = scroll(label: nil)
+        late.setText(task + "\n⏺ Más texto.")
+        late.setTaskLabel("Tarea")
+        let c = late.textView.textStorage!
+        for index in 0..<c.length {
+            XCTAssertTrue((c.attributes(at: index, effectiveRange: nil) as NSDictionary).isEqual(b.attributes(at: index, effectiveRange: nil)), "late, at \(index)")
+        }
+    }
+
+    func testTheTabIsPaintedAboveTheFirstMessage() throws {
+        let live = LiveTerminalScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        live.setTheme(dark: true, transcript: true)
+        live.setTaskLabel("Tarea")
+        live.setText("> Revisa el notch")
+        live.layoutSubtreeIfNeeded()
+        let view = live.textView
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        // The tab stands in the room above the message: something is drawn there (the tab's fill and its word), nothing without a label.
+        func inked(_ view: NSTextView, _ rep: NSBitmapImageRep) -> Int {
+            var count = 0
+            let scale = CGFloat(rep.pixelsWide) / view.bounds.width
+            for y in 0..<Int(view.textContainerOrigin.y * scale) - 2 { for x in 0..<rep.pixelsWide where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.05 { count += 1 } }
+            return count
+        }
+        XCTAssertGreaterThan(inked(view, rep), 80)
+        live.setTaskLabel(nil)
+        live.layoutSubtreeIfNeeded()
+        let bare = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bare)
+        XCTAssertEqual(inked(view, bare), 0, "No label, nothing above the message.")
     }
 }

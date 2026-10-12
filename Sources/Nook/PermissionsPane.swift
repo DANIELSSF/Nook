@@ -4,12 +4,15 @@ import AppKit
 // The "Permisos" tab of the settings card: one row for each thing Nook needs from macOS, with its state, one button that does
 // the right thing and a step-by-step guide that opens in place. `PermissionsModel` holds the state and the mappings.
 
+/// The island's own colours as the settings card uses them (`NookTheme.swift`): the vivid ones on the dark island, deeper ones on the light.
 enum PermissionPalette {
-    static let mint = Color(red: 0.32, green: 0.73, blue: 0.61)
+    static let mint = Color.nookMint
     /// The question colour of the island's alerts.
-    static let amber = Color(red: 0.91, green: 0.79, blue: 0.54)
+    static let amber = Color.nookAmber
+    /// The same amber for a dot, which is drawn and not read.
+    static let amberFill = Color.nookAmberFill
     /// The failed colour of the island's alerts.
-    static let red = Color(red: 0.94, green: 0.42, blue: 0.42)
+    static let red = Color.nookCoral
 }
 
 extension PermissionTone {
@@ -27,7 +30,7 @@ extension PermissionTone {
         case .good: PermissionPalette.mint.opacity(0.17)
         case .attention: PermissionPalette.amber.opacity(0.15)
         case .bad: PermissionPalette.red.opacity(0.17)
-        case .neutral: Color.white.opacity(0.08)
+        case .neutral: Color.nookWash(0.08)
         }
     }
 }
@@ -53,6 +56,7 @@ struct PermissionsPane: View {
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel("Integración con Claude").padding(.bottom, 1)
                 ClaudeSignalsRow(model: model, permissions: permissions)
+                ClaudeLimitsRow(model: model, permissions: permissions)
             }
             footer
         }.padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 15)
@@ -70,9 +74,9 @@ struct PermissionsPane: View {
 
     private var footer: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "lock.shield").font(.system(size: 10)).foregroundStyle(.secondary)
+            Image(systemName: "lock.shield").font(.system(size: 10)).foregroundStyle(Color.nookSecondary)
             Text("Los permisos los guarda macOS: Nook solo los pide y te lleva hasta el interruptor. El estado se actualiza solo al volver de Ajustes.")
-                .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 10)).foregroundStyle(Color.nookSecondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -129,7 +133,7 @@ struct ClaudeSignalsRow: View {
                         ForEach(folders, id: \.name) { folder in
                             HStack(spacing: 5) {
                                 Image(systemName: folder.enabled ? "checkmark" : "minus").font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(folder.enabled ? PermissionPalette.mint : Color.secondary).frame(width: 10)
+                                    .foregroundStyle(folder.enabled ? PermissionPalette.mint : Color.nookSecondary).frame(width: 10)
                                 Text(folder.name).font(.system(size: 10, design: .monospaced)).foregroundStyle(Color.primary.opacity(folder.enabled ? 0.8 : 0.55))
                             }.accessibilityElement(children: .combine).accessibilityLabel("\(folder.name), \(folder.enabled ? "con avisos" : "sin avisos")")
                         }
@@ -154,6 +158,73 @@ struct ClaudeSignalsRow: View {
     }
 }
 
+/// "Límites en vivo": Nook's status line in Claude's settings, which is how a Terminal tab gets its limits, its cost and its context without a key or a scroll. Not a macOS
+/// permission either, and what it changes in Claude is said before it is turned on, and again while it is.
+struct ClaudeLimitsRow: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var permissions: PermissionsModel
+
+    private var presentation: ClaudeLimitsPresentation { .make(folders: permissions.statusLineFolders) }
+    private static let title = "Límites en vivo"
+
+    var body: some View {
+        let shown = presentation
+        let open = permissions.isOpen(PermissionsModel.limitsKey)
+        RowFrame(tone: shown.tone, emphasized: false, needsAction: shown.action == .enable, showsDetail: shown.tone == .attention, actionsWhenOpen: shown.action != nil,
+                 title: Self.title, open: open, toggleGuide: { permissions.toggleGuide(PermissionsModel.limitsKey) }, header: {
+            RowHeader(symbol: "gauge.with.dots.needle.67percent", title: Self.title, chip: shown.chip, chipSymbol: shown.symbol, tone: shown.tone, open: open)
+        }, detail: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(ClaudeLimitsPresentation.subtitle).font(.system(size: 10.5)).foregroundStyle(Color.primary.opacity(0.7)).fixedSize(horizontal: false, vertical: true)
+                if let note = shown.note {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: shown.tone == .attention ? "exclamationmark.triangle.fill" : "info.circle").font(.system(size: 10))
+                            .foregroundStyle(shown.tone == .attention ? PermissionPalette.amber : shown.tone.color)
+                        Text(note).font(.system(size: 10)).foregroundStyle(Color.primary.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
+                    }.accessibilityElement(children: .combine)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("QUÉ SE GUARDA").font(.system(size: 9, weight: .semibold)).tracking(0.7).foregroundStyle(Color.nookSecondary)
+                    Text(ClaudeLimitsPresentation.keeps).font(.system(size: 10)).foregroundStyle(Color.primary.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
+                }.accessibilityElement(children: .combine)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("QUÉ CAMBIA EN CLAUDE").font(.system(size: 9, weight: .semibold)).tracking(0.7).foregroundStyle(Color.nookSecondary)
+                    Text(ClaudeLimitsPresentation.effects).font(.system(size: 10)).foregroundStyle(Color.primary.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
+                }.accessibilityElement(children: .combine)
+                if let folders = permissions.statusLineFolders, ClaudeLimitsPresentation.listsFolders(folders, open: open) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(folders, id: \.name) { folder in
+                            let line = ClaudeLimitsPresentation.line(for: folder.state)
+                            HStack(spacing: 5) {
+                                Image(systemName: line.symbol).font(.system(size: 8, weight: .bold)).foregroundStyle(line.tone == .neutral ? Color.nookSecondary : line.tone.color).frame(width: 10)
+                                Text(folder.name).font(.system(size: 10, design: .monospaced)).foregroundStyle(Color.primary.opacity(line.tone == .neutral ? 0.55 : 0.8))
+                                Text(line.words).font(.system(size: 10)).foregroundStyle(Color.nookSecondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                            }.accessibilityElement(children: .combine).accessibilityLabel("\(folder.name), \(line.words)")
+                        }
+                    }
+                }
+            }
+        }, actions: {
+            if let action = shown.action {
+                RowButton(title: action.title, symbol: action.symbol, prominent: action == .enable) {
+                    // Its own confirmation dialog runs first; the folders are read again once it closes.
+                    model.toggleClaudeStatusLine()
+                    permissions.refresh()
+                }
+            }
+        }, guide: {
+            GuideSteps(steps: [
+                "Pulsa «Activar…» y confirma. Nook añade a settings.json de cada carpeta de Claude una línea de estado que solo le pasa sus datos a Nook.",
+                "Si ya tenías una línea de estado, sigue mostrándose igual: Nook la ejecuta después de la suya.",
+                ClaudeLimitsPresentation.pickup + " No hace falta reabrirlas.",
+                "Para quitarla, pulsa «Quitar…»: tu línea de estado vuelve a ser exactamente la que era y se borran los datos guardados.",
+            ], note: ClaudeLimitsPresentation.keepsInDetail(folder: NookStatusLine.statusFolder.path) + " " + ClaudeLimitsPresentation.backups, settings: nil)
+        })
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(Self.title), \(shown.chip)")
+    }
+}
+
 /// The card every row sits in. Its parts are slots so the permissions and Claude's signals share one look.
 private struct RowFrame<Header: View, Detail: View, Actions: View, Guide: View>: View {
     var tone: PermissionTone
@@ -161,6 +232,10 @@ private struct RowFrame<Header: View, Detail: View, Actions: View, Guide: View>:
     var emphasized: Bool
     /// There is something to do: the row shows what it is for and its button without being opened. Otherwise it is one line.
     var needsAction: Bool
+    /// There is something to say without a button (a settings file Nook cannot read): the row shows its detail without being opened.
+    var showsDetail: Bool
+    /// The button is there once the row is open, too (to take back what is on).
+    var actionsWhenOpen: Bool
     var title: String
     var open: Bool
     var toggleGuide: () -> Void
@@ -170,9 +245,10 @@ private struct RowFrame<Header: View, Detail: View, Actions: View, Guide: View>:
     var guide: Guide
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(tone: PermissionTone, emphasized: Bool, needsAction: Bool, title: String, open: Bool, toggleGuide: @escaping () -> Void,
+    init(tone: PermissionTone, emphasized: Bool, needsAction: Bool, showsDetail: Bool = false, actionsWhenOpen: Bool = false, title: String, open: Bool, toggleGuide: @escaping () -> Void,
          @ViewBuilder header: () -> Header, @ViewBuilder detail: () -> Detail, @ViewBuilder actions: () -> Actions, @ViewBuilder guide: () -> Guide) {
-        self.tone = tone; self.emphasized = emphasized; self.needsAction = needsAction; self.title = title; self.open = open; self.toggleGuide = toggleGuide
+        self.tone = tone; self.emphasized = emphasized; self.needsAction = needsAction; self.showsDetail = showsDetail; self.actionsWhenOpen = actionsWhenOpen
+        self.title = title; self.open = open; self.toggleGuide = toggleGuide
         self.header = header(); self.detail = detail(); self.actions = actions(); self.guide = guide()
     }
 
@@ -181,16 +257,16 @@ private struct RowFrame<Header: View, Detail: View, Actions: View, Guide: View>:
             Button {
                 if reduceMotion { toggleGuide() } else { withAnimation(.easeOut(duration: 0.18)) { toggleGuide() } }
             } label: { header.contentShape(Rectangle()) }
-                .buttonStyle(.plain).help("Cómo hacerlo")
+                .nookPress(.none, depth: PressDepth.row).help("Cómo hacerlo")
                 .accessibilityLabel("Cómo hacerlo: \(title)").accessibilityValue(open ? "Abierto" : "Cerrado")
-            if needsAction || open { detail }
-            if needsAction { HStack(spacing: 8) { actions; Spacer(minLength: 0) } }
+            if needsAction || showsDetail || open { detail }
+            if needsAction || (open && actionsWhenOpen) { HStack(spacing: 8) { actions; Spacer(minLength: 0) } }
             if open { guide.transition(.opacity) }
         }
         .padding(.horizontal, 11).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(emphasized ? tone.color.opacity(0.42) : Color.white.opacity(0.07), lineWidth: emphasized ? 0.9 : 0.6))
+        .background(Color.nookWash(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(emphasized ? tone.color.opacity(0.42) : Color.nookWash(0.07), lineWidth: emphasized ? 0.9 : 0.6))
     }
 }
 
@@ -211,7 +287,7 @@ private struct RowHeader: View {
         Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.primary).lineLimit(1).fixedSize()
     }
     private var chevron: some View {
-        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(open ? PermissionPalette.mint : Color.secondary)
+        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(open ? PermissionPalette.mint : Color.nookSecondary)
             .rotationEffect(.degrees(open ? 180 : 0)).frame(width: 16, height: 24)
     }
 
@@ -261,11 +337,11 @@ struct RowButton: View {
                 Image(systemName: symbol).font(.system(size: 10, weight: .semibold))
                 Text(title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
             }.padding(.horizontal, 10).frame(height: 26)
-                .foregroundStyle(prominent ? Color.white : Color.primary.opacity(0.8))
-                .background(prominent ? PermissionPalette.mint.opacity(hovering ? 0.32 : 0.22) : Color.white.opacity(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(prominent ? Color.nookText : Color.primary.opacity(0.8))
+                .background(prominent ? PermissionPalette.mint.opacity(hovering ? 0.32 : 0.22) : Color.nookWash(hovering ? 0.12 : 0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(PermissionPalette.mint.opacity(prominent ? 0.55 : 0), lineWidth: 0.8))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).onHover { hovering = $0 }.accessibilityLabel(title)
+        }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).onHover { hovering = $0 }.accessibilityLabel(title)
     }
 }
 
@@ -280,7 +356,7 @@ private struct GuideSteps: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("CÓMO HACERLO").font(.system(size: 9, weight: .semibold)).tracking(0.7).foregroundStyle(.secondary)
+            Text("CÓMO HACERLO").font(.system(size: 9, weight: .semibold)).tracking(0.7).foregroundStyle(Color.nookSecondary)
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 7) {
                     Text("\(index + 1)").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundStyle(PermissionPalette.mint)
@@ -300,7 +376,7 @@ private struct GuideSteps: View {
             }
         }
         .padding(.top, 9)
-        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5) }
+        .overlay(alignment: .top) { Rectangle().fill(Color.nookWash(0.08)).frame(height: 0.5) }
     }
 }
 
@@ -316,6 +392,6 @@ struct SeePermissionsButton: View {
                 Text("Ver permisos").font(.system(size: 10.5, weight: .semibold))
             }.foregroundStyle(PermissionPalette.mint).padding(.horizontal, 9).frame(height: 22)
                 .background(PermissionPalette.mint.opacity(hovering ? 0.26 : 0.17), in: Capsule()).contentShape(Capsule())
-        }.buttonStyle(.plain).onHover { hovering = $0 }.help("Abrir los permisos de Nook").accessibilityLabel("Ver permisos")
+        }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).onHover { hovering = $0 }.help("Abrir los permisos de Nook").accessibilityLabel("Ver permisos")
     }
 }

@@ -331,6 +331,7 @@ final class FileDropFlowTests: XCTestCase {
     }
 
     func testAnIslandThatIsNotTheKeyWindowTakesTheKeyboardWithTheDrop() throws {
+        try requireKeyCapableSession()
         // The user was in Finder: the island is open (a hover opened it) but another app has the keyboard.
         let rig = try FileDropRig(draft: "evalúa este archivo", focused: false, key: false)
         rig.window.resignKey()
@@ -412,6 +413,7 @@ final class FileDropFlowTests: XCTestCase {
     }
 
     func testTheDropViewIsAheadOfTheFieldForDragsAndInvisibleToClicks() throws {
+        try requireKeyCapableSession()
         let rig = try FileDropRig()
         let files = rig.board([report as NSURL])
         // Anywhere on the island: the composer's field, the header and the tab row. Window coordinates start at the bottom.

@@ -18,15 +18,25 @@ struct TranscriptAgents {
         var ended: Date?
         var state: SubagentActivity.State = .running
         var note: String?
+        /// The name the call gave the agent ("designer"), which Claude's list under the mode line shows.
+        var alias: String?
+        /// False for an agent known only from a resume: its description and type come from its metadata file.
+        var described = true
     }
 
     private(set) var launches: [Launch] = []
+    /// When agents this record never launched (their launch is older than what was read) last finished, by agent id: an
+    /// agent whose own record grows after that is running again.
+    private(set) var endings: [String: Date] = [:]
 
     mutating func launch(call: String, input: [String: Any], at date: Date?) {
         guard !launches.contains(where: { $0.call == call }) else { return }
         let name = (input["description"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Subagente"
-        launches.append(Launch(call: call, name: name, kind: input["subagent_type"] as? String, model: input["model"] as? String,
-                               background: input["run_in_background"] as? Bool ?? false, started: date))
+        // "run_in_background" comes as a bool or, from newer builds, as the string "true".
+        let background = input["run_in_background"] as? Bool ?? ((input["run_in_background"] as? String)?.lowercased() == "true")
+        var launch = Launch(call: call, name: name, kind: input["subagent_type"] as? String, model: input["model"] as? String, background: background, started: date)
+        launch.alias = (input["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        launches.append(launch)
         // Long sessions launch many; the finished ones beyond the latest few are history.
         let finished = launches.indices.filter { launches[$0].state != .running }
         if finished.count > 30 { launches.remove(atOffsets: IndexSet(finished.prefix(finished.count - 30))) }
@@ -35,6 +45,10 @@ struct TranscriptAgents {
     /// The launch's result: a background agent answers at once with its id and keeps working; any
     /// other ends here.
     mutating func result(call: String, text: String, error: Bool, at date: Date?) {
+        // SendMessage to an agent that had finished wakes it up: {"message":"Resuming agent a69c09b","resumedAgentId":"a69c09b…"}.
+        if !error, let resumed = text.range(of: #"(?<="resumedAgentId"\s?:\s?")[A-Za-z0-9_-]+"#, options: .regularExpression) {
+            resume(agentID: String(text[resumed]), at: date)
+        }
         guard let index = launches.firstIndex(where: { $0.call == call }) else { return }
         if let id = text.range(of: #"(?<=agentId: )[A-Za-z0-9_-]+"#, options: .regularExpression) {
             launches[index].agentID = String(text[id])
@@ -48,8 +62,14 @@ struct TranscriptAgents {
     mutating func notice(_ line: String, at date: Date?) {
         if line.contains("<task-notification>"),
            let id = line.range(of: #"(?<=<task-id>)[^<]+"#, options: .regularExpression),
-           let status = line.range(of: #"(?<=<status>)[^<]+"#, options: .regularExpression),
-           let index = launches.firstIndex(where: { $0.agentID == String(line[id]) }) {
+           let status = line.range(of: #"(?<=<status>)[^<]+"#, options: .regularExpression) {
+            let agentID = String(line[id])
+            guard let index = launches.lastIndex(where: { $0.agentID == agentID }) else {
+                // Not launched within what was read: remember when it stopped (agent ids are long hex; a background
+                // command's short task id is never an agent's record).
+                if agentID.count >= 12, let date { endings[agentID] = date; if endings.count > 50, let oldest = endings.min(by: { $0.value < $1.value }) { endings[oldest.key] = nil } }
+                return notice(handback: line, at: date)
+            }
             switch line[status].lowercased() {
             case "completed": finish(index, state: .done, note: nil, at: date)
             case "failed", "error": finish(index, state: .failed, note: "Falló", at: date)
@@ -57,11 +77,31 @@ struct TranscriptAgents {
             default: finish(index, state: .failed, note: "Detenido", at: date)
             }
         }
+        notice(handback: line, at: date)
+    }
+
+    private mutating func notice(handback line: String, at date: Date?) {
         if line.contains("[Subagent hand-back]"),
            let id = line.range(of: #"(?<=<agent-message from=\\")[A-Za-z0-9_-]+"#, options: .regularExpression),
            let index = launches.firstIndex(where: { $0.agentID == String(line[id]) }), launches[index].state == .running {
             finish(index, state: .done, note: nil, at: date)
         }
+    }
+
+    /// A finished agent sent another message works again, in the same record, until its next notification. One this record
+    /// never launched (its launch is older than what was read) joins as running; its metadata file names it.
+    mutating func resume(agentID: String, at date: Date?) {
+        endings[agentID] = nil
+        if let index = launches.lastIndex(where: { $0.agentID == agentID }) {
+            var launch = launches.remove(at: index)
+            if launch.state != .running { launch.started = date ?? launch.started }
+            launch.state = .running; launch.ended = nil; launch.note = nil; launch.background = true
+            launches.append(launch)
+            return
+        }
+        var launch = Launch(call: "agent:" + agentID, name: "Subagente", kind: nil, model: nil, background: true, agentID: agentID, started: date)
+        launch.described = false
+        launches.append(launch)
     }
 
     /// Only these launches, in their order (the ones worth showing).
@@ -104,17 +144,12 @@ final class SubagentProgress {
 
     init(url: URL) { self.url = url }
 
+    private var skipToLineStart = false
+
     func poll(cwd: String?) {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
-        defer { try? handle.close() }
-        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty else { return }
-        offset += UInt64(data.count)
-        partial.append(data)
-        while let newline = partial.firstIndex(of: 0x0A) {
-            let line = partial[partial.startIndex..<newline]
-            partial = Data(partial[(newline + 1)...])
+        TranscriptFollower.readLines(of: url, offset: &offset, partial: &partial, skipToLineStart: &skipToLineStart) { line in
             guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  let message = entry["message"] as? [String: Any] else { continue }
+                  let message = entry["message"] as? [String: Any] else { return }
             if let usage = message["usage"] as? [String: Any] {
                 // Claude's own count is the context of the latest request.
                 tokens = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"].reduce(0) { $0 + (usage[$1] as? Int ?? 0) }
@@ -131,6 +166,8 @@ final class SubagentProgress {
                 default: break
                 }
             }
+            // Only the newest call is ever shown; calls an agent left without a result (it was stopped) don't pile up.
+            if open.count > 64 { open.removeFirst(open.count - 64) }
         }
     }
 }
@@ -140,6 +177,8 @@ final class SubagentWatch {
     let folder: URL
     private var progress: [String: SubagentProgress] = [:]
     private var identified: Set<String> = []
+    /// How many agents' records are followed now.
+    var watched: Int { progress.count }
 
     /// `record` is the session's main record; its agents live in a folder named after it.
     init(record: URL) { folder = record.deletingPathExtension().appendingPathComponent("subagents") }
@@ -156,10 +195,51 @@ final class SubagentWatch {
         return ids
     }
 
+    /// What an agent's metadata file says about it: its description and type ("ui-designer", "fork"). Read once per agent.
+    func details(_ agentID: String) -> (description: String?, kind: String?)? {
+        if let known = described[agentID] { return known }
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("agent-\(agentID).meta.json")),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let found = ((meta["description"] as? String).flatMap { $0.isEmpty ? nil : $0 }, (meta["agentType"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+        described[agentID] = found
+        return found
+    }
+    private var described: [String: (description: String?, kind: String?)] = [:]
+
+    /// Agents the record does not know whose own record grew in the last `window` seconds and that did not finish since:
+    /// launched and resumed before what was read. Their ids are "agent:<id>", which `TranscriptFollower` opens like any other.
+    func unlisted(_ agents: TranscriptAgents, now: Date, window: TimeInterval = 120) -> [(id: String, since: Date)] {
+        let known = Set(agents.launches.compactMap(\.agentID))
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.compactMap { name -> (String, Date)? in
+            guard name.hasPrefix("agent-"), name.hasSuffix(".jsonl") else { return nil }
+            let id = String(name.dropFirst("agent-".count).dropLast(".jsonl".count))
+            guard !known.contains(id),
+                  let written = (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent(name).path))?[.modificationDate] as? Date,
+                  now.timeIntervalSince(written) < window, agents.endings[id].map({ $0 < written }) ?? true else { return nil }
+            return (id, written)
+        }.sorted { $0.1 < $1.1 }
+    }
+
     /// The agents as Nook shows them; running ones read their own record first.
     func activities(_ agents: TranscriptAgents, cwd: String?, now: Date = Date()) -> [SubagentActivity] {
-        agents.launches.map { launch in
+        let extra = unlisted(agents, now: now)
+        // Agents no longer shown take their readers with them: a long session launches hundreds.
+        let listed = Set(agents.launches.compactMap(\.agentID) + extra.map(\.id))
+        if progress.keys.contains(where: { !listed.contains($0) }) { progress = progress.filter { listed.contains($0.key) } }
+        var launches = agents.launches
+        for found in extra {
+            var launch = TranscriptAgents.Launch(call: "agent:" + found.id, name: "Subagente", kind: nil, model: nil, background: true, agentID: found.id)
+            launch.described = false
+            launches.append(launch)
+        }
+        return launches.map { launch in
             var shown = SubagentActivity(id: launch.call, name: launch.name, kind: launch.kind, state: launch.state, background: launch.background)
+            if !launch.described, let id = launch.agentID, let meta = details(id) {
+                shown.name = meta.description ?? shown.name
+                shown.kind = meta.kind ?? shown.kind
+            }
+            shown.alias = launch.alias
             shown.note = launch.note
             shown.model = launch.model
             if let id = launch.agentID {

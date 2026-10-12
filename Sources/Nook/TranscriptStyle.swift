@@ -41,6 +41,8 @@ extension NSAttributedString.Key {
     /// An `NSColor` that `MirrorLayoutManager` paints behind the whole width of every line the characters sit on (the
     /// band of a changed row).
     static let transcriptLineFill = NSAttributedString.Key("nook.transcript.lineFill")
+    /// On the dash of a list item: `MirrorLayoutManager` draws a bullet (•) in its place; the text keeps the dash.
+    static let transcriptBullet = NSAttributedString.Key("nook.transcript.bullet")
 }
 
 // MARK: - Classifier
@@ -106,6 +108,8 @@ enum TranscriptClassifier {
         case fence
         /// A line of code inside a fence whose language is known; `start` is where the code begins (after the reply's indent).
         case code(SyntaxLanguage, start: Int)
+        /// A line inside a fence whose language is not known: it keeps its plain look, and no Markdown is read in it.
+        case verbatim
     }
 
     struct Line: Equatable {
@@ -380,7 +384,8 @@ enum TranscriptClassifier {
             if mark.bare { state.fence = nil; return .fence }
             // A fence with a language inside a fence is code (a Markdown example), not the end of it.
         }
-        guard let language = state.fence?.language else { return .none }
+        guard let open = state.fence else { return .none }
+        guard let language = open.language else { return .verbatim }
         // The reply's own indent (two columns) is not part of the code.
         var code = span.lowerBound
         while code < span.upperBound, code < span.lowerBound + 2, chars[code] == 0x20 { code += 1 }
@@ -464,27 +469,45 @@ final class TranscriptBubble: NSObject {
     let id: Int
     let fill: NSColor
     let stroke: NSColor
+    /// A small word on the block's top edge ("Tarea" on the first message of an agent's conversation).
+    let label: String?
+    /// The colour of that word: the block's own.
+    let accent: NSColor
+    /// A word on a pill inside the block's right end ("En cola"): a message that is not in the conversation yet.
+    let tag: Tag?
 
-    init(id: Int, fill: NSColor, stroke: NSColor) {
-        self.id = id; self.fill = fill; self.stroke = stroke
+    struct Tag: Equatable {
+        var text: String
+        var fill: NSColor
+        var ink: NSColor
+    }
+
+    init(id: Int, fill: NSColor, stroke: NSColor, label: String? = nil, accent: NSColor = TranscriptPalette.mint, tag: Tag? = nil) {
+        self.id = id; self.fill = fill; self.stroke = stroke; self.label = label; self.accent = accent; self.tag = tag
     }
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? TranscriptBubble else { return false }
-        return id == other.id && fill == other.fill && stroke == other.stroke
+        return id == other.id && fill == other.fill && stroke == other.stroke && label == other.label && accent == other.accent && tag == other.tag
     }
     override var hash: Int { id }
 }
 
-/// Colors for the transcript. Mint is Nook's accent and marks Daniel; terracotta is Claude's own spinner color.
+/// Colors for the transcript, for the dark island and for the light one. The user's messages wear the tab's color (mint unless the user chose
+/// another: Nook's own accent), in the shades it has in each theme (`TabTint.voice(_:)`); terracotta is Claude's own spinner color. In the light theme
+/// everything that is read (text, markers, code) keeps 4.5 : 1 on the paper (`Tests/TranscriptStyleTests`), and what is only drawn (a bar, a block's fill) 3 : 1.
 struct TranscriptPalette {
-    static let mint = NSColor(red: 0.32, green: 0.73, blue: 0.61, alpha: 1)
-    static let terracotta = NSColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1)
+    static let mint = TabTint.mint.shades.accent.nsColor
+    static let terracotta = NookPalette.terracottaOnBlack
 
     /// Plain text and Claude's replies.
     let text: NSColor
     let userText: NSColor
     let userMarker: NSColor
+    /// The solid color of the user's message block (its fill and outline are this one, faint).
+    let accent: NSColor
+    /// The color of the small words that stand on a block (the task's tab): the accent on black, and on paper a deeper shade, which is readable.
+    let labelInk: NSColor
     let assistantMarker: NSColor
     let toolMarker: NSColor
     let toolName: NSColor
@@ -504,24 +527,38 @@ struct TranscriptPalette {
     let contextCode: NSColor
     /// The path in a change's summary line.
     let changePath: NSColor
+    /// The Markdown of a reply: a heading, `inline code` (its colour and the soft block behind it), and a link.
+    let heading: NSColor
+    let inlineCode: NSColor
+    let inlineCodeFill: NSColor
+    let link: NSColor
     private let syntax: [SyntaxToken: NSColor]
 
     /// The colour of a kind of code.
     func color(_ token: SyntaxToken) -> NSColor { syntax[token] ?? text }
 
-    init(dark: Bool) {
+    /// The island's warm ink, which the light palette's text is made of.
+    private static let ink = NSColor(srgbRed: 0.110, green: 0.105, blue: 0.095, alpha: 1)
+    private static func inked(_ alpha: CGFloat) -> NSColor { ink.withAlphaComponent(alpha) }
+
+    /// `voice` is the tab's, in the theme's shades (the dark palette takes the light-on-black ones, the light palette the deep ones); without one it is mint's,
+    /// in the theme's own.
+    init(dark: Bool, voice: TabVoice? = nil) {
+        let voice = voice ?? TabTint.mint.voice(dark ? .dark : .light)
         if dark {
             text = .white
-            userText = NSColor(red: 0.86, green: 0.98, blue: 0.94, alpha: 1)
-            userMarker = NSColor(red: 0.45, green: 0.85, blue: 0.72, alpha: 1)
+            userText = voice.text.nsColor
+            userMarker = voice.marker.nsColor
+            accent = voice.accent.nsColor
+            labelInk = voice.accent.nsColor
             assistantMarker = Self.terracotta
             toolMarker = NSColor(white: 1, alpha: 0.34)
             toolName = NSColor(white: 1, alpha: 0.72)
             tool = NSColor(white: 1, alpha: 0.56)
             output = NSColor(white: 1, alpha: 0.46)
             outputMarker = NSColor(white: 1, alpha: 0.38)
-            bubbleFill = Self.mint.withAlphaComponent(0.15)
-            bubbleStroke = Self.mint.withAlphaComponent(0.24)
+            bubbleFill = voice.accent.nsColor.withAlphaComponent(0.15)
+            bubbleStroke = voice.accent.nsColor.withAlphaComponent(0.24)
             removedFill = NSColor(red: 0.30, green: 0.10, blue: 0.12, alpha: 1)
             addedFill = NSColor(red: 0.09, green: 0.25, blue: 0.14, alpha: 1)
             gutter = NSColor(white: 1, alpha: 0.36)
@@ -530,6 +567,10 @@ struct TranscriptPalette {
             changedCode = NSColor(white: 1, alpha: 0.94)
             contextCode = NSColor(white: 1, alpha: 0.66)
             changePath = NSColor(white: 1, alpha: 0.92)
+            heading = NSColor(red: 1.0, green: 0.87, blue: 0.78, alpha: 1)
+            inlineCode = NSColor(red: 0.66, green: 0.83, blue: 1.0, alpha: 1)
+            inlineCodeFill = NSColor(white: 1, alpha: 0.10)
+            link = NSColor(red: 0.50, green: 0.75, blue: 1.0, alpha: 1)
             syntax = [
                 .keyword: NSColor(red: 0.85, green: 0.62, blue: 0.97, alpha: 1), .string: NSColor(red: 0.96, green: 0.72, blue: 0.50, alpha: 1),
                 .number: NSColor(red: 0.74, green: 0.89, blue: 0.66, alpha: 1), .comment: NSColor(red: 0.56, green: 0.62, blue: 0.60, alpha: 1),
@@ -538,31 +579,38 @@ struct TranscriptPalette {
                 .inserted: NSColor(red: 0.46, green: 0.90, blue: 0.56, alpha: 1), .deleted: NSColor(red: 1.0, green: 0.50, blue: 0.50, alpha: 1),
             ]
         } else {
-            text = .black
-            userText = NSColor(red: 0.04, green: 0.27, blue: 0.21, alpha: 1)
-            userMarker = NSColor(red: 0.08, green: 0.47, blue: 0.37, alpha: 1)
-            assistantMarker = NSColor(red: 0.80, green: 0.40, blue: 0.27, alpha: 1)
-            toolMarker = NSColor(white: 0, alpha: 0.40)
-            toolName = NSColor(white: 0, alpha: 0.72)
-            tool = NSColor(white: 0, alpha: 0.56)
-            output = NSColor(white: 0, alpha: 0.58)
-            outputMarker = NSColor(white: 0, alpha: 0.42)
-            bubbleFill = Self.mint.withAlphaComponent(0.20)
-            bubbleStroke = Self.mint.withAlphaComponent(0.34)
-            removedFill = NSColor(red: 1.0, green: 0.86, blue: 0.87, alpha: 1)
-            addedFill = NSColor(red: 0.84, green: 0.96, blue: 0.86, alpha: 1)
-            gutter = NSColor(white: 0, alpha: 0.38)
-            removedMark = NSColor(red: 0.74, green: 0.12, blue: 0.16, alpha: 1)
-            addedMark = NSColor(red: 0.08, green: 0.50, blue: 0.20, alpha: 1)
-            changedCode = NSColor(white: 0, alpha: 0.88)
-            contextCode = NSColor(white: 0, alpha: 0.62)
-            changePath = NSColor(white: 0, alpha: 0.86)
+            text = Self.ink
+            userText = voice.text.nsColor
+            userMarker = voice.marker.nsColor
+            accent = voice.accent.nsColor
+            labelInk = voice.marker.nsColor
+            // Claude's marker is drawn, not read: the brighter rust (3.4 : 1 on the paper), as the glyph in its spinner is.
+            assistantMarker = NookPalette.terracottaFillLight
+            toolMarker = Self.inked(0.49)
+            toolName = Self.inked(0.76)
+            tool = Self.inked(0.64)
+            output = Self.inked(0.64)
+            outputMarker = Self.inked(0.49)
+            bubbleFill = voice.accent.nsColor.withAlphaComponent(0.15)
+            bubbleStroke = voice.accent.nsColor.withAlphaComponent(0.30)
+            removedFill = NSColor(red: 0.99, green: 0.86, blue: 0.85, alpha: 1)
+            addedFill = NSColor(red: 0.84, green: 0.95, blue: 0.84, alpha: 1)
+            gutter = Self.inked(0.52)
+            removedMark = NSColor(red: 0.72, green: 0.11, blue: 0.15, alpha: 1)
+            addedMark = NSColor(red: 0.06, green: 0.46, blue: 0.18, alpha: 1)
+            changedCode = Self.inked(0.92)
+            contextCode = Self.inked(0.68)
+            changePath = Self.inked(0.88)
+            heading = NSColor(red: 0.62, green: 0.25, blue: 0.10, alpha: 1)
+            inlineCode = NSColor(red: 0.08, green: 0.34, blue: 0.62, alpha: 1)
+            inlineCodeFill = Self.inked(0.07)
+            link = NSColor(red: 0.05, green: 0.36, blue: 0.80, alpha: 1)
             syntax = [
-                .keyword: NSColor(red: 0.55, green: 0.18, blue: 0.70, alpha: 1), .string: NSColor(red: 0.69, green: 0.32, blue: 0.08, alpha: 1),
-                .number: NSColor(red: 0.12, green: 0.45, blue: 0.20, alpha: 1), .comment: NSColor(red: 0.38, green: 0.44, blue: 0.42, alpha: 1),
-                .type: NSColor(red: 0.04, green: 0.45, blue: 0.48, alpha: 1), .function: NSColor(red: 0.50, green: 0.38, blue: 0.02, alpha: 1),
-                .attribute: NSColor(red: 0.10, green: 0.34, blue: 0.75, alpha: 1), .variable: NSColor(red: 0.12, green: 0.38, blue: 0.64, alpha: 1),
-                .inserted: NSColor(red: 0.08, green: 0.50, blue: 0.20, alpha: 1), .deleted: NSColor(red: 0.74, green: 0.12, blue: 0.16, alpha: 1),
+                .keyword: NSColor(red: 0.55, green: 0.18, blue: 0.70, alpha: 1), .string: NSColor(red: 0.66, green: 0.30, blue: 0.06, alpha: 1),
+                .number: NSColor(red: 0.10, green: 0.43, blue: 0.19, alpha: 1), .comment: NSColor(red: 0.36, green: 0.42, blue: 0.40, alpha: 1),
+                .type: NSColor(red: 0.03, green: 0.42, blue: 0.46, alpha: 1), .function: NSColor(red: 0.47, green: 0.35, blue: 0.0, alpha: 1),
+                .attribute: NSColor(red: 0.10, green: 0.32, blue: 0.72, alpha: 1), .variable: NSColor(red: 0.12, green: 0.36, blue: 0.62, alpha: 1),
+                .inserted: NSColor(red: 0.06, green: 0.46, blue: 0.18, alpha: 1), .deleted: NSColor(red: 0.72, green: 0.11, blue: 0.15, alpha: 1),
             ]
         }
     }
@@ -584,11 +632,14 @@ enum TranscriptStyler {
     /// that replaced the text from `location` on (everything before it must be unchanged): the result is what
     /// `restyle(storage, from: 0, …)` gives. A user message still open at that point is restyled from its first
     /// line, so its block is repainted as one piece.
-    static func restyle(_ storage: NSTextStorage, from location: Int, dark: Bool, font: NSFont) {
+    ///
+    /// `taskLabel` puts that word on the top edge of the text's first message (the task an agent's conversation opens with).
+    /// `voice` is the colours of the user's messages: the tab's.
+    static func restyle(_ storage: NSTextStorage, from location: Int, dark: Bool, font: NSFont, taskLabel: String? = nil, voice: TabVoice? = nil) {
         let length = storage.length
         guard length > 0 else { return }
         let text = storage.mutableString as NSString
-        let sheet = Sheet(dark: dark, font: font)
+        let sheet = Sheet(dark: dark, font: font, taskLabel: taskLabel, voice: voice)
 
         // Where attributes are rewritten from, and the line above it, read only to know what sits next to it.
         var apply = 0
@@ -621,6 +672,8 @@ enum TranscriptStyler {
             }
         }
 
+        // The addresses of links, put on their text once everything else is written.
+        var links: [InlineMarkdown.Link] = []
         var previous: TranscriptClassifier.Line?
         for line in TranscriptClassifier.lines(in: text, from: context) {
             defer { previous = line }
@@ -644,7 +697,18 @@ enum TranscriptStyler {
                 default: break
                 }
             }
-            func key(_ kind: Sheet.Kind) -> Sheet.Key { Sheet.Key(kind: kind, gap: gap, block: block, fit: fit, native: native) }
+            // The first message of the text, when it is the one that carries the label.
+            let task = taskLabel != nil && block == 0
+            // The Markdown of a reply's line (the text after its dot, or the whole continuation line) is read once: it gives the
+            // line's pieces, and where a list item's wrapped lines hang.
+            var markdown: InlineMarkdown.Result?
+            var textStart = line.range.location
+            if line.role == .assistant, line.detail == .none, !line.isBlank {
+                textStart = line.marker.map { NSMaxRange($0) } ?? line.range.location
+                markdown = InlineMarkdown.parse(text, range: NSRange(location: textStart, length: max(0, NSMaxRange(line.range) - textStart)))
+            }
+            let indent = markdown?.hang.map { $0 + textStart - line.range.location } ?? 0
+            func key(_ kind: Sheet.Kind) -> Sheet.Key { Sheet.Key(kind: kind, gap: gap, block: block, fit: fit, native: native, task: task, indent: indent) }
             // The code of a row or of a fenced line, split by what each stretch is.
             func putCode(_ code: NSRange, language: SyntaxLanguage?, as codeLine: Sheet.CodeLine, hang: Int = 0) {
                 func codeKey(_ token: SyntaxToken?) -> Sheet.Key { Sheet.Key(kind: .code(codeLine, token), gap: gap, block: block, hang: hang) }
@@ -658,6 +722,20 @@ enum TranscriptStyler {
                 }
                 // The rest of the code, and the line break.
                 put(NSRange(location: cursor, length: NSMaxRange(whole) - cursor), codeKey(nil))
+            }
+            // The text of a line. In a reply, the Markdown in it (bold, italic, `code`, headings, bullets, links) is dressed;
+            // nothing else ever is.
+            func putText(_ range: NSRange) {
+                guard line.role == .assistant, line.detail == .none, range.length > 0 else { return put(range, key(.text(line.role))) }
+                guard let found = markdown else { return put(range, key(.text(line.role))) }
+                var cursor = range.location
+                for run in found.runs {
+                    put(NSRange(location: cursor, length: run.range.location - cursor), key(.text(line.role)))
+                    put(run.range, key(.markup(run.style)))
+                    cursor = NSMaxRange(run.range)
+                }
+                put(NSRange(location: cursor, length: NSMaxRange(range) - cursor), key(.text(line.role)))
+                links += found.links
             }
             if line.isBlank {
                 put(whole, Sheet.Key(kind: .blank))
@@ -709,7 +787,7 @@ enum TranscriptStyler {
                     // A reply that opens with a fence: the marker keeps Claude's dot, the fence is dimmed.
                     put(rest, key(.fence))
                 } else {
-                    put(rest, key(.text(line.role)))
+                    putText(rest)
                 }
             } else if case .code(let language, let start) = line.detail {
                 put(NSRange(location: line.range.location, length: start - line.range.location), key(.text(line.role)))
@@ -717,10 +795,16 @@ enum TranscriptStyler {
             } else if line.detail == .fence {
                 put(whole, key(.fence))
             } else {
-                put(whole, key(.text(line.role)))
+                putText(whole)
             }
         }
         flush()
+        // A link's text opens its address when clicked, and says where it goes when pointed at.
+        for link in links {
+            var attributes: [NSAttributedString.Key: Any] = [.toolTip: link.url]
+            if link.opens, let url = URL(string: link.url) { attributes[.link] = url }
+            storage.addAttributes(attributes, range: link.range)
+        }
     }
 
     /// Takes every transcript attribute off the text and gives it plain attributes again: for a tab that stopped
@@ -759,6 +843,8 @@ enum TranscriptStyler {
             case gap
             /// A ``` line of a reply.
             case fence
+            /// A stretch of a reply the Markdown dresses (see `InlineMarkdown`).
+            case markup(MarkupStyle)
         }
 
         /// Which kind of line a piece of code sits on: the band behind it and the weight of its colours follow.
@@ -778,6 +864,10 @@ enum TranscriptStyler {
             var native = false
             /// For a row of a change: how many columns its code starts at, where its wrapped lines hang.
             var hang = 0
+            /// The message block carries the sheet's task label.
+            var task = false
+            /// For a reply's list item: how many columns of the reply's font its text starts at, where wrapped lines hang.
+            var indent = 0
         }
 
         /// The most columns a wrapped row hangs by, so a deeply indented line still has room to wrap.
@@ -809,9 +899,32 @@ enum TranscriptStyler {
         /// `⎿` is not in the monospaced font either; its fallback is proportional and shifts the text after it.
         let resultMark: Glyph?
 
-        init(dark: Bool, font: NSFont) {
-            palette = TranscriptPalette(dark: dark)
+        /// The word on the first message's top edge, for the keys that ask for it.
+        let taskLabel: String?
+        /// The reply's fonts for bold, italic and both. `italicSkew` is true when the monospaced font has no italic of its own:
+        /// the letters are slanted instead.
+        let bold: NSFont
+        let italic: NSFont
+        let boldItalic: NSFont
+        let italicSkew: Bool
+        /// One column of the reply's font: the room a hidden mark gives back.
+        let column: CGFloat
+
+        init(dark: Bool, font: NSFont, taskLabel: String? = nil, voice: TabVoice? = nil) {
+            palette = TranscriptPalette(dark: dark, voice: voice)
+            self.taskLabel = taskLabel
             base = font
+            column = ("0" as NSString).size(withAttributes: [.font: font]).width
+            let heavy = font.isFixedPitch ? NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold) : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+            bold = heavy
+            let manager = NSFontManager.shared
+            func slanted(_ f: NSFont) -> NSFont? {
+                let converted = manager.convert(f, toHaveTrait: .italicFontMask)
+                return manager.traits(of: converted).contains(.italicFontMask) ? converted : nil
+            }
+            italic = slanted(font) ?? font
+            boldItalic = slanted(heavy) ?? heavy
+            italicSkew = slanted(font) == nil
             func mono(_ size: CGFloat, _ weight: NSFont.Weight) -> NSFont {
                 font.isFixedPitch ? .monospacedSystemFont(ofSize: size, weight: weight) : NSFont(descriptor: font.fontDescriptor, size: size) ?? font
             }
@@ -889,6 +1002,8 @@ enum TranscriptStyler {
                 attributes = [.font: small, .foregroundColor: palette.outputMarker, .transcriptRole: TranscriptRole.toolOutput.rawValue]
             case .fence:
                 attributes = [.font: base, .foregroundColor: palette.output, .transcriptRole: TranscriptRole.assistant.rawValue]
+            case .markup(let style):
+                attributes = markupAttributes(style)
             case .gutter(let line):
                 attributes = [.font: line == .fenced ? base : small, .foregroundColor: palette.gutter, .transcriptRole: Self.role(of: line).rawValue]
                 if let fill = fill(line) { attributes[.transcriptLineFill] = fill }
@@ -905,7 +1020,34 @@ enum TranscriptStyler {
             }
             attributes[.paragraphStyle] = paragraph(key)
             if key.block >= 0 {
-                attributes[.transcriptBubble] = TranscriptBubble(id: key.block, fill: palette.bubbleFill, stroke: palette.bubbleStroke)
+                attributes[.transcriptBubble] = TranscriptBubble(id: key.block, fill: palette.bubbleFill, stroke: palette.bubbleStroke, label: key.task ? taskLabel : nil,
+                                                                 accent: palette.labelInk)
+            }
+            return attributes
+        }
+
+        /// A reply's text with Markdown on it. A hidden mark has no colour and gives its column back, so what is around it
+        /// closes up; everything else keeps the reply's own look and adds to it.
+        private func markupAttributes(_ style: MarkupStyle) -> [NSAttributedString.Key: Any] {
+            if style.contains(.hidden) {
+                return [.font: base, .foregroundColor: NSColor.clear, .kern: -column, .transcriptRole: TranscriptRole.assistant.rawValue]
+            }
+            let heavy = style.contains(.bold) || style.contains(.heading)
+            let slanted = style.contains(.italic)
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: heavy ? (slanted ? boldItalic : bold) : (slanted ? italic : base),
+                .foregroundColor: palette.text, .transcriptRole: TranscriptRole.assistant.rawValue,
+            ]
+            if slanted, italicSkew { attributes[.obliqueness] = 0.2 }
+            if style.contains(.heading) { attributes[.foregroundColor] = palette.heading }
+            if style.contains(.bullet) { attributes[.foregroundColor] = palette.assistantMarker; attributes[.font] = bold; attributes[.transcriptBullet] = true }
+            if style.contains(.link) {
+                attributes[.foregroundColor] = palette.link
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            }
+            if style.contains(.code) {
+                attributes[.foregroundColor] = palette.inlineCode
+                attributes[.backgroundColor] = palette.inlineCodeFill
             }
             return attributes
         }
@@ -925,6 +1067,7 @@ enum TranscriptStyler {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byWordWrapping
             if key.hang > 0 { paragraph.headIndent = (CGFloat(key.hang) * rowColumn).rounded(.up) }
+            if key.indent > 0 { paragraph.headIndent = (CGFloat(key.indent) * column).rounded(.up) }
             switch key.fit {
             case .none: break
             case .assistantDot: paragraph.lineSpacing = assistantDot?.spacing ?? 0
@@ -941,7 +1084,38 @@ enum TranscriptStyler {
 
 /// Paints the soft block behind each user message, under the text and the selection. The block spans the width of the
 /// text container and the lines of the message; the characters themselves are drawn by `NSLayoutManager`.
-final class MirrorLayoutManager: NSLayoutManager {
+final class MirrorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    override init() {
+        super.init()
+        delegate = self
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// The dash of a list item (`.transcriptBullet`) is drawn as a bullet, the way Claude's terminal draws it. The glyph is
+    /// swapped as glyphs are generated, so the text, its copy and its selection are untouched. Batches without a bullet (nearly
+    /// all of them) are left to the default, after one look at the few attribute runs they cover.
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>, properties props: UnsafePointer<NSLayoutManager.GlyphProperty>,
+                       characterIndexes charIndexes: UnsafePointer<Int>, font aFont: NSFont, forGlyphRange glyphRange: NSRange) -> Int {
+        guard let storage = textStorage, glyphRange.length > 0 else { return 0 }
+        let count = glyphRange.length
+        let low = charIndexes[0], high = charIndexes[count - 1]
+        guard low >= 0, high < storage.length, high >= low else { return 0 }
+        var bullets: Set<Int> = []
+        storage.enumerateAttribute(.transcriptBullet, in: NSRange(location: low, length: high - low + 1), options: []) { value, range, _ in
+            if value != nil { for index in range.location..<NSMaxRange(range) { bullets.insert(index) } }
+        }
+        guard !bullets.isEmpty else { return 0 }
+        var dot: unichar = 0x2022
+        var dotGlyph = CGGlyph(0)
+        guard CTFontGetGlyphsForCharacters(aFont, &dot, &dotGlyph, 1), dotGlyph != 0 else { return 0 }
+        var newGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: count))
+        let properties = Array(UnsafeBufferPointer(start: props, count: count))
+        let indexes = Array(UnsafeBufferPointer(start: charIndexes, count: count))
+        for position in 0..<count where bullets.contains(indexes[position]) { newGlyphs[position] = dotGlyph }
+        layoutManager.setGlyphs(newGlyphs, properties: properties, characterIndexes: indexes, font: aFont, forGlyphRange: glyphRange)
+        return count
+    }
+
     static let cornerRadius: CGFloat = 6
     /// How far the block reaches above the first line and below the last one.
     static let verticalPadding: CGFloat = 3
@@ -992,7 +1166,51 @@ final class MirrorLayoutManager: NSLayoutManager {
             bubble.stroke.setStroke()
             path.lineWidth = 0.5
             path.stroke()
+            bubble.drawTag(in: rect, midY: first.midY + origin.y)
         }
+    }
+}
+
+extension TranscriptBubble {
+    /// The room a tagged block keeps free at the right end of its first paragraph, for the pill (see `MirrorMessageLook`).
+    static let tagGutter: CGFloat = 76
+
+    /// Draws the tag's pill at the right end of the block `rect`, centred on `midY` (the block's first line), in a flipped view. Nothing
+    /// when there is no tag.
+    func drawTag(in rect: NSRect, midY: CGFloat) {
+        guard let tag else { return }
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 7, weight: .bold), .kern: 0.8, .foregroundColor: tag.ink]
+        let text = tag.text.uppercased() as NSString
+        let size = text.size(withAttributes: attributes)
+        let pill = NSRect(x: rect.maxX - ceil(size.width) - 10 - 8, y: midY - 6, width: ceil(size.width) + 10, height: 12)
+        tag.fill.setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
+        text.draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + (pill.height - size.height) / 2 - 0.3), withAttributes: attributes)
+    }
+
+    /// The tab a labelled block wears: a small word on a tab of the block's own colours, standing on the block's top edge.
+    static let tabHeight: CGFloat = 9
+    /// How much room the text view keeps over the first message, on top of its usual inset, for the tab to stand in.
+    static let tabRoom: CGFloat = 7
+
+    /// Draws the tab with its bottom edge at `y` and its left edge at `x`, in a flipped view. Nothing when there is no label.
+    func drawTab(atX x: CGFloat, bottomY y: CGFloat) {
+        guard let label else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 7, weight: .bold), .kern: 0.8,
+            .foregroundColor: accent.withAlphaComponent(0.95),
+        ]
+        let text = label.uppercased() as NSString
+        let size = text.size(withAttributes: attributes)
+        let tab = NSRect(x: x, y: y - Self.tabHeight, width: ceil(size.width) + 10, height: Self.tabHeight)
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        // Rounded at the top only: the bottom corners are drawn below the tab and cut away.
+        NSBezierPath(rect: tab).addClip()
+        let path = NSBezierPath(roundedRect: NSRect(x: tab.minX + 0.25, y: tab.minY + 0.25, width: tab.width - 0.5, height: tab.height + 6), xRadius: 3, yRadius: 3)
+        fill.setFill(); path.fill()
+        stroke.setStroke(); path.lineWidth = 0.5; path.stroke()
+        text.draw(at: NSPoint(x: tab.minX + 5, y: tab.minY + (tab.height - size.height) / 2 - 0.3), withAttributes: attributes)
     }
 }
 

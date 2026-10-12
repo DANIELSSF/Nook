@@ -1,7 +1,7 @@
 import AppKit
 
-// How the open island looks, as the user sets it: the size of the conversation's text and of the message field's text,
-// the island's width and height, and how many lines the field grows to before it scrolls.
+// How the open island looks, as the user sets it: its theme (light, dark or macOS's), the size of the conversation's text and of the
+// message field's text, the island's width and height, and how many lines the field grows to before it scrolls.
 //
 //   DisplaySettings   the preferences themselves: ranges, defaults, clamping, persistence (plain values)
 //   IslandPreset      the size presets (Compacta, Normal, Amplia, Alta)
@@ -10,7 +10,8 @@ import AppKit
 //                     "/" menu and the question card can show, how tall the lists over the conversation may be
 //
 // Every default reproduces the look the island had before the settings existed, so a Mac that never opens them sees
-// no difference. Nothing here has a view in it: the numbers are checked by tests for every preset and screen.
+// no difference, but for the theme: its default, Sistema, follows macOS, which is the one thing a Mac in light mode now sees change
+// (the island was dark whatever macOS was). Nothing here has a view in it: the numbers are checked by tests for every preset and screen.
 
 /// The island's size presets. A preset is a pair of offsets from the Normal island, so it means the same on a screen with
 /// a notch (a taller island) and on one without.
@@ -53,6 +54,8 @@ struct DisplaySettings: Equatable {
     /// Points added to the Normal island's width and height (negative: smaller). Zero is today's island.
     var widthExtra: CGFloat = 0
     var heightExtra: CGFloat = 0
+    /// Light, dark, or whatever macOS is (the default). See `NookTheme.swift`.
+    var theme = ThemePreference.system
 
     // MARK: Fonts
 
@@ -113,7 +116,16 @@ struct DisplaySettings: Equatable {
         IslandPreset.allCases.first { abs($0.widthExtra - widthExtra) < 0.5 && abs($0.heightExtra - heightExtra) < 0.5 }
     }
 
-    var isDefault: Bool { self == DisplaySettings() }
+    /// Whether the island's size and texts are the defaults (what «Restablecer» undoes). The theme is not one of them: it is how the user likes the island
+    /// to look, not a measure of it, and putting the island back to its size must not turn it from dark to light.
+    var isDefault: Bool { resetKeepingTheme() == self }
+
+    /// The defaults, except for the theme, which stays.
+    func resetKeepingTheme() -> DisplaySettings {
+        var copy = DisplaySettings()
+        copy.theme = theme
+        return copy
+    }
 
     // MARK: Persistence
 
@@ -123,6 +135,7 @@ struct DisplaySettings: Equatable {
         static let inputLines = "display.inputLines"
         static let widthExtra = "display.widthExtra"
         static let heightExtra = "display.heightExtra"
+        static let theme = "display.theme"
     }
 
     /// What is stored. A key that is missing (a Mac that never changed it) or holds something else is the default.
@@ -134,6 +147,8 @@ struct DisplaySettings: Equatable {
         if let value = number(Key.inputLines), value.isFinite { settings.inputLines = Int(value.rounded()) }
         if let value = number(Key.widthExtra) { settings.widthExtra = CGFloat(value) }
         if let value = number(Key.heightExtra) { settings.heightExtra = CGFloat(value) }
+        // Anything but the three names (a value from a newer version, garbage) is the default.
+        if let name = defaults.string(forKey: Key.theme), let theme = ThemePreference(rawValue: name) { settings.theme = theme }
         return settings.clamped()
     }
 
@@ -144,6 +159,7 @@ struct DisplaySettings: Equatable {
         defaults.set(value.inputLines, forKey: Key.inputLines)
         defaults.set(Double(value.widthExtra), forKey: Key.widthExtra)
         defaults.set(Double(value.heightExtra), forKey: Key.heightExtra)
+        defaults.set(value.theme.rawValue, forKey: Key.theme)
     }
 }
 

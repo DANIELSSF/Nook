@@ -370,7 +370,7 @@ final class AlertPeekTests: XCTestCase {
         XCTAssertEqual(AlertPeekStyle.spoken(alert(1, title: "")), "Claude terminó.")
         XCTAssertNotEqual(AlertPeekStyle.color(.finished), AlertPeekStyle.color(.question))
         XCTAssertNotEqual(AlertPeekStyle.color(.question), AlertPeekStyle.color(.failed))
-        XCTAssertEqual(AlertPeekStyle.color(.finished), TranscriptPalette.mint, "Finished is Nook's mint.")
+        XCTAssertEqual(AlertPeekStyle.color(.finished), NookPalette.mintOnBlack, "Finished is Nook's mint on the peek's black (the same the open island's header wears).")
     }
 
     func testBellTitleAndMessageAlwaysFitTheChinInOrder() {

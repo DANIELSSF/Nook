@@ -2,24 +2,24 @@ import SwiftUI
 
 // Liquid Glass for Nook, kept small on purpose.
 //
-// The island itself stays solid black and attached to the notch; glass is only used on a handful of surfaces that
-// sit on top of it, the way System Settings uses it on macOS 26:
+// The island itself stays a solid surface attached to the notch (black, or the paper of the light theme: `IslandSurface.swift`); glass is only used
+// on a handful of surfaces that sit on top of it, the way System Settings uses it on macOS 26:
 //
 //   - floating cards and sheets (notice, joined-message warning, subagent list, recap card, connection sheet),
 //   - the message field and the send button (the button lights up as tinted glass once there is text to send),
 //   - the selected session tab (tinted with the session's color),
 //   - the header icon buttons, which only show a glass disc while the pointer is over them.
 //
-// Everything falls back to the exact flat look Nook had before (`Color.white.opacity(0.055)` fills, hairline
-// strokes, `Color(white: 0.115)` cards) when any of these is true:
+// Everything falls back to a flat look (`Color.nookWash(0.055)` fills, hairline strokes, `Color.nookCard` cards: the exact look Nook had before in the
+// dark theme, and the same in paper and ink in the light one) when any of these is true:
 //
 //   - the Mac runs an OS older than macOS 26 (the package still deploys to macOS 14),
 //   - Reduce Transparency or Increase Contrast is on,
-//   - the surface floats over the terminal mirror and the mirror is light (see `nookDarkBackdrop`; the panel's mirror
-//     now sits straight on the island's black, so it always counts as dark).
+//   - the surface floats over the terminal mirror and what is behind it would turn the glass against the text (see `nookDarkBackdrop`; the panel's mirror
+//     sits straight on the island's own surface, whose text takes the theme's colours, so there it is always fit).
 //
-// Call sites: `nookGlassCard` (notice, joined warning, connection sheet in PanelView.swift; `SubagentList`; the recap
-// card with `nookScrollFade`), `nookGlassSurface` (message field, send button, session tabs, welcome tiles) and
+// Call sites: `nookGlassCard` (joined warning, connection sheet in PanelView.swift; the notice in NoticeToast.swift;
+// `SubagentList`; the recap card with `nookScrollFade`), `nookGlassSurface` (message field, send button, session tabs, welcome tiles) and
 // `nookGlassButton` (`IconButton`). The island's content sets `\.nookDarkBackdrop` once. Each is a drop-in for the
 // `.background(...)`/`.overlay(...)` pair or the `.buttonStyle(.plain)` it replaces.
 
@@ -30,10 +30,10 @@ private struct NookDarkBackdropKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Whether what shows behind the island's floating cards is dark. A light backdrop would turn glass light and wash
-    /// out the island's white text, so cards that float over the mirror keep their solid fill unless this is true.
-    /// The panel's mirror has no card of its own and sits on the island's black in every system appearance, so
-    /// `NookPanel` sets it to true once on the island's content. Defaults to false, so a missing call keeps the solid look.
+    /// Whether what shows behind the island's floating cards is fit to be seen through glass: that the text over it has the colours of the scheme it is
+    /// in, so the glass (light in the light theme, dark in the dark one) never washes it out. The panel's mirror has no card of its own and sits on the
+    /// island's surface, whose text follows the theme, so `NookPanel` sets it to true once on the island's content. Defaults to false, so a missing
+    /// call keeps the solid look.
     var nookDarkBackdrop: Bool {
         get { self[NookDarkBackdropKey.self] }
         set { self[NookDarkBackdropKey.self] = newValue }
@@ -53,15 +53,30 @@ extension EnvironmentValues {
     }
 }
 
+private struct NookFlatGlassKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether every glass surface takes its flat look, as with Reduce Transparency. False everywhere but in the offscreen renders made for review, which cannot
+    /// show active glass (it leaves the image empty): they turn it on to see what the flat look is, which is also what those who ask for Reduce Transparency or
+    /// Increase Contrast see. (The system's own `accessibilityReduceTransparency` cannot be set from a view.)
+    var nookFlatGlass: Bool {
+        get { self[NookFlatGlassKey.self] }
+        set { self[NookFlatGlassKey.self] = newValue }
+    }
+}
+
 /// The conditions under which glass may be used, read from the environment.
 private struct NookGlassGate: DynamicProperty {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.nookDarkBackdrop) private var darkBackdrop
+    @Environment(\.nookFlatGlass) private var flat
 
     /// `overMirror` is true for surfaces that can sit on top of the terminal mirror's text or light background.
     func allows(overMirror: Bool) -> Bool {
-        !reduceTransparency && contrast != .increased && (!overMirror || darkBackdrop)
+        !flat && !reduceTransparency && contrast != .increased && (!overMirror || darkBackdrop)
     }
 }
 
@@ -153,7 +168,7 @@ extension View {
     ///   - interactive: Glass that answers the pointer (press and hover); for things that are buttons.
     ///   - dim: Opacity of `dimColor` laid over the glass, under the content. Raises contrast and pulls the glass
     ///     toward the island's darkness; the rest of the glass (rim light, depth) shows through.
-    ///   - dimColor: Black by default; use the surface's own flat color to keep its brightness close to the flat look.
+    ///   - dimColor: The theme's own (black on the dark island, white on the paper) by default; use the surface's own flat color to keep its brightness close to the flat look.
     ///   - overMirror: The surface can overlap the terminal mirror; glass is then used only with a dark backdrop.
     ///   - clipsContent: Clips the content to `shape` (a scroll view inside a card); the flat look keeps the order
     ///     fill, clip, hairline.
@@ -166,7 +181,7 @@ extension View {
         isActive: Bool = true,
         interactive: Bool = false,
         dim: Double = 0,
-        dimColor: Color = .black,
+        dimColor: Color = .nookGlassDim,
         overMirror: Bool = false,
         clipsContent: Bool = false,
         fill: F,
@@ -176,31 +191,36 @@ extension View {
         modifier(NookGlassSurface(shape: shape, tint: tint, isActive: isActive, interactive: interactive, dim: dim, dimColor: dimColor, overMirror: overMirror, clipsContent: clipsContent, fill: fill, stroke: stroke, strokeShape: strokeShape))
     }
 
-    /// `nookGlassSurface` with the island's usual resting fill, `Color.white.opacity(0.055)`.
+    /// `nookGlassSurface` with the island's usual resting fill, `Color.nookWash(0.055)`.
     func nookGlassSurface<S: Shape>(
         in shape: S,
         tint: Color? = nil,
         isActive: Bool = true,
         interactive: Bool = false,
         dim: Double = 0,
-        dimColor: Color = .black,
+        dimColor: Color = .nookGlassDim,
         overMirror: Bool = false,
         stroke: Color? = Color.primary.opacity(0.055),
         strokeShape: AnyShape? = nil
     ) -> some View {
-        nookGlassSurface(in: shape, tint: tint, isActive: isActive, interactive: interactive, dim: dim, dimColor: dimColor, overMirror: overMirror, fill: Color.white.opacity(0.055), stroke: stroke, strokeShape: strokeShape)
+        nookGlassSurface(in: shape, tint: tint, isActive: isActive, interactive: interactive, dim: dim, dimColor: dimColor, overMirror: overMirror, fill: Color.nookWash(0.055), stroke: stroke, strokeShape: strokeShape)
     }
 
     /// A floating card: glass over a dark backdrop, the opaque `fill` card otherwise. Cards can overlap the terminal
     /// mirror, so glass is only used when `nookDarkBackdrop` is true, and `dim` (the card's own surface color laid
     /// over the glass) keeps the text over it clean.
-    func nookGlassCard<F: ShapeStyle>(radius: CGFloat, tint: Color? = nil, dim: Double = 0.6, dimColor: Color = Color(white: 0.115), clipsContent: Bool = false, fill: F, stroke: Color = Color.white.opacity(0.09)) -> some View {
+    func nookGlassCard<F: ShapeStyle>(radius: CGFloat, tint: Color? = nil, dim: Double = 0.6, dimColor: Color = .nookCard, clipsContent: Bool = false, fill: F, stroke: Color = Color.nookWash(0.09, light: 0.12)) -> some View {
         nookGlassSurface(in: RoundedRectangle(cornerRadius: radius), tint: tint, dim: dim, dimColor: dimColor, overMirror: true, clipsContent: clipsContent, fill: fill, stroke: stroke)
     }
 
-    /// `nookGlassCard` with the card surface of the subagent list and the recap: `Color(white: 0.115)`.
+    /// `nookGlassCard` with the card surface of the subagent list and the recap: `Color.nookCard`.
     func nookGlassCard(radius: CGFloat = 11, tint: Color? = nil, dim: Double = 0.6) -> some View {
-        nookGlassCard(radius: radius, tint: tint, dim: dim, fill: Color(white: 0.115))
+        nookGlassCard(radius: radius, tint: tint, dim: dim, fill: Color.nookCard)
+    }
+
+    /// The shadow of a floating card: strong on the dark island, where it has black to sink into, and a soft one on the paper, where it only lifts the card.
+    func nookCardShadow(_ opacity: Double = 0.55, radius: CGFloat = 14, y: CGFloat = 5) -> some View {
+        shadow(color: Color.nookShadow(opacity), radius: radius, y: y)
     }
 }
 
@@ -213,11 +233,16 @@ extension View {
 struct NookGlassButtonStyle: ButtonStyle {
     /// Colors the disc; nil keeps it neutral.
     var tint: Color?
+    /// What the icon does when the button is clicked (`ClickMotion`).
+    var motion: ClickMotion
 
-    init(tint: Color? = nil) { self.tint = tint }
+    init(tint: Color? = nil, motion: ClickMotion = .pop) {
+        self.tint = tint
+        self.motion = motion
+    }
 
     func makeBody(configuration: Configuration) -> some View {
-        NookGlassButtonBody(configuration: configuration, tint: tint)
+        NookGlassButtonBody(configuration: configuration, tint: tint, motion: motion)
     }
 }
 
@@ -225,43 +250,58 @@ struct NookGlassButtonStyle: ButtonStyle {
 private struct NookGlassButtonBody: View {
     let configuration: ButtonStyleConfiguration
     var tint: Color?
+    var motion: ClickMotion
     @Environment(\.isEnabled) private var isEnabled
+    private let gate = NookMotionGate()
     @State private var hovering = false
+    @State private var clicks = 0
 
     var body: some View {
         let lit = isEnabled && (hovering || configuration.isPressed)
+        let sunk = configuration.isPressed && gate.allows
         // Two points inside the label's frame, so a 28 pt hit area shows a 24 pt disc.
         let disc = Circle().inset(by: 2)
         configuration.label
+            .environment(\.nookClicks, clicks)
+            // The icon gives under the press and answers the click; the disc behind it stays (the glass has its own response to the pointer).
+            .scaleEffect(sunk ? PressDepth.icon : 1)
+            .animation(sunk ? .easeOut(duration: 0.07) : .spring(response: 0.3, dampingFraction: 0.52), value: sunk)
+            .clickMotion(motion, trigger: clicks)
             // The glass is a background, not a wrapper: the icon keeps the colors it has without glass.
             .background { Color.clear.glassEffect(lit ? Glass.regular.tint(tint).interactive() : .identity, in: disc) }
             .contentShape(disc)
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.14), value: lit)
+            .onChange(of: configuration.isPressed) { _, pressed in if !pressed { clicks += 1 } }
     }
 }
 
 private struct NookGlassButtonModifier: ViewModifier {
     var tint: Color?
+    var motion: ClickMotion
     private var gate = NookGlassGate()
 
-    init(tint: Color?) { self.tint = tint }
+    init(tint: Color?, motion: ClickMotion) {
+        self.tint = tint
+        self.motion = motion
+    }
 
     func body(content: Content) -> some View {
         // Icon buttons sit on the island's black, never on the mirror.
         if #available(macOS 26.0, *), gate.allows(overMirror: false) {
-            content.buttonStyle(NookGlassButtonStyle(tint: tint))
+            content.buttonStyle(NookGlassButtonStyle(tint: tint, motion: motion))
         } else {
-            content.buttonStyle(.plain)
+            content.buttonStyle(NookPressStyle(motion: motion))
         }
     }
 }
 
 extension View {
     /// Replaces `.buttonStyle(.plain)` on a borderless icon button: glass appears on hover and press on macOS 26+,
-    /// and the button stays exactly `.plain` on older systems and with Reduce Transparency or Increase Contrast.
-    func nookGlassButton(tint: Color? = nil) -> some View {
-        modifier(NookGlassButtonModifier(tint: tint))
+    /// and the button stays what `.plain` was (with the press and the icon's answer, `NookPressStyle`) on older systems and with Reduce Transparency or Increase Contrast.
+    /// `motion` is what the icon does when the button is clicked.
+    func nookGlassButton(tint: Color? = nil, motion: ClickMotion = .pop) -> some View {
+        modifier(NookGlassButtonModifier(tint: tint, motion: motion))
     }
 }
 
@@ -307,7 +347,7 @@ extension View {
     /// The fade at the bottom of a scrolling card that has more to show. On a solid card it is a gradient into the
     /// card's `surface`; on a glass card (`nookGlassCard`) it masks the content instead, since glass has no solid
     /// color to fade into.
-    func nookScrollFade(active: Bool, height: CGFloat = 14, surface: Color = Color(white: 0.115)) -> some View {
+    func nookScrollFade(active: Bool, height: CGFloat = 14, surface: Color = .nookCard) -> some View {
         modifier(NookScrollFade(active: active, height: height, surface: surface))
     }
 }

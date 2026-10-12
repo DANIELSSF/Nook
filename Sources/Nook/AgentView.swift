@@ -15,14 +15,13 @@ struct AgentViewBar: View {
     var animated = true
     var onBack: () -> Void
     @State private var shown = false
-    @State private var overBack = false
 
     static let height: CGFloat = 28
 
     var body: some View {
         HStack(spacing: 8) {
             backButton
-            Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 12)
+            Rectangle().fill(Color.nookWash(0.12)).frame(width: 1, height: 12)
             if let agent {
                 // What does not fit goes away in this order: the live status first, then the agent's type. The name and the
                 // model stay, and the name is cut only when even they do not fit.
@@ -35,12 +34,12 @@ struct AgentViewBar: View {
             } else {
                 Text("Agente").font(.system(size: 10.5, weight: .semibold))
                 Spacer(minLength: 6)
-                Text("Conversación de un agente anterior").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Text("Conversación de un agente anterior").font(.system(size: 10)).foregroundStyle(Color.nookSecondary).lineLimit(1)
             }
         }
         .padding(.leading, 5).padding(.trailing, 11).frame(height: Self.height)
-        .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 0.5))
+        .background(Color.nookWash(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.nookWash(0.07), lineWidth: 0.5))
         .opacity(shown ? 1 : 0)
         .onAppear { withAnimation(.easeOut(duration: 0.18)) { shown = true } }
         .accessibilityElement(children: .contain)
@@ -54,7 +53,7 @@ struct AgentViewBar: View {
             Text(agent.name).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                 .fixedSize(horizontal: !cutsName, vertical: false)
             if let model = AgentModelName.short(agent.model) { AgentChip(text: model, prominent: true) }
-            if kind, let type = agent.kind { AgentChip(text: type, prominent: false) }
+            if kind, let type = agent.distinctKind { AgentChip(text: type, prominent: false) }
             Spacer(minLength: 6)
             if status { self.status(agent).frame(maxWidth: Self.statusWidth, alignment: .trailing) }
         }
@@ -63,22 +62,7 @@ struct AgentViewBar: View {
     /// The most the live status takes; a longer one is cut in its middle (a path) or its end.
     static let statusWidth: CGFloat = 190
 
-    private var backButton: some View {
-        Button(action: onBack) {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.left").font(.system(size: 8.5, weight: .bold))
-                Text("Volver a Claude").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize()
-            }
-            .foregroundStyle(Color.primary.opacity(0.9))
-            .padding(.horizontal, 8).frame(height: 20)
-            .background(Color.white.opacity(overBack ? 0.17 : 0.1), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { overBack = $0 }
-        .help("Volver a la conversación de Claude (Esc)")
-        .accessibilityLabel("Volver a Claude")
-    }
+    private var backButton: some View { ViewBackButton(action: onBack) }
 
     /// What the agent does now (a working one), or how it ended.
     @ViewBuilder private func status(_ agent: SubagentActivity) -> some View {
@@ -87,18 +71,18 @@ struct AgentViewBar: View {
             if let current = agent.activity {
                 let parts = AgentActivityLine.parse(current)
                 HStack(spacing: 4) {
-                    Text("⎿").font(.system(size: 9)).foregroundStyle(Color.secondary.opacity(0.7))
-                    Text(parts.tool).font(.system(size: 9.5, weight: .medium, design: .monospaced)).foregroundStyle(Color.secondary).lineLimit(1).fixedSize()
+                    Text("⎿").font(.system(size: 9)).foregroundStyle(Color.nookSecondary.opacity(0.7))
+                    Text(parts.tool).font(.system(size: 9.5, weight: .medium, design: .monospaced)).foregroundStyle(Color.nookSecondary).lineLimit(1).fixedSize()
                     if let argument = parts.argument {
-                        Text(argument).font(.system(size: 9.5, design: .monospaced)).foregroundStyle(Color.secondary.opacity(0.8))
+                        Text(argument).font(.system(size: 9.5, design: .monospaced)).foregroundStyle(Color.nookSecondary.opacity(0.8))
                             .lineLimit(1).truncationMode(parts.isPath ? .middle : .tail)
                     }
                 }
             } else {
-                Text(agent.toolUses != nil ? "Pensando…" : "Trabajando…").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Text(agent.toolUses != nil ? "Pensando…" : "Trabajando…").font(.system(size: 10)).foregroundStyle(Color.nookSecondary).lineLimit(1)
             }
         case .done:
-            Text(Self.endingText(agent)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            Text(Self.endingText(agent)).font(.system(size: 10)).foregroundStyle(Color.nookSecondary).lineLimit(1)
         case .failed:
             Text(Self.endingText(agent)).font(.system(size: 10)).foregroundStyle(AgentPalette.failed).lineLimit(1)
         }
@@ -114,6 +98,29 @@ struct AgentViewBar: View {
     }
 }
 
+/// "‹ Volver a Claude", the first thing in the bar over an agent's conversation or a shell's output (`ShellViewBar`): the way back to Claude's own.
+struct ViewBackButton: View {
+    var action: () -> Void
+    @State private var overBack = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left").font(.system(size: 8.5, weight: .bold))
+                Text("Volver a Claude").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize()
+            }
+            .foregroundStyle(Color.primary.opacity(0.9))
+            .padding(.horizontal, 8).frame(height: 20)
+            .background(Color.nookWash(overBack ? 0.17 : 0.1), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .nookPress(.squeeze, depth: PressDepth.card, strength: 0.5)
+        .onHover { overBack = $0 }
+        .help("Volver a la conversación de Claude (Esc)")
+        .accessibilityLabel("Volver a Claude")
+    }
+}
+
 /// Shown over the empty mirror when the agent has no record to read yet. It waits a moment first: right after entering,
 /// the record is being read and the mirror is empty for a blink, which is no reason to say anything.
 struct AgentViewPlaceholder: View {
@@ -122,9 +129,9 @@ struct AgentViewPlaceholder: View {
 
     var body: some View {
         VStack(spacing: 5) {
-            Image(systemName: "text.bubble").font(.system(size: 15, weight: .light)).foregroundStyle(.tertiary)
-            Text("Este agente aún no tiene registro").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-            Text("Su conversación aparecerá aquí en cuanto empiece.").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Image(systemName: "text.bubble").font(.system(size: 15, weight: .light)).foregroundStyle(Color.nookTertiary)
+            Text("Este agente aún no tiene registro").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.nookSecondary)
+            Text("Su conversación aparecerá aquí en cuanto empiece.").font(.system(size: 10)).foregroundStyle(Color.nookTertiary)
         }
         .multilineTextAlignment(.center).padding(.horizontal, 24)
         .opacity(shown ? 1 : 0)

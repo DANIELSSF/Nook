@@ -116,9 +116,9 @@ struct SlashMenuState: Equatable {
 
 // MARK: - View
 
-/// The menu itself: one row per command, the highlighted one tinted mint (the user's color, as the prompt card's current
-/// option), and a list that scrolls when there are more than `visibleRows`. It never takes the keyboard: the field keeps
-/// it, and the keys arrive through `SlashMenuState`.
+/// The menu itself: one row per command, the highlighted one tinted with the tab's color (mint unless the user chose another: the
+/// user's color, as the prompt card's current option), and a list that scrolls when there are more than `visibleRows`. It never
+/// takes the keyboard: the field keeps it, and the keys arrive through `SlashMenuState`.
 struct SlashMenuView: View {
     var commands: [SlashCommand]
     var highlighted: Int
@@ -131,6 +131,7 @@ struct SlashMenuView: View {
     var onPick: (SlashCommand) -> Void = { _ in }
     @State private var hovered: String?
     @State private var list: ListMetrics
+    @Environment(\.tabTint) private var tint
 
     init(commands: [SlashCommand], highlighted: Int, top: Int = 0, query: String = "", visibleRows: Int = SlashMenuView.visibleRows, onPick: @escaping (SlashCommand) -> Void = { _ in }) {
         self.commands = commands
@@ -150,7 +151,6 @@ struct SlashMenuView: View {
     /// Between the menu's bottom edge and the composer.
     static let gap: CGFloat = 5
     static let visibleRows = SlashMenuState.visibleRows
-    private static let mint = Color(red: 0.32, green: 0.73, blue: 0.61)
     private static let viewport = "slashMenuList"
     /// The widest the name-and-arguments column gets; descriptions start after it.
     private static let leadCap: CGFloat = 200
@@ -175,8 +175,10 @@ struct SlashMenuView: View {
     var body: some View {
         rows
             .padding(Self.inset).frame(maxWidth: .infinity)
-            .nookGlassCard(radius: Self.radius, dim: 1, dimColor: Color(white: 0.08), clipsContent: true, fill: Color(white: 0.08), stroke: Color.white.opacity(0.1))
-            .shadow(color: .black.opacity(0.55), radius: 14, y: 5)
+            .nookGlassCard(radius: Self.radius, dim: 1, dimColor: Color.nookMenu, clipsContent: true, fill: Color.nookMenu, stroke: Color.nookWash(0.1))
+            // It floats over the conversation: the arrow shows over it, not the text's I-beam.
+            .pointerHole()
+            .nookCardShadow(0.55, radius: 14, y: 5)
             .accessibilityElement(children: .contain).accessibilityLabel("Comandos")
     }
 
@@ -199,7 +201,7 @@ struct SlashMenuView: View {
                 .onPreferenceChange(ListMetricsKey.self) { if $0.height > 0 { list = $0 } }
                 .frame(height: height)
                 // More below: the last row fades out instead of ending in a cut.
-                .nookScrollFade(active: list.height - list.offset - height > 2, height: 20, surface: Color(white: 0.08))
+                .nookScrollFade(active: list.height - list.offset - height > 2, height: 20, surface: Color.nookMenu)
                 // Keys, and a new list, bring the window the state chose back (also after the wheel moved it). Not animated:
                 // like a native menu, and the highlight never trails behind a scroll.
                 .onChange(of: ScrollTarget(top: top, highlighted: highlighted, first: commands.first?.id, count: commands.count)) { _, _ in
@@ -241,7 +243,7 @@ struct SlashMenuView: View {
 
     private func name(of command: SlashCommand) -> Text {
         let name = command.name
-        let slash = Text("/").foregroundStyle(Color.secondary)
+        let slash = Text("/").foregroundStyle(Color.nookSecondary)
         guard let range = SlashMenuState.matchedRange(in: name, query: query) else {
             return slash + Text(name).fontWeight(.medium).foregroundStyle(Color.primary.opacity(0.92))
         }
@@ -257,13 +259,13 @@ struct SlashMenuView: View {
             HStack(spacing: 0) {
                 name(of: command).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle).layoutPriority(2)
                 if let note = note(for: command) {
-                    Text(note).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    Text(note).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.nookSecondary).lineLimit(1).truncationMode(.tail)
                         .padding(.leading, Self.noteGap)
                 }
                 Spacer(minLength: 0)
             }.frame(width: lead, alignment: .leading)
             if let detail = command.detail {
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(detail).font(.system(size: 10.5)).foregroundStyle(Color.nookSecondary).lineLimit(1).truncationMode(.tail)
             }
             Spacer(minLength: 0)
             // The room is kept on every row, so a description is cut at the same place whichever row is highlighted.
@@ -271,7 +273,7 @@ struct SlashMenuView: View {
         }
         .padding(.horizontal, 8).frame(height: Self.rowHeight)
         .background(fill(current: current, hovering: hovering), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Self.mint.opacity(current ? 0.3 : 0), lineWidth: 0.7))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(tint.accent.opacity(current ? 0.3 : 0), lineWidth: 0.7))
         .contentShape(Rectangle())
         .onHover { inside in hovered = inside ? command.id : (hovered == command.id ? nil : hovered) }
         // A tap, not a Button: nothing here may take the keyboard from the field.
@@ -286,8 +288,8 @@ struct SlashMenuView: View {
     }
 
     private func fill(current: Bool, hovering: Bool) -> Color {
-        if current { return Self.mint.opacity(hovering ? 0.22 : 0.15) }
-        return Color.white.opacity(hovering ? 0.09 : 0)
+        if current { return tint.accent.opacity(hovering ? 0.22 : 0.15) }
+        return Color.nookWash(hovering ? 0.09 : 0)
     }
 
     /// The row truncates; the tooltip has all of it.
@@ -322,8 +324,8 @@ private struct ListMetricsKey: PreferenceKey {
 private struct Keycap: View {
     var text: String
     var body: some View {
-        Text(text).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+        Text(text).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(Color.nookSecondary)
             .padding(.horizontal, 4.5).frame(height: 15)
-            .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }

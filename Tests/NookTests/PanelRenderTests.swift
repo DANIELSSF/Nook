@@ -210,7 +210,7 @@ final class PanelRenderTests: XCTestCase {
                     "   Subagent capsule polish", "   Pet animation timing", "   Terminal bridge delivery logging", "   Image paste with control V", "", " Enter to select · Esc to cancel"]
         let long = ["⏺ Bash(swift test --filter PanelRenderTests --cache-path .build/cache --config-path .build/config --security-path .build/security)", "",
                     " Do you want to proceed with the very long command shown above, which takes quite some time to run?", " ❯ 1. Yes",
-                    "   2. Yes, and don't ask again for swift test commands in /Users/me/Documents/ChatGPT/New project", "   3. No, and tell Claude what to do differently (esc)"]
+                    "   2. Yes, and don't ask again for swift test commands in /Users/me/Documents/Examples/New project", "   3. No, and tell Claude what to do differently (esc)"]
         // Claude's older builds draw the same dialog inside a box.
         let boxed = ["⏺ Bash(rm -rf build)", "╭" + String(repeating: "─", count: 62) + "╮", "│ Bash command" + String(repeating: " ", count: 49) + "│", "│" + String(repeating: " ", count: 62) + "│",
                      "│   rm -rf build" + String(repeating: " ", count: 47) + "│", "│" + String(repeating: " ", count: 62) + "│", "│ Do you want to proceed?" + String(repeating: " ", count: 38) + "│",
@@ -230,7 +230,10 @@ final class PanelRenderTests: XCTestCase {
             ("codex", "codex", codex, .options, false, { _ in }),
             ("many", "claude", many, .options, false, { _ in }),
             ("long", "claude", long, .options, false, { _ in }),
-            ("typing", "claude", question, .typing, true, { _ in }),
+            // The field of the question chosen on its card, which is what a click on «Type something.» leaves: the composer answers it (see `FieldAnswerRenderTests`).
+            ("typing", "claude", question, .typing, false, { session in
+                if let dialog = session.prompt, let field = dialog.options.firstIndex(where: { $0.input == .inline }) { session.chooseField(field, of: dialog) }
+            }),
             ("hidden", "claude", permission, .hidden, true, { _ in }),
         ]
         for (name, agent, rows, state, keys, configure) in scenarios {

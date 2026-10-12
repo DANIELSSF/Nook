@@ -47,11 +47,12 @@ final class ChangeRenderTests: XCTestCase {
     private func path(_ directory: String, _ name: String) -> String { URL(fileURLWithPath: directory).appendingPathComponent(name).path }
 
     /// The mirror alone, at the width of the island's conversation, over black.
-    private func renderMirror(_ text: String, chatSize: Double = DisplaySettings.defaultChatSize, size: NSSize = NSSize(width: 540, height: 330), to path: String) throws {
+    private func renderMirror(_ text: String, chatSize: Double = DisplaySettings.defaultChatSize, size: NSSize = NSSize(width: 540, height: 330), taskLabel: String? = nil, to path: String) throws {
         let scroll = LiveTerminalScrollView(frame: NSRect(origin: .zero, size: size))
         scroll.setTheme(dark: true, transcript: true)
         scroll.setFontSize(chatSize)
         scroll.setText(text)
+        scroll.setTaskLabel(taskLabel)
         let host = NSView(frame: NSRect(origin: .zero, size: size))
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor.black.cgColor
@@ -76,6 +77,34 @@ final class ChangeRenderTests: XCTestCase {
         let python = "Y en Python:\n\n```python\n@app.route(\"/hola\")\ndef hola(nombre: str = \"mundo\") -> dict:\n    # respuesta simple\n    return {\"mensaje\": f\"Hola {nombre}\", \"total\": 42}\n```\n\nY un comando:\n\n```bash\nswift test --filter ChangeRenderTests && echo \"listo\" # corre\n```"
         let text = TranscriptFixtures.render([TranscriptFixtures.prompt("Dame un ejemplo de la función.")] + [TranscriptFixtures.reply(TranscriptFixtures.fencedReply), TranscriptFixtures.reply(python)])
         try renderMirror(text, size: NSSize(width: 540, height: 420), to: path(directory, "fenced-reply.png"))
+    }
+
+    func testRenderMarkdownInAReply() throws {
+        let directory = try renderDirectory()
+        let markdown = "**Cómo queda:** ahora el espejo dibuja el *énfasis*, la **negrita**, el `código en línea` y los [enlaces](https://example.com/guia).\n\n## Qué cambió\n\n- **Negrita y cursiva:** se ven como en la terminal de Claude, sin asteriscos.\n- El archivo `Sources/Nook/TranscriptStyle.swift` y la ruta `src/**/*.swift` no se tocan.\n  - Un punto anidado con _cursiva_ y **negrita _mezclada_**.\n1. Una lista numerada queda igual.\n\n### Lo que no cambia\n\nSnake_case, file_name_here, 2 * 3 * 4 y `**` solos se quedan como están.\n\nListo: ya puedes **probarlo**."
+        let text = TranscriptFixtures.render([TranscriptFixtures.prompt("¿Cómo se ve el markdown?"), TranscriptFixtures.reply(markdown)])
+        try renderMirror(text, size: NSSize(width: 540, height: 470), to: path(directory, "markdown-reply.png"))
+        try renderMirror(text, chatSize: 15, size: NSSize(width: 540, height: 640), to: path(directory, "markdown-reply-large.png"))
+        try renderMirror(text, chatSize: 9, size: NSSize(width: 540, height: 360), to: path(directory, "markdown-reply-small.png"))
+    }
+
+    func testRenderMarkdownInTheIsland() throws {
+        let directory = try renderDirectory()
+        let reply = "**Cómo queda:** el espejo dibuja la *cursiva*, la **negrita** y el `código en línea`.\n\n## Qué cambió\n\n- **Negrita:** sin asteriscos.\n- Una ruta `src/**/*.swift` y [una guía](https://example.com).\n\nListo, 2 * 3 * 4 y file_name_here quedan igual."
+        let conversation = TranscriptFixtures.render([TranscriptFixtures.prompt("¿Cómo se ve?"), TranscriptFixtures.reply(reply)])
+        try island("markdown-normal", viewing: false, agents: [], text: "", claudeText: conversation, to: directory)
+        var large = DisplaySettings(); large.chatSize = 14
+        try island("markdown-large", settings: large.applying(.tall), viewing: false, agents: [], text: "", claudeText: conversation, to: directory)
+    }
+
+    func testRenderTheTaskLabel() throws {
+        let directory = try renderDirectory()
+        let short = TranscriptFixtures.render([TranscriptFixtures.prompt("Sube el ancho de la isla a 600 y deja la altura calculada."), TranscriptFixtures.reply("Empiezo por leer la geometría del notch."),
+                                               TranscriptFixtures.call("r1", "Read", ["file_path": TranscriptFixtures.cwd + "/Sources/Notch.swift"]), TranscriptFixtures.result("r1", "     1\timport AppKit")])
+        try renderMirror(short, size: NSSize(width: 540, height: 200), taskLabel: "Tarea", to: path(directory, "task-label.png"))
+        try renderMirror(short, chatSize: 16, size: NSSize(width: 540, height: 220), taskLabel: "Tarea", to: path(directory, "task-label-large.png"))
+        try renderMirror(TranscriptFixtures.render([TranscriptFixtures.prompt("Una tarea larga para el agente: " + String(repeating: "revisa el panel y avisa. ", count: 6))]),
+                         size: NSSize(width: 540, height: 120), taskLabel: "Tarea", to: path(directory, "task-label-long.png"))
     }
 
     func testRenderTheChatSizes() throws {
@@ -103,7 +132,7 @@ final class ChangeRenderTests: XCTestCase {
                                   [TranscriptFixtures.reply("Listo: el ancho es 600 y la altura se calcula a partir del notch.")])
     }
 
-    private func island(_ name: String, settings: DisplaySettings = DisplaySettings(), neck: CGFloat = 32, viewing: Bool, agents: [SubagentActivity], text: String, claudeText: String? = nil,
+    private func island(_ name: String, settings: DisplaySettings = DisplaySettings(), neck: CGFloat = 32, viewing: Bool, viewID: String? = nil, agents: [SubagentActivity], text: String, claudeText: String? = nil,
                         settle: TimeInterval = 0.6, to directory: String) throws {
         let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-render-\(UUID().uuidString)")!)
         model.neckWithoutWindow = neck
@@ -117,9 +146,9 @@ final class ChangeRenderTests: XCTestCase {
         model.sessions = [session]; model.selectedID = session.id
         model.expanded = true; model.islandContentVisible = true
         model.updateActivity()
-        if viewing, let first = agents.first {
-            session.view(agent: first.id)
-            if !text.isEmpty { session.applyAgentText(text, call: first.id) }
+        if viewing, let id = viewID ?? agents.first?.id {
+            session.view(agent: id)
+            if !text.isEmpty { session.applyAgentText(text, call: id) }
         }
         let size = model.islandSize
         let host = NSHostingView(rootView: NookPanel(model: model).environment(\.colorScheme, .dark).environment(\.nookTintedGlass, false))
@@ -149,9 +178,8 @@ final class ChangeRenderTests: XCTestCase {
         var large = DisplaySettings(); large.chatSize = 14
         try island("agentview-large", settings: large.applying(.tall), viewing: true, agents: [working], text: agentText, to: directory)
         try island("agentview-empty", viewing: true, agents: [working], text: "", settle: 1.6, to: directory)
-        try island("agentview-gone", viewing: true, agents: [], text: agentText, to: directory)
-        // The agent's id with no list entry: the bar still shows, with the record.
-        try island("agentview-back", viewing: false, agents: [working], text: "", to: directory)
+        // An agent that left the list (it finished a while ago): the bar still shows, with the record.
+        try island("agentview-gone", viewing: true, viewID: "call-gone", agents: [], text: agentText, to: directory)
     }
 
     func testRenderTheDiffInTheIsland() throws {

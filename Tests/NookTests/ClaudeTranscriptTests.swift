@@ -100,7 +100,21 @@ final class ClaudeTranscriptTests: XCTestCase {
         XCTAssertNil(TranscriptLocator.record(session: "../aaaa", roots: roots))
         // The screen shows the other session's prompt: that record wins over the most recent one.
         XCTAssertEqual(TranscriptLocator.guess(directory: "/Users/me/My project", screen: "❯ pregunta de la otra sesión", roots: roots)?.lastPathComponent, "aaaa.jsonl")
-        XCTAssertEqual(TranscriptLocator.guess(directory: "/Users/me/My project", screen: "nada reconocible", roots: roots)?.lastPathComponent, "bbbb.jsonl")
+        // Nothing on screen says which: no record, rather than another session's (a Claude just started has none yet).
+        XCTAssertNil(TranscriptLocator.guess(directory: "/Users/me/My project", screen: "nada reconocible", roots: roots))
+        XCTAssertNil(TranscriptLocator.guess(directory: "/Users/me/My project", screen: "╭─ Claude Code ─╮\n│ Recent activity │\n│ revisa el notch por favor │", roots: roots),
+                     "Words in Claude's welcome are not a prompt.")
+        XCTAssertNil(TranscriptLocator.guess(directory: "/Users/me/My project", screen: "❯ pregunta de la otra sesión", excluding: [older], roots: roots),
+                     "A record another tab follows is that tab's.")
+    }
+
+    func testAPromptCountsOnlyWhereClaudeDrawsTheUsersTurns() {
+        let screen = ["⏺ Hecho.", "", "❯ revisa por qué falla la prueba del notch y dime qué cambió en la", "  ventana", "", "⏺ Voy."].joined(separator: "\n")
+        XCTAssertTrue(TranscriptLocator.shows(prompt: "revisa por qué falla la prueba del notch y dime qué cambió en la ventana", on: screen), "Wrapped lines join.")
+        XCTAssertTrue(TranscriptLocator.shows(prompt: "revisa por qué falla", on: screen), "A prompt's first line starts its block.")
+        XCTAssertFalse(TranscriptLocator.shows(prompt: "Hecho.", on: screen), "A reply is not a prompt.")
+        XCTAssertFalse(TranscriptLocator.shows(prompt: "sí", on: "⏺ Sí, lo hago.\n  sí claro"), "A short word anywhere is not a prompt.")
+        XCTAssertFalse(TranscriptLocator.shows(prompt: "", on: screen))
     }
 
     func testTheRecordKeepsTheMirrorWhileTheScreenFeedsTheRest() {

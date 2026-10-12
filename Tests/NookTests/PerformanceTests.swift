@@ -17,23 +17,58 @@ final class PerformanceTests: XCTestCase {
         XCTAssertEqual(full.boundingBox.height, 266, accuracy: 0.001)
     }
 
-    func testCatRunsAtDisplayRateOnlyWhileItMoves() {
-        var pace = PetPace(fast: 1.0 / 60)
+    func testCatIsDrawnAsOftenAsItsPictureMovesAndNoMore() {
+        // Frames follow how far the picture moves between two: a cat that only breathes waits, a step or a blink gets frames.
+        var pace = PetPace(fast: 1.0 / 30)
         var pose = PetPose()
         var interval = pace.interval(for: pose, now: 0)
-        // Breathing alone: the rate drops after a short quiet spell.
+        XCTAssertEqual(interval, 1.0 / 30, "The first frame says nothing about speed: it is drawn at the full rate.")
+        // Breathing alone: the rate drops to the resting one after a short quiet spell.
+        var now = 0.0
         for frame in 1...60 {
-            pose.x = sin(Double(frame) / 60 * .pi) * 0.3
-            interval = pace.interval(for: pose, now: Double(frame) / 60)
+            now += interval
+            pose.chest.ry = 8.5 + 0.25 * CGFloat(sin(Double(frame) / 4))
+            interval = pace.interval(for: pose, now: now)
         }
         XCTAssertEqual(interval, pace.slow)
-        // Gentle sway runs at half rate; a step or a blink brings the display rate back at once.
-        pose.x += 0.4
-        XCTAssertEqual(pace.interval(for: pose, now: 1.1), pace.medium)
-        pose.x += 3
-        XCTAssertEqual(pace.interval(for: pose, now: 1.2), 1.0 / 60)
-        pose.action = .walk
-        XCTAssertEqual(pace.interval(for: pose, now: 1.3), 1.0 / 60)
+        // A blink closes the eyes in a twentieth of a second: the full rate at once. A step likewise.
+        now += 0.05
+        pose.eyes = 0
+        XCTAssertEqual(pace.interval(for: pose, now: now), 1.0 / 30)
+        now += 0.05
+        pose.legs[3].foot.x += 3
+        XCTAssertEqual(pace.interval(for: pose, now: now), 1.0 / 30)
+        // The motion stops: the rate comes back down, not at the very next frame (the pauses between the beats of a movement keep it).
+        now += 1.0 / 30
+        let held = pace.interval(for: pose, now: now)
+        XCTAssertLessThan(held, pace.slow)
+        var back = held, quietFor = 0.0
+        while back < pace.slow, quietFor < 2 { quietFor += back; now += back; back = pace.interval(for: pose, now: now) }
+        XCTAssertEqual(back, pace.slow)
+        XCTAssertLessThan(quietFor, 0.6, "after a short dwell")
+        // The slower the picture moves, the longer the frame; every interval is one of a few values.
+        var seen = Set<Double>()
+        for speed in stride(from: 0.2, through: 120, by: 0.7) {
+            var p = PetPace(fast: 1.0 / 30)
+            var pose = PetPose(), t = 0.0, interval = 1.0 / 30
+            for _ in 0..<40 {
+                // `speed` pixels a second: at 0.6 pt a unit and 2 px a point, a unit is 1.2 px.
+                pose.legs[3].foot.x += CGFloat(speed * interval / 1.2)
+                t += interval
+                interval = p.interval(for: pose, now: t)
+            }
+            seen.insert(interval)
+        }
+        XCTAssertTrue(seen.isSubset(of: Set(PetPace.levels)), "\(seen)")
+        XCTAssertEqual(seen.max(), PetAnimation.restInterval, "the slowest is the resting one")
+        XCTAssertEqual(seen.min(), 1.0 / 30)
+        // A gesture's ceiling, and a small event about to start, each shorten the wait.
+        var limited = PetPace(fast: 1.0 / 30)
+        var t = 0.0, wait = limited.interval(for: PetPose(), now: 0)
+        for _ in 0..<40 { t += wait; wait = limited.interval(for: PetPose(), now: t) }
+        XCTAssertEqual(wait, limited.slow)
+        XCTAssertEqual(limited.interval(for: PetPose(), now: t + wait, ceiling: 1.0 / 8), 1.0 / 8)
+        XCTAssertEqual(limited.interval(for: PetPose(), now: t + 0.3, due: 0.06), 0.06, accuracy: 1e-9, "a frame when the blink starts, not up to a whole interval late")
     }
 
     func testCollapsedReadsOnlyTheVisibleScreen() {
@@ -84,5 +119,31 @@ final class ScriptHelperTests: XCTestCase {
         XCTAssertEqual(try once.run("first")["value"] as? String, "ok")
         Thread.sleep(forTimeInterval: 0.2)
         XCTAssertEqual(try once.run("second")["value"] as? String, "ok")
+    }
+
+    /// The real `Nook --terminal-script` once kept every reply alive (6.6 GB after a day of polling).
+    func testTheRealHelperStaysFlatAcrossPolls() throws {
+        // `swift test` builds the app next to the test bundle.
+        let binary = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("Nook")
+        guard FileManager.default.isExecutableFile(atPath: binary.path) else { throw XCTSkip("Compila Nook primero.") }
+        let real = ScriptHelper(executable: binary)
+        // The shell `do shell script` starts is the helper's child; Terminal is never addressed. The helper
+        // quits by itself once `real` goes away and closes its requests pipe.
+        let pid = try XCTUnwrap(pid_t(real.run(#"do shell script "echo $PPID""#)["value"] as? String ?? ""))
+        func footprint() -> Int64 {
+            var usage = rusage_info_v4()
+            let status = withUnsafeMutablePointer(to: &usage) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) } }
+            return status == 0 ? Int64(usage.ri_phys_footprint) : -1
+        }
+        // Two tabs of 81,920 characters each, like a detailed snapshot. Before the fix this grew ~1 MB per poll.
+        let poll = "set s to \"0123456789\"\nrepeat 13 times\nset s to s & s\nend repeat\nreturn {{1, \"/dev/ttys001\", s, true}, {2, \"/dev/ttys002\", s, false}}"
+        for _ in 0..<20 { _ = try autoreleasepool { try real.run(poll) } }
+        let start = footprint()
+        XCTAssertGreaterThan(start, 0)
+        for _ in 0..<200 {
+            let rows = try autoreleasepool { try real.run(poll)["value"] as? [[Any]] }
+            XCTAssertEqual((rows?.first?[2] as? String)?.count, 81_920)
+        }
+        XCTAssertLessThan(footprint() - start, 25 << 20, "Each request must free its result and reply.")
     }
 }

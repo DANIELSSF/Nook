@@ -120,8 +120,13 @@ enum SlashCatalog {
     /// Commands typed before, counted by name: Claude's `display` or Codex's `text` lines.
     static func typed(in text: String, field: String) -> [String: Int] {
         count(text.split(separator: "\n").compactMap { line in
-            guard let data = line.data(using: .utf8), let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return entry[field] as? String
+            // Only a message that starts with "/" counts, and its line holds `"/` (`"\/` as some writers escape it): every other line
+            // (most of a history) is never decoded.
+            guard line.contains("\"/") || line.contains("\"\\/") else { return nil }
+            return autoreleasepool {
+                guard let data = line.data(using: .utf8), let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+                return entry[field] as? String
+            }
         })
     }
 
@@ -147,10 +152,12 @@ enum SlashCatalog {
 final class SlashCommandStore {
     private(set) var typed: [TerminalAgent: [String: Int]] = [:]
     private(set) var seen: [TerminalAgent: [String: String]] = [:]
-    private var read: [String: Date] = [:]
+    /// Each history file as read so far: where the reading stopped and what it counted up to there (touched on `queue` only).
+    /// Histories only grow, so a refresh reads what was appended instead of megabytes each time the island opens.
+    private var files: [String: (offset: UInt64, counts: [String: Int])] = [:]
     private let home: URL
     private let defaults: UserDefaults
-    private let queue = DispatchQueue(label: "dev.nook.commands", qos: .utility)
+    private let queue = DispatchQueue(label: "dev.nook.commands", qos: .utility, autoreleaseFrequency: .workItem)
     private static let key = "agentCommands"
 
     private let reference: [TerminalAgent: [SlashCommand]]
@@ -170,19 +177,37 @@ final class SlashCommandStore {
             + [(TerminalAgent.codex, home.appendingPathComponent(".codex/history.jsonl"), "text")]
     }
 
-    /// Reads the histories again when one changed; off the main thread, applied on it. Called on main.
+    /// Reads what the histories gained since the last look; off the main thread, applied on it. Called on main.
     func refresh(completion: @escaping () -> Void = {}) {
-        let known = read
         queue.async { [self] in
-            let files = histories().map { ($0, try? $0.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) }
-            let stamps = Dictionary(files.compactMap { file, date in date.map { (file.url.path, $0) } }, uniquingKeysWith: { a, _ in a })
-            guard stamps != known else { return DispatchQueue.main.async(execute: completion) }
-            var counts: [TerminalAgent: [String: Int]] = [:]
-            for (file, date) in files where date != nil {
-                guard let text = try? String(contentsOf: file.url, encoding: .utf8) else { continue }
-                counts[file.agent, default: [:]].merge(SlashCatalog.typed(in: text, field: file.field), uniquingKeysWith: +)
+            let histories = histories()
+            var changed = false
+            for file in histories {
+                let path = file.url.path
+                guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? UInt64 else {
+                    if files.removeValue(forKey: path) != nil { changed = true }
+                    continue
+                }
+                var entry = files[path] ?? (0, [:])
+                // Shorter than what was read: the file was written anew, and is counted again from its start.
+                if size < entry.offset { entry = (0, [:]); changed = true }
+                guard size > entry.offset, let handle = try? FileHandle(forReadingFrom: file.url) else { files[path] = entry; continue }
+                defer { try? handle.close() }
+                guard (try? handle.seek(toOffset: entry.offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty else { files[path] = entry; continue }
+                // Whole lines only; a last line without its line break counts once it reads as a whole entry (a line still being
+                // written is read again next time).
+                var end = data.lastIndex(of: 0x0A).map { $0 + 1 } ?? data.startIndex
+                if end < data.endIndex, (try? JSONSerialization.jsonObject(with: data[end...])) != nil { end = data.endIndex }
+                guard end > data.startIndex else { files[path] = entry; continue }
+                entry.counts.merge(SlashCatalog.typed(in: String(decoding: data[..<end], as: UTF8.self), field: file.field), uniquingKeysWith: +)
+                entry.offset += UInt64(end - data.startIndex)
+                files[path] = entry
+                changed = true
             }
-            DispatchQueue.main.async { self.typed = counts; self.read = stamps; completion() }
+            guard changed else { return DispatchQueue.main.async(execute: completion) }
+            var counts: [TerminalAgent: [String: Int]] = [:]
+            for file in histories { if let entry = files[file.url.path] { counts[file.agent, default: [:]].merge(entry.counts, uniquingKeysWith: +) } }
+            DispatchQueue.main.async { self.typed = counts; completion() }
         }
     }
 

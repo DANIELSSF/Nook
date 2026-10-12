@@ -89,34 +89,42 @@ final class PetDirectorTests: XCTestCase {
         return (starts, ends, kinds)
     }
 
-    func testIdleGesturesComeEvery40To90SecondsWithVariation() {
-        for (layout, first) in [(PetLayout.compact, PetDirector.compactRhythm.first), (.header, PetDirector.headerRhythm.first)] {
+    /// The pauses between gestures, from the end of one to the start of the next, leaving out the ones that follow another (a startled
+    /// cat washes itself a moment later): those are the chains, and they are tested on their own.
+    private func independentGaps(_ result: (starts: [Double], ends: [Double], kinds: [PetDirector.Kind])) -> [Double] {
+        var gaps: [Double] = []
+        for (i, start) in result.starts.enumerated().dropFirst() { gaps.append(start - result.ends[i - 1]) }
+        return gaps.filter { $0 > 5 }
+    }
+
+    func testIdleGesturesComeAtTheRhythmWithVariation() {
+        for (layout, rhythm) in [(PetLayout.compact, PetDirector.compactRhythm), (.header, PetDirector.headerRhythm)] {
             let result = life(layout, seed: 5, hours: 6)
             XCTAssertGreaterThan(result.starts.count, 200, "\(layout)")
-            XCTAssertGreaterThanOrEqual(result.starts[0], first.lowerBound - 0.2); XCTAssertLessThanOrEqual(result.starts[0], first.upperBound + 0.2, "the first gesture of a launch")
-            var gaps: [Double] = []
-            for (i, start) in result.starts.enumerated().dropFirst() { gaps.append(start - result.ends[i - 1]) }
-            XCTAssertGreaterThanOrEqual(gaps.min() ?? 0, 40 - 0.25, "never closer than 40 s (\(layout))")
-            XCTAssertLessThanOrEqual(gaps.max() ?? 0, 90 + 0.25, "never further than 90 s (\(layout))")
+            XCTAssertGreaterThanOrEqual(result.starts[0], rhythm.first.lowerBound - 0.2); XCTAssertLessThanOrEqual(result.starts[0], rhythm.first.upperBound + 0.2, "the first gesture of a launch")
+            let gaps = independentGaps(result)
+            XCTAssertGreaterThan(gaps.count, 150)
+            XCTAssertGreaterThanOrEqual(gaps.min() ?? 0, rhythm.between.lowerBound - 0.25, "never closer than the rhythm says (\(layout))")
+            XCTAssertLessThanOrEqual(gaps.max() ?? 0, rhythm.between.upperBound + 0.25, "never further (\(layout))")
             let mean = gaps.reduce(0, +) / Double(gaps.count)
             let spread = (gaps.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(gaps.count)).squareRoot()
-            XCTAssertEqual(mean, 65, accuracy: 4, "centred between the two (\(layout))")
-            XCTAssertGreaterThan(spread, 10, "with variation, not a metronome (\(layout))")
+            XCTAssertEqual(mean, (rhythm.between.lowerBound + rhythm.between.upperBound) / 2, accuracy: 4, "centred between the two (\(layout))")
+            XCTAssertGreaterThan(spread, 8, "with variation, not a metronome (\(layout))")
             XCTAssertGreaterThan(Set(gaps.map { ($0 * 2).rounded() }).count, 40, "many different pauses (\(layout))")
         }
     }
 
-    /// What matters for the idle cost of the collapsed island: the share of the time the cat is drawn at the full rate. The
-    /// old schedule did something in four 24-second slots out of five; gestures now come every 40 to 90 seconds.
-    func testTheCollapsedCatIsBusyAFractionOfTheTimeTheOldScheduleWas() {
+    /// What matters for the idle cost of the collapsed island is how often it is drawn (`PetBudgetTests` counts the frames); this checks the
+    /// share of the time the cat is doing something beyond breathing: gestures are a few seconds out of every minute.
+    func testTheCollapsedCatIsBusyOnlyAFractionOfTheTime() {
         for seed in 0..<3 {
             let rig = Rig(.compact, seed: seed)
             rig.recordPoses = false; rig.dt = 0.1
             rig.input = PetInput(idle: 60)
             rig.run(6 * 3600) { _, _ in }
             let share = Double(rig.busySteps) / Double(rig.kinds.count)
-            XCTAssertLessThan(share, 0.09, "seed \(seed): busy \(share)")
-            XCTAssertGreaterThan(share, 0.03, "but it still does things")
+            XCTAssertLessThan(share, 0.14, "seed \(seed): busy \(share)")
+            XCTAssertGreaterThan(share, 0.04, "but it still does things")
         }
     }
 
@@ -144,9 +152,10 @@ final class PetDirectorTests: XCTestCase {
 
     func testEveryGestureIsReachable() {
         let wing = Set(life(.compact, seed: 7, hours: 12, input: PetInput(idle: 400)).kinds)
-        XCTAssertEqual(wing, [.groom, .glance, .stretch, .wave, .play, .peek, .nap], "the wing has no strolls")
+        let everyone: Set<PetDirector.Kind> = [.groom, .glance, .stretch, .wave, .play, .peek, .nap, .yawn, .loaf, .hunt, .scratch, .startle, .tailPlay]
+        XCTAssertEqual(wing, everyone, "the wing has no strolls")
         let header = Set(life(.header, seed: 7, hours: 12, input: PetInput(idle: 400)).kinds)
-        XCTAssertEqual(header, [.groom, .glance, .stretch, .wave, .play, .peek, .nap, .stroll])
+        XCTAssertEqual(header, everyone.union([.stroll]))
     }
 
     // MARK: Napping, typing, reading, working
@@ -170,7 +179,7 @@ final class PetDirectorTests: XCTestCase {
         XCTAssertFalse(life(.header, seed: 3, hours: 6, input: PetInput(idle: 100)).kinds.contains(.nap))
     }
 
-    func testANapEndsGentlyWhenTheUserComesBack() {
+    func testANapEndsGentlyWhenTheUserComesBackAndTheCatYawns() {
         let rig = Rig(.compact, seed: 2)
         rig.input = PetInput(idle: 400)
         rig.director.start(.nap, stage: rig.stage)
@@ -182,8 +191,13 @@ final class PetDirectorTests: XCTestCase {
         let frames = rig.poses.count - back
         XCTAssertGreaterThan(Double(frames) / 30, 0.8, "waking takes its time")
         XCTAssertLessThan(Double(frames) / 30, 1.2)
-        XCTAssertLessThan(rig.jump(back..<rig.poses.count), 3, "no jump out of bed")
-        XCTAssertGreaterThanOrEqual(rig.director.nextAt - rig.director.clock, PetDirector.afterInterruption - 0.5, "and a pause before the next gesture")
+        XCTAssertLessThan(rig.jump(back..<rig.poses.count), 3.5, "no jump out of bed (a cat curled the other way round swings its tail over as it wakes)")
+        // It yawns, as a cat does on waking; and only then goes back to the usual pauses.
+        var yawned = false
+        rig.run(until: 2, { input, _ in input.idle = 0 }) { yawned = rig.director.running?.kind == .yawn; return yawned }
+        XCTAssertTrue(yawned, "a woken cat yawns")
+        rig.run(until: PetAnimation.yawnLength + 1, { input, _ in input.idle = 0 }) { rig.director.running == nil }
+        XCTAssertGreaterThanOrEqual(rig.director.nextAt - rig.director.clock, PetDirector.compactRhythm.between.lowerBound - 0.5, "and then the pause before the next gesture")
     }
 
     func testTypingLeavesOnlyDiscreteGesturesAndReadingFewLivelyOnes() {
@@ -195,7 +209,7 @@ final class PetDirectorTests: XCTestCase {
                 if let kind = PetDirector.choose(after: nil, pick: pick, seed: 9, layout: layout, focus: .reading, idle: 999, working: false) { reading.insert(kind); if kind == .stroll { strolls.reading += 1 } }
                 if let kind = PetDirector.choose(after: nil, pick: pick, seed: 9, layout: layout, focus: .free, idle: 999, working: false) { free.insert(kind); if kind == .stroll { strolls.free += 1 } }
             }
-            XCTAssertEqual(typing, [.groom, .glance], "typing: only the discrete ones (\(layout))")
+            XCTAssertEqual(typing, [.groom, .glance, .yawn], "typing: only the discrete ones (\(layout))")
             XCTAssertTrue(reading.contains(.groom), "reading still allows discrete gestures")
             if layout == .header {
                 XCTAssertGreaterThan(strolls.free, 0)
@@ -607,6 +621,211 @@ final class PetDirectorTests: XCTestCase {
         rig.run(5) { _, _ in }
         XCTAssertEqual(model.completions, 1)
         XCTAssertEqual(rig.celebrationStarts, 1)
+    }
+
+    // MARK: Who the cat is
+
+    private func counts(_ prefs: PetPreferences, layout: PetLayout = .compact, idle: Double = 999, dayPart: PetDayPart = .day, picks: Int = 8000) -> [PetDirector.Kind: Int] {
+        var counts: [PetDirector.Kind: Int] = [:]
+        for pick in 0..<picks {
+            if let kind = PetDirector.choose(after: nil, pick: pick, seed: 5, layout: layout, focus: .free, idle: idle, working: false, personality: prefs.personality, dayPart: dayPart) { counts[kind, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    func testEachPersonalityFavoursItsOwnGestures() {
+        func prefs(_ personality: PetPersonality) -> PetPreferences { var p = PetPreferences(); p.personality = personality; return p }
+        let curious = counts(prefs(.curious), idle: 20), playful = counts(prefs(.playful), idle: 20), calm = counts(prefs(.calm), idle: 20), sleepy = counts(prefs(.sleepy), idle: 20)
+        XCTAssertGreaterThan(playful[.hunt, default: 0], curious[.hunt, default: 0] * 3 / 2); XCTAssertGreaterThan(curious[.hunt, default: 0], calm[.hunt, default: 0] * 2)
+        XCTAssertGreaterThan(playful[.play, default: 0], curious[.play, default: 0]); XCTAssertLessThan(sleepy[.play, default: 0], curious[.play, default: 0] / 3)
+        XCTAssertGreaterThan(calm[.loaf, default: 0], curious[.loaf, default: 0] * 3 / 2); XCTAssertGreaterThan(sleepy[.yawn, default: 0], curious[.yawn, default: 0] * 2)
+        XCTAssertGreaterThan(curious[.peek, default: 0], calm[.peek, default: 0] * 0 + 1)
+        // A cat that has been left alone for long: the sleepy one naps most of the time, the playful one rarely.
+        let napsSleepy = counts(prefs(.sleepy))[.nap, default: 0], napsCurious = counts(prefs(.curious))[.nap, default: 0], napsPlayful = counts(prefs(.playful))[.nap, default: 0]
+        XCTAssertGreaterThan(napsSleepy, napsCurious); XCTAssertGreaterThan(napsCurious, napsPlayful)
+        XCTAssertGreaterThan(Double(napsSleepy) / 8000, 0.3)
+    }
+
+    func testASleepyCatNapsSoonerAndEveryCatSoonerAtNight() {
+        XCTAssertEqual(PetDirector.napThreshold(personality: .curious, dayPart: .day), PetDirector.napAfter, "the plain cat: two and a half minutes, as always")
+        XCTAssertLessThan(PetDirector.napThreshold(personality: .sleepy, dayPart: .day), PetDirector.napAfter / 2)
+        XCTAssertGreaterThan(PetDirector.napThreshold(personality: .playful, dayPart: .day), PetDirector.napAfter)
+        for personality in PetPersonality.allCases { XCTAssertLessThan(PetDirector.napThreshold(personality: personality, dayPart: .night), PetDirector.napThreshold(personality: personality, dayPart: .day)) }
+        XCTAssertEqual(PetDirector.weight(.nap, layout: .compact, focus: .free, idle: 80, working: false, personality: .sleepy), 6 * 3, "after a minute and a bit, a sleepy cat is ready")
+        XCTAssertEqual(PetDirector.weight(.nap, layout: .compact, focus: .free, idle: 80, working: false, personality: .curious), 0)
+        XCTAssertGreaterThan(PetDirector.weight(.nap, layout: .compact, focus: .free, idle: 100, working: false, personality: .curious, dayPart: .night), 0)
+    }
+
+    func testTheHourTiltsWhatTheCatFeelsLike() {
+        let night = counts(PetPreferences(), idle: 20, dayPart: .night), day = counts(PetPreferences(), idle: 20), morning = counts(PetPreferences(), idle: 20, dayPart: .morning)
+        XCTAssertGreaterThan(night[.yawn, default: 0], day[.yawn, default: 0] * 3 / 2, "yawns at night")
+        XCTAssertGreaterThan(morning[.stretch, default: 0], day[.stretch, default: 0] * 13 / 10, "stretches in the morning")
+        XCTAssertLessThan(night[.hunt, default: 0], day[.hunt, default: 0])
+        XCTAssertEqual(PetDirector.bias(.groom, personality: .curious, dayPart: .day), 1, "the plain cat in the daytime is the unbiased one")
+        for kind in PetDirector.Kind.allCases { XCTAssertEqual(PetDirector.bias(kind, personality: .curious, dayPart: .evening) > 0, true) }
+    }
+
+    func testActivityStretchesTheWaitBetweenGesturesAndNoneStartsNothing() {
+        func meanGap(_ activity: PetActivity, personality: PetPersonality = .curious) -> Double {
+            var prefs = PetPreferences(); prefs.activity = activity; prefs.personality = personality
+            let rig = Rig(.compact, seed: 3)
+            rig.recordPoses = false; rig.dt = 0.1; rig.input = PetInput(idle: 20); rig.input.prefs = prefs
+            rig.run(4 * 3600) { _, _ in }
+            var starts = [Double](), ends = [Double](), was: PetDirector.Kind?
+            for (i, kind) in rig.kinds.enumerated() {
+                if kind != was { if kind != nil { starts.append(Double(i) * 0.1) } else { ends.append(Double(i) * 0.1) }; was = kind }
+            }
+            let gaps = zip(starts.dropFirst(), ends).map { $0 - $1 }.filter { $0 > 5 }
+            return gaps.isEmpty ? .infinity : gaps.reduce(0, +) / Double(gaps.count)
+        }
+        let low = meanGap(.low), normal = meanGap(.normal), high = meanGap(.high)
+        XCTAssertGreaterThan(low, normal * 1.6); XCTAssertGreaterThan(normal, high * 1.6, "low \(low), normal \(normal), high \(high)")
+        XCTAssertEqual(normal, 52.5, accuracy: 6)
+        XCTAssertEqual(meanGap(.none), .infinity, "a cat asked to do nothing starts nothing")
+        XCTAssertGreaterThan(meanGap(.normal, personality: .sleepy), normal, "a sleepy cat takes longer"); XCTAssertLessThan(meanGap(.normal, personality: .playful), normal)
+        // Changing the setting takes effect: a cat that had been told to do nothing, now told to do a lot, soon does something.
+        var prefs = PetPreferences(); prefs.activity = .none
+        let rig = Rig(.compact, seed: 4)
+        rig.recordPoses = false; rig.input = PetInput(idle: 20); rig.input.prefs = prefs
+        rig.run(600) { _, _ in }
+        XCTAssertTrue(rig.kinds.allSatisfy { $0 == nil })
+        var started = false
+        rig.run(until: 90, { input, _ in input.prefs.activity = .high }) { started = rig.director.running != nil; return started }
+        XCTAssertTrue(started, "it gets going within a minute and a half")
+    }
+
+    // MARK: What follows what
+
+    func testAStartledCatOftenWashesItselfAfterwardsAsIfItHadMeantTo() {
+        var followed = 0
+        let trials = 200
+        for seed in 0..<trials {
+            let rig = Rig(.compact, seed: seed)
+            rig.recordPoses = false; rig.input = PetInput(idle: 20)
+            rig.director.start(.startle, stage: rig.stage)
+            var next: PetDirector.Kind?
+            rig.run(until: 12, nil) { if rig.director.running?.kind != .startle, let k = rig.director.running?.kind { next = k; return true }; return false }
+            if next == .groom { followed += 1 }
+        }
+        XCTAssertGreaterThan(Double(followed) / Double(trials), 0.5); XCTAssertLessThan(Double(followed) / Double(trials), 0.8, "about two in three: \(followed) of \(trials)")
+        let (kind, delay, chance) = PetDirector.followUp(after: .startle, variant: 0)!
+        XCTAssertEqual(kind, .groom); XCTAssertLessThan(delay.upperBound, 2); XCTAssertEqual(chance, 0.65)
+        XCTAssertEqual(PetDirector.followUp(after: .hunt, variant: 1)?.kind, .groom, "a missed pounce is washed off"); XCTAssertEqual(PetDirector.followUp(after: .stretch, variant: 0)?.kind, .yawn)
+        XCTAssertNil(PetDirector.followUp(after: .nap, variant: 0)); XCTAssertNil(PetDirector.followUp(after: .peek, variant: 0))
+    }
+
+    func testAFollowUpGivesWayToTheUserAndToAnAlert() {
+        for interruption in ["pointer", "alert", "drag"] {
+            var washed = 0
+            for seed in 0..<40 {
+                let rig = Rig(.compact, seed: seed)
+                rig.recordPoses = false; rig.input = PetInput(idle: 20)
+                rig.director.start(.startle, stage: rig.stage)
+                rig.run(until: 5, nil) { rig.director.running == nil }
+                rig.run(0.05) { input, _ in
+                    switch interruption {
+                    case "pointer": input.gaze = PetSim.pointer
+                    case "alert": input.perk = 1
+                    default: input.dragging = true; input.gaze = PetSim.pointer
+                    }
+                }
+                rig.run(10) { input, _ in
+                    switch interruption {
+                    case "pointer": input.gaze = PetSim.pointer
+                    case "alert": input.perk = 1
+                    default: input.dragging = true; input.gaze = PetSim.pointer
+                    }
+                    if rig.director.running?.kind == .groom { washed += 1 }
+                }
+            }
+            XCTAssertEqual(washed, 0, "\(interruption): nothing decorative starts while the user or an alert has the cat")
+        }
+    }
+
+    func testAWokenCatYawnsButNotOnDuty() {
+        let rig = Rig(.compact, seed: 3)
+        rig.director.start(.nap, stage: rig.stage)
+        rig.input = PetInput(idle: 400); rig.recordPoses = false
+        rig.run(10) { _, _ in }
+        var yawned = false
+        rig.run(until: 4, { input, _ in input.working = true; input.idle = 0 }) { if rig.director.running?.kind == .yawn { yawned = true }; return false }
+        XCTAssertFalse(yawned, "a cat on duty in the wing does nothing but watch")
+    }
+
+    func testAGestureJustDoneIsLessLikelyToComeAgain() {
+        let plain = (0..<6000).filter { PetDirector.choose(after: nil, pick: $0, seed: 2, layout: .compact, focus: .free, idle: 20, working: false) == .groom }.count
+        let weary = (0..<6000).filter { PetDirector.choose(after: nil, pick: $0, seed: 2, PetDirector.Mood(layout: .compact, focus: .free, idle: 20, working: false), recent: { $0 == .groom ? 0.2 : 1 }) == .groom }.count
+        XCTAssertLessThan(weary, plain / 2, "grooming that was done a moment ago: \(weary) against \(plain)")
+        // In a life: how long since each kind decides, so a day does not repeat itself in a pattern.
+        let life = self.life(.compact, seed: 12, hours: 6, input: PetInput(idle: 20)).kinds
+        var windows = 0, repeats = 0
+        for i in 0..<(life.count - 3) { windows += 1; if life[i] == life[i + 2] { repeats += 1 } }
+        XCTAssertLessThan(Double(repeats) / Double(windows), 0.16, "the same kind two gestures later is rarer than chance would have it (\(repeats) of \(windows))")
+    }
+
+    // MARK: What the frame rate and the small life are told
+
+    func testWhatTheCatDoesDecidesItsFrameCeilingAndHowMuchOfItsSmallLifeGoesOn() {
+        let rig = Rig(.compact, seed: 1)
+        rig.recordPoses = false
+        XCTAssertNil(rig.director.frameCeiling, "resting: only breathing"); XCTAssertEqual(rig.director.lifeWeight, 1)
+        rig.director.start(.groom, stage: rig.stage)
+        rig.run(1.5) { _, _ in }
+        XCTAssertEqual(rig.director.frameCeiling, 1.0 / 8); XCTAssertLessThan(rig.director.lifeWeight, 0.5, "a gesture has the body")
+        let nap = Rig(.compact, seed: 2)
+        nap.input = PetInput(idle: 400); nap.recordPoses = false
+        nap.director.start(.nap, stage: nap.stage)
+        nap.run(1) { _, _ in }
+        XCTAssertEqual(nap.director.frameCeiling, 1.0 / 8, "lying down is drawn properly")
+        nap.run(12) { _, _ in }
+        XCTAssertNil(nap.director.frameCeiling, "asleep it only breathes"); XCTAssertEqual(nap.director.lifeWeight, 0, accuracy: 0.001, "and does nothing else")
+        let cheer = Rig(.compact, seed: 3)
+        cheer.input.completions = 0; cheer.recordPoses = false
+        cheer.run(1) { _, _ in }
+        cheer.run(until: 2, { input, _ in input.completions = 1 }) { cheer.director.celebration != nil }
+        cheer.run(0.4) { input, _ in input.completions = 1 }
+        XCTAssertEqual(cheer.director.frameCeiling, 1.0 / 20); XCTAssertEqual(cheer.director.lifeWeight, 0, accuracy: 0.001)
+        let looking = Rig(.compact, seed: 4)
+        looking.recordPoses = false
+        looking.run(1) { input, _ in input.gaze = PetSim.pointer }
+        XCTAssertEqual(looking.director.frameCeiling, 1.0 / 20); XCTAssertLessThan(looking.director.lifeWeight, 0.5)
+        XCTAssertGreaterThan(looking.director.lifeWeight, 0, "it still blinks at the pointer")
+    }
+
+    // MARK: The celebration follows what was chosen
+
+    func testTheCatCheersTheWayItsTemperAndTheSettingsSay() {
+        for (personality, style) in [(PetPersonality.curious, PetCheer.hop), (.playful, .doubleHop), (.calm, .content), (.sleepy, .content)] {
+            var prefs = PetPreferences(); prefs.personality = personality
+            let rig = Rig(.compact, seed: 1)
+            rig.recordPoses = false; rig.input.prefs = prefs; rig.input.completions = 0
+            rig.run(1) { _, _ in }
+            rig.run(until: 3, { input, _ in input.completions = 1 }) { rig.director.celebration != nil }
+            XCTAssertEqual(rig.director.celebration?.style, style, "\(personality)")
+            XCTAssertEqual(rig.director.celebration?.length ?? 0, PetAnimation.cheerLength(style), accuracy: 1e-9)
+        }
+        // Told not to cheer, it never does, however many tasks finish.
+        var quiet = PetPreferences(); quiet.celebrates = false
+        let rig = Rig(.compact, seed: 1)
+        rig.recordPoses = false; rig.input.prefs = quiet; rig.input.completions = 0
+        rig.run(1) { _, _ in }
+        for n in 1...5 { rig.run(PetDirector.celebrationCooldown + 6) { input, _ in input.completions = n } }
+        XCTAssertEqual(rig.celebrationStarts, 0)
+        // Turned back on, the next finish is celebrated.
+        quiet.celebrates = true
+        rig.input.prefs = quiet
+        rig.run(PetDirector.celebrationCooldown + 6) { input, _ in input.completions = 6 }
+        XCTAssertEqual(rig.celebrationStarts, 1)
+    }
+
+    func testAHeaderCatHuntsTowardTheRoomItHasAndNeverLeavesTheStage() {
+        for seed in 0..<30 {
+            let rig = Rig(.header, seed: seed, stage: .header(travel: 40))
+            rig.director.start(.hunt, stage: rig.stage)
+            XCTAssertEqual(rig.director.running?.facing, 1, "to the right: that is where the stage is")
+            rig.run(11) { _, _ in }
+            for pose in rig.poses { XCTAssertGreaterThanOrEqual(pose.x, -0.001); XCTAssertLessThanOrEqual(pose.x, 40.001) }
+        }
     }
 
     // MARK: Small rules
