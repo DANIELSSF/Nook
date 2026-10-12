@@ -1,0 +1,1 @@
+import{n as e}from"./env.-YDAhfjM.js";import{t}from"./manager.DhmzqbsI.js";e(),t(document,{once:!0,onReady:e=>{requestAnimationFrame(()=>{window.__demoStarted=performance.now(),e.restart(),e.done.then(()=>{window.__demoDone=!0})})}});
