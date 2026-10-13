@@ -330,7 +330,7 @@ final class SadCatView: NSView {
     var scale: CGFloat = 2.2 { didSet { if scale != oldValue { needsDisplay = true } } }
     private(set) var pose = PetPose()
     private var startedAt: Double?
-    private var pace = PetPace(fast: 1.0 / 30)
+    private var pace = PetPace(fast: PetAnimation.headerInterval)
     private lazy var ticker = PetTicker { [weak self] in self?.step() }
     private var windowObservers: [NSObjectProtocol] = []
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -391,7 +391,9 @@ final class SadCatView: NSView {
         if startedAt == nil { startedAt = now; pace.reset(); ticker.host = self }
         let t = now - (startedAt ?? now)
         let next = PetAnimation.sad(time: t, amount: PetAnimation.sadAmount(at: t))
-        ticker.run(every: pace.interval(for: next, now: now, scale: scale))
+        // The whole scene moves (it droops, sighs, blinks long, cries): its frames are paced by the fine step, and its slow breathing still
+        // takes no more than the resting cadence.
+        ticker.run(every: pace.interval(for: next, now: now, scale: scale, moving: true))
         if next.displacement(to: pose, scale: scale) * pace.backing >= 0.25 { pose = next; needsDisplay = true }
     }
 

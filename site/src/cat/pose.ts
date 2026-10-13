@@ -87,6 +87,35 @@ const lo = (a: Oval, b: Oval, t: number): Oval => ({ cx: lerp(a.cx, b.cx, t), cy
 export const lerpLimb = (a: Limb, b: Limb, t: number): Limb => ({ hip: lv(a.hip, b.hip, t), knee: lv(a.knee, b.knee, t), foot: lv(a.foot, b.foot, t), width: lerp(a.width, b.width, t) });
 export const lerpV = lv;
 
+/**
+ * Whether the cat is seen from the front: its legs stand, left to right, far hind, far front, near front, near hind (the hind feet
+ * outside the front legs on both sides: a sit, a cat held up). Seen from the side they stand hind, hind, front, front.
+ */
+export const isFrontal = (p: Pose): boolean =>
+  p.legs[0].hip.x < p.legs[1].hip.x && p.legs[1].hip.x < p.legs[3].hip.x && p.legs[3].hip.x < p.legs[2].hip.x;
+
+/** `a`'s legs put in the slots of `b`'s legs that stand where they do, by where their hips are from left to right. */
+export function paired(a: Legs, b: Legs): Legs {
+  const rank = (l: Legs, i: number): number => {
+    let k = 0;
+    for (let j = 0; j < 4; j++) if (l[j]!.hip.x < l[i]!.hip.x || (l[j]!.hip.x === l[i]!.hip.x && j < i)) k++;
+    return k;
+  };
+  const r = [b[0], b[1], b[2], b[3]] as Legs;
+  for (let i = 0; i < 4; i++) {
+    const k = rank(a, i);
+    for (let j = 0; j < 4; j++) if (rank(b, j) === k) r[j] = a[i]!;
+  }
+  return r;
+}
+
+/**
+ * The legs of `a` and of `o` for a turn between them, from the front to the side or back (the app's `PetPose.turning`): the front-on
+ * pose's legs are put in the places of the side-on pose's that stand where they do, so each goes to the nearest and none crosses under
+ * the body on the way. Which leg is which does not show (they are drawn alike), so the picture at either end is the pose's own.
+ */
+export const turning = (a: Pose, o: Pose): [Legs, Legs] => (isFrontal(a) ? [paired(a.legs, o.legs), o.legs] : [a.legs, paired(o.legs, a.legs)]);
+
 /** Blends `a` toward `b` by `t` (0...1). A speck or a ball that is not there has no place: one that fades in or out does it where it is. */
 export function blend(a: Pose, b: Pose, tIn: number): Pose {
   const t = Math.min(1, Math.max(0, tIn));
@@ -107,6 +136,10 @@ export function blend(a: Pose, b: Pose, tIn: number): Pose {
   };
   if (a.moteSize === 0) r.mote = cv(b.mote); else if (b.moteSize === 0) r.mote = cv(a.mote);
   if (a.ballSize === 0) r.ball = cv(b.ball); else if (b.ballSize === 0) r.ball = cv(a.ball);
+  if (t > 0 && t < 1 && isFrontal(a) !== isFrontal(b)) {
+    const [la, lb] = turning(a, b);
+    r.legs = [lerpLimb(la[0], lb[0], t), lerpLimb(la[1], lb[1], t), lerpLimb(la[2], lb[2], t), lerpLimb(la[3], lb[3], t)];
+  }
   return r;
 }
 
@@ -152,24 +185,36 @@ export type Order = 'headFirst' | 'legsFirst';
 const sm = (t: number) => { const c = Math.min(1, Math.max(0, t)); return c * c * (3 - 2 * c); };
 
 /**
- * Blends toward `o` in stages so a turn reads as anticipation instead of a slide: the head and eyes lead, then the torso,
- * then legs and tail (`legsFirst` runs it backwards, as a walker settling into a sit).
+ * Blends toward `o` in stages (the app's `PetPose.staged`), so a change of pose has the overlap of a cat's and not the slide of a
+ * blend: one part leads and the others follow it, each on its own stretch of `t`, and the tail comes last.
+ *   - `headFirst`: the head and eyes lead, then the chest and the shoulders, then the haunch, the front legs, the hind legs. A cat turns
+ *     this way toward where it is going, lies down this way (the front goes down, then the hind) and gets up from lying the same way.
+ *   - `legsFirst`: the hips lead: the hind legs and the haunch, then the front legs and the chest, the head last. A cat sits down this
+ *     way (it leans back, the hips touch, then the chest comes up), and pushes off into a leap.
  */
 export function staged(a: Pose, o: Pose, tIn: number, order: Order = 'headFirst'): Pose {
   const t = Math.min(1, Math.max(0, tIn));
   const part = (lo_: number, hi: number) => sm((t - lo_) / (hi - lo_));
-  const [head, body, legs, tail] = order === 'headFirst'
-    ? [part(0, 0.5), part(0.1, 0.75), part(0.2, 0.9), part(0.1, 1)]
-    : [part(0.5, 1), part(0.25, 0.9), part(0, 0.7), part(0, 1)];
-  const r = blend(a, o, body);
-  const h = blend(a, o, head), l = blend(a, o, legs), tl = blend(a, o, tail);
+  const [head, chest, haunch, front, hind, tail] = order === 'headFirst'
+    ? [part(0, 0.5), part(0.1, 0.7), part(0.15, 0.8), part(0.2, 0.85), part(0.25, 0.9), part(0.1, 1)]
+    : [part(0.45, 1), part(0.2, 0.85), part(0, 0.65), part(0.15, 0.75), part(0, 0.6), part(0, 1)];
+  // Everything not named below (where the cat is, what it plays with) goes with the chest.
+  const r = blend(a, o, chest);
+  const h = blend(a, o, head);
   r.head = h.head; r.headScale = h.headScale; r.tilt = h.tilt; r.earL = h.earL; r.earR = h.earR; r.eyes = h.eyes; r.look = h.look; r.mouth = h.mouth;
-  r.legs = l.legs; r.tail = tl.tail;
+  r.haunch = lo(a.haunch, o.haunch, haunch);
+  // Turning between the front and the side, each leg goes to the one that stands where it does (`turning`), so none crosses.
+  const [la, lb] = t > 0 && t < 1 && isFrontal(a) !== isFrontal(o) ? turning(a, o) : [a.legs, o.legs];
+  r.legs = [lerpLimb(la[0], lb[0], hind), lerpLimb(la[1], lb[1], front), lerpLimb(la[2], lb[2], hind), lerpLimb(la[3], lb[3], front)];
+  r.tail = { p0: lv(a.tail.p0, o.tail.p0, tail), c1: lv(a.tail.c1, o.tail.c1, tail), c2: lv(a.tail.c2, o.tail.c2, tail), p3: lv(a.tail.p3, o.tail.p3, tail), width: lerp(a.tail.width, o.tail.width, tail) };
   if (t >= 0.5) { r.action = o.action; r.facing = o.facing; } else { r.action = a.action; r.facing = a.facing; }
   return r;
 }
 
-/** Largest difference between two poses in rig units; used to skip frames that would paint the same picture. */
+/**
+ * Largest difference between two poses in rig units; used to skip frames that would paint the same picture. Which leg is which does
+ * not show while the cat turns round: legs that stand where the other pose's do are compared with them.
+ */
 export function distance(a: Pose, b: Pose): number {
   let d = 0;
   const g = (p: V2, q: V2) => Math.max(Math.abs(p.x - q.x), Math.abs(p.y - q.y));
@@ -177,7 +222,8 @@ export function distance(a: Pose, b: Pose): number {
   const l = (p: Limb, q: Limb) => Math.max(g(p.hip, q.hip), g(p.knee, q.knee), g(p.foot, q.foot), Math.abs(p.width - q.width) * 0.5);
   d = Math.max(d, Math.abs(a.x - b.x), Math.abs(a.y - b.y), o(a.haunch, b.haunch), o(a.chest, b.chest), g(a.head, b.head), g(a.look, b.look));
   d = Math.max(d, Math.abs(a.headScale - b.headScale) * 9.3, Math.abs(a.tilt - b.tilt) * 9.3, Math.abs(a.earL - b.earL) * 8, Math.abs(a.earR - b.earR) * 8, Math.abs(a.eyes - b.eyes) * 1.6);
-  for (let i = 0; i < 4; i++) d = Math.max(d, l(a.legs[i]!, b.legs[i]!));
+  const legs = (x: Legs) => Math.max(l(x[0], b.legs[0]), l(x[1], b.legs[1]), l(x[2], b.legs[2]), l(x[3], b.legs[3]));
+  d = Math.max(d, isFrontal(a) !== isFrontal(b) ? Math.min(legs(a.legs), legs(paired(a.legs, b.legs))) : legs(a.legs));
   d = Math.max(d, g(a.tail.p0, b.tail.p0), g(a.tail.c1, b.tail.c1) * 0.5, g(a.tail.c2, b.tail.c2) * 0.5, g(a.tail.p3, b.tail.p3), Math.abs(a.tail.width - b.tail.width) * 0.5);
   if (a.ballSize > 0 || b.ballSize > 0) d = Math.max(d, Math.abs(a.ballSize - b.ballSize) * 2.3, a.ballSize > 0 && b.ballSize > 0 ? g(a.ball, b.ball) : 0);
   if (a.moteSize > 0 || b.moteSize > 0) d = Math.max(d, Math.abs(a.moteSize - b.moteSize) * 1.4, a.moteSize > 0 && b.moteSize > 0 ? g(a.mote, b.mote) : 0);

@@ -109,8 +109,6 @@ interface Running { kind: GestureKind; start: number; length: number; variant: n
 interface Reaction { kind: 'celebrate' | 'perk' | 'land' | 'startle'; start: number; length: number; style?: A.Cheer; variant?: number }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
-/** How far the eyes look from the middle of the face at most, in rig units: about as far as the app's own glances and its curious look go. */
-const LOOK_REACH = { x: 2.0, y: 1.2 };
 
 export class CatActor {
   readonly view: CatView;
@@ -122,6 +120,8 @@ export class CatActor {
   /** Poses it painted last, to skip a frame that would look the same. */
   private painted: Pose | null = null;
   private paintedAt = 0;
+  /** Until when it keeps the screen's own rate after its picture last moved: the pauses between the beats of a movement keep it. */
+  private fastUntil = 0;
   private opts: CatOptions;
   private running: Running | null = null;
   private reaction: Reaction | null = null;
@@ -200,7 +200,7 @@ export class CatActor {
   setGestures(gestures: GestureKind[]): void { this.opts = { ...this.opts, gestures }; }
   setActivity(a: number): void { this.opts = { ...this.opts, activity: a }; }
   /** An external director supplies the pose (the story's walk, its drag and landing); the small life still goes on over it. */
-  setDriver(fn: ((now: number, dt: number) => { pose: Pose; life?: number } | null) | null): void { this.driver = fn; this.painted = null; }
+  setDriver(fn: ((now: number, dt: number) => { pose: Pose; life?: number } | null) | null): void { this.driver = fn; this.painted = null; kick(); }
   /** Holds one pose (Reduce Motion) until `null`. */
   freeze(pose: Pose | null): void { this.frozen = pose; this.painted = null; if (pose) this.paintNow(pose); }
 
@@ -227,6 +227,7 @@ export class CatActor {
     }
     this.running = r;
     this.reaction = null;
+    kick();
   }
 
   /** The task finished: a single glad gesture. */
@@ -236,6 +237,7 @@ export class CatActor {
     this.reaction = { kind: 'celebrate', start: now, length: A.cheerLength(style), style };
     this.running = null;
     this.opts.onSay?.('cheer');
+    kick();
   }
 
   /** Something wants attention: ears up, a small mew. */
@@ -244,16 +246,19 @@ export class CatActor {
     this.reaction = { kind: 'perk', start: now, length };
     if (this.running) this.running.release = this.running.release ?? now;
     this.opts.onSay?.('mew');
+    kick();
   }
 
   /** A soft landing after being carried. */
   land(now = performance.now() / 1000): void {
     this.reaction = { kind: 'land', start: now, length: A.LAND_LENGTH + 0.6 };
     this.running = null;
+    kick();
   }
 
   /** A poke (click or tap): a mew, then a hop; quick pokes startle it. A sleeper that is poked wakes, slowly. */
   poke(now = performance.now() / 1000): void {
+    kick();
     if (this.sleeper && this.phase !== 'awake') {
       // The page's cat wakes (and so do the others); if this one is asleep on its own, it wakes by itself.
       slumber.wake('touch');
@@ -271,6 +276,7 @@ export class CatActor {
 
   setHover(on: boolean): void {
     this.hovering = on;
+    kick();
     // A pointer right over a sleeper stirs it.
     if (on && this.phase === 'asleep') this.stir();
   }
@@ -313,6 +319,7 @@ export class CatActor {
     this.wakeKind = cause === 'light' ? 'light' : 'touch';
     this.sleptAge = this.napAge(now);
     this.phase = 'waking'; this.phaseAt = now;
+    kick();
     if (env.reduced) { this.holdStill(); return; }
     if (!this.visible || env.hidden) this.finishWake(now, false);
   }
@@ -554,12 +561,9 @@ export class CatActor {
       p.eyes *= 1 - 0.3 * slow * h;
     }
 
-    // Its small life.
+    // Its small life. However its layers add up (a glance of its own over the pointer's, over a perk), the painter keeps the face
+    // together, as the app's does (`faceLayout` in render.ts): the eyes stay in the face and the mouth goes where the face turns.
     applyLife(p, { time: now, temperament: tm, restful: life, quiet: 1, rate: 1, alert });
-    // However the layers add up (a glance of its own over the pointer's, over a perk), the eyes stay in the face: no further than
-    // the app's own looks go, unless the pose under them goes further. Past that, a cat drawn large has an eye on the edge of its head.
-    p.look.x = clamp(p.look.x, Math.min(base.look.x, -LOOK_REACH.x), Math.max(base.look.x, LOOK_REACH.x));
-    p.look.y = clamp(p.look.y, Math.min(base.look.y, -LOOK_REACH.y), Math.max(base.look.y, LOOK_REACH.y));
     // Its follow-through, over whatever was made: the app's player lays it on last, too.
     if (this.opts.followThrough !== false) this.secondary.apply(p, dt, this.unit);
     return p;
@@ -632,19 +636,34 @@ export class CatActor {
     this.paintedAt = performance.now();
   }
 
+  /**
+   * Whether the cat moves: a gesture, a reaction, the story's walk, or a picture that has just moved (the pointer it follows, a glance).
+   * It is then drawn at the screen's own rate; one that only breathes, about twenty times a second.
+   */
+  moving(now: number): boolean { return this.busy || !!this.driver || now < this.fastUntil; }
+
+  /** When it wants its next frame, on the page's clock (seconds): at once while it moves, a twentieth of a second later while it rests. */
+  nextTickAt(now: number): number {
+    if (this.frozen) return Infinity;
+    return this.moving(now) || !this.lastTick ? now : this.lastTick + IDLE_TICK;
+  }
+
   /** One frame. Returns true if something was painted. */
   tick(now: number): boolean {
     if (this.frozen) { if (!this.painted) this.paintNow(this.frozen); return false; }
     // A cat that is only breathing does not need a frame every refresh of the screen: about twenty a second is plenty.
-    if (this.lastTick && now - this.lastTick < (this.busy || this.driver ? 0.012 : 0.045)) return false;
+    if (this.lastTick && now - this.lastTick < (this.moving(now) ? 0.006 : IDLE_TICK - 0.004)) return false;
     const dt = this.lastTick ? Math.min(0.1, now - this.lastTick) : 1 / 30;
     this.lastTick = now;
     this.lastNow = now;
     this.measure();
     const p = this.pose(now, dt);
     const ms = performance.now();
+    const moved = this.painted ? distance(this.painted, p) * this.unit : Infinity;
+    // A picture that moves by more than a fraction of a pixel from frame to frame keeps the screen's rate a moment longer.
+    if (moved > 0.35) this.fastUntil = now + 0.15;
     // Paint when the picture would visibly change (the breathing alone changes a fraction of a pixel), and at least every 200 ms.
-    if (!this.painted || distance(this.painted, p) * this.unit > 0.14 || ms - this.paintedAt > 220) {
+    if (!this.painted || moved > 0.14 || ms - this.paintedAt > 220) {
       this.paintNow(p);
       return true;
     }
@@ -678,14 +697,22 @@ function kindToAction(kind: GestureKind): import('./pose').Action {
 
 // MARK: The loop
 
+/** Seconds between the frames of a cat that only breathes. */
+const IDLE_TICK = 0.045;
+
 const actors = new Set<CatActor>();
 let raf = 0;
+let timer = 0;
 let last = 0;
 
+/**
+ * One frame for every cat on screen. While one of them moves the loop runs at the screen's own rate; while they all only breathe it
+ * sleeps on a timer until the next one is due, instead of being woken by every refresh of the screen for nothing.
+ */
 function frame(ts: number): void {
   raf = 0;
   const now = ts / 1000;
-  let any = false;
+  let any = false, soonest = Infinity;
   const dt = last ? Math.min(0.1, now - last) : 1 / 30;
   last = now;
   env.sampleScroll(dt);
@@ -693,13 +720,19 @@ function frame(ts: number): void {
     if (!a.visible) continue;
     any = true;
     a.tick(now);
+    soonest = Math.min(soonest, a.nextTickAt(now));
   }
-  if (any && !env.hidden && !env.reduced) raf = requestAnimationFrame(frame);
-  else last = 0;
+  if (!any || env.hidden || env.reduced) { last = 0; return; }
+  const wait = soonest - now;
+  if (wait <= 0.012) { raf = requestAnimationFrame(frame); return; }
+  // Woken a little early, so the frame it then waits for is the one the cat is due on.
+  timer = window.setTimeout(() => { timer = 0; raf = requestAnimationFrame(frame); }, Math.min(1000, (wait - 0.008) * 1000));
 }
 
 function kick(): void {
-  if (!raf && !env.hidden && !env.reduced) raf = requestAnimationFrame(frame);
+  if (raf || env.hidden || env.reduced) return;
+  if (timer) { window.clearTimeout(timer); timer = 0; }
+  raf = requestAnimationFrame(frame);
 }
 
 /** Registers a cat with the shared loop. It runs only while on screen. */

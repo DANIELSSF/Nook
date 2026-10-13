@@ -28,8 +28,12 @@ struct PetPlayer {
 
     /// Back at home, calm, when the view reappears; the rhythm picks up where it was.
     mutating func settle() { last = nil; director.settle(); secondary.reset() }
-    /// The cat was put down after a drag.
-    mutating func land() { director.land() }
+    /// The cat was put down after a drag. It comes down from where the pointer let go of it, so its follow-through starts there afresh
+    /// instead of swinging in from the pose it had before.
+    mutating func land() {
+        director.land()
+        if director.activity == .landing { secondary.reset() }
+    }
     /// Whether the frames are worth drawing at the full rate.
     var isBusy: Bool { director.isBusy }
     /// How wound up the follow-through still is.
@@ -108,8 +112,18 @@ struct PetPace {
     var slow = PetAnimation.restInterval
     /// Device pixels per point of the cat's drawing (2 on a Retina display).
     var backing: CGFloat = 2
-    /// How far, in device pixels, the picture may move between two frames before the motion would show as steps.
+    /// How far, in device pixels, the picture may move between two frames of a cat that only breathes: its breathing is slow enough that
+    /// a step this size every few hundredths of a second does not show.
     var stepPixels: CGFloat = 1.5
+    /// The same while the cat moves (a gesture, a reaction, the pointer, an alert). Half a pixel on a big
+    /// cat (the home's), a step the eye does not see as one, so its slow movements are drawn as often as they need (twenty to sixty times
+    /// a second) and its fast ones at the top rate, instead of in visible steps a dozen times a second; a pixel in the open island's header;
+    /// and in the notch's wing, where the cat is a few dozen pixels tall and always on screen, the resting step: there only its fast
+    /// movements gain frames, up to the top rate (`fineStep`).
+    var fineStepPixels: CGFloat = 0.5
+    static func fineStep(scale: CGFloat, layout: PetLayout = .header) -> CGFloat { scale >= bigCat ? 0.5 : layout == .header ? 1 : 1.5 }
+    /// A cat drawn at more than this many points a unit (the home's: about 2.4) is a big cat: its movements are paced by the finest step.
+    static let bigCat: CGFloat = 1
     /// A little time at the faster rate after the motion has stopped, so the pauses between the beats of a movement (a blink
     /// closing and opening) do not drop the rate in the middle of it.
     var dwell = 0.12
@@ -127,13 +141,15 @@ struct PetPace {
 
     /// The interval until the next frame. `scale` is the points per rig unit the cat is drawn at; `ceiling` the longest the next
     /// interval may be right now (a gesture is under way, and its next beat may start at any moment); `due` the seconds until
-    /// something small starts (a blink), so the frame comes when it does.
-    mutating func interval(for pose: PetPose, now: Double, scale: CGFloat = PetAnimation.compactScale, ceiling: Double? = nil, due: Double? = nil) -> Double {
+    /// something small starts (a blink), so the frame comes when it does; `moving`, whether the cat is moving (its frames are then paced
+    /// by `fineStepPixels` instead of `stepPixels`).
+    mutating func interval(for pose: PetPose, now: Double, scale: CGFloat = PetAnimation.compactScale, ceiling: Double? = nil, due: Double? = nil, moving: Bool = false) -> Double {
         defer { last = (pose, now) }
         var wanted = slow
         if let last, now > last.time {
             let pixelsPerSecond = pose.displacement(to: last.pose, scale: scale) * backing / CGFloat(now - last.time)
-            if pixelsPerSecond > 0.0001 { wanted = min(slow, max(fast, Double(stepPixels / pixelsPerSecond))) }
+            let step = moving ? fineStepPixels : stepPixels
+            if pixelsPerSecond > 0.0001 { wanted = min(slow, max(fast, Double(step / pixelsPerSecond))) }
         } else { wanted = fast }
         let level = Self.round(wanted, fast: fast, slow: slow)
         // Slowing down waits for the motion to have stayed quiet; speeding up is at once.
@@ -174,9 +190,11 @@ enum PetCadence {
         return power == .normal ? base : min(1.0 / 2, base * 1.6)
     }
     static let awayAfter = 90.0
-    /// The fastest: a cat on a Mac that is saving power moves at half the rate.
-    static func fast(_ layout: PetLayout, power: PetPower) -> Double {
-        let base = layout == .compact ? PetAnimation.compactInterval : PetAnimation.headerInterval
+    /// The fastest: sixty frames a second while the cat moves (as many as a movement needs: `PetPace` gives a slow one fewer), and thirty
+    /// while it rests (a blink, a flick or a glance of its small life is drawn as it always was); a cat on a Mac that is saving power moves
+    /// at half the rate.
+    static func fast(_ layout: PetLayout, power: PetPower, moving: Bool = true) -> Double {
+        let base = moving ? (layout == .compact ? PetAnimation.compactInterval : PetAnimation.headerInterval) : PetAnimation.restingTopInterval
         return power == .normal ? base : base * 2
     }
     /// How far, in device pixels, the picture has to differ from the one on screen before it is worth drawing again.
@@ -222,20 +240,28 @@ struct PetDriver {
         // A second tick right after another (the model announced a change a few milliseconds after a frame) has nothing new to say.
         if now - lastTick < 0.012 { return Tick(pose: drawn, interval: lastInterval, draw: false) }
         lastTick = now
-        pace.fast = PetCadence.fast(layout, power: input.power)
         pace.slow = PetCadence.rest(focus: input.focus, idle: input.idle, power: input.power)
         let next = player.pose(now: now, layout: stage, motion: true, input: input)
         let scale = stage.stage.scale
         // A gesture under way may begin its next beat at any moment, and the pointer, an alert or a hop need the picture to follow.
         var ceiling = player.director.frameCeiling
         if input.perk > 0 { ceiling = min(ceiling ?? 1, 1.0 / 20) }
-        // A blink or a flick that is under way is drawn in a few frames; one that is about to start gets a frame as it does.
+        // The cat itself is moving: a gesture, a reaction, the pointer, an alert. Its frames come as often as the motion needs to look smooth,
+        // up to sixty a second.
+        let moving = ceiling != nil
+        pace.fast = PetCadence.fast(layout, power: input.power, moving: moving)
+        // A blink or a flick that is under way is drawn in a few frames; one that is about to start gets a frame as it does. At rest (its
+        // breathing and the small movements of its life) every cat is paced as it always was, so a resting cat costs what it did.
         let timing = PetLife.timing(player.lifeContext(now: now, input: input))
         if timing.busyFor > 0 { ceiling = min(ceiling ?? 1, 1.0 / 20) }
-        let interval = pace.interval(for: next, now: now, scale: scale, ceiling: ceiling, due: timing.due - 0.02)
+        pace.fineStepPixels = PetPace.fineStep(scale: scale, layout: layout)
+        let interval = pace.interval(for: next, now: now, scale: scale, ceiling: ceiling, due: timing.due - 0.02, moving: moving)
         lastInterval = interval
         let moved = next.displacement(to: drawn, scale: scale) * pace.backing
-        let draw = moved >= PetCadence.threshold(focus: input.focus, idle: input.idle, power: input.power)
+        var threshold = PetCadence.threshold(focus: input.focus, idle: input.idle, power: input.power)
+        // A movement is drawn in steps smaller than half its frame's step, so the ends of its easing are drawn too and not left for one jump.
+        if moving { threshold = min(threshold, pace.fineStepPixels / 2) }
+        let draw = moved >= threshold
         if draw { drawn = next }
         return Tick(pose: next, interval: interval, draw: draw)
     }

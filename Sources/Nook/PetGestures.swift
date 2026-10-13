@@ -14,16 +14,34 @@ extension PetPose {
     /// Which end of the body leads a change of pose.
     enum Order { case headFirst, legsFirst }
 
-    /// Blends toward `o` in stages so a turn reads as anticipation instead of a slide: the head and eyes
-    /// lead, then the torso, then legs and tail (`legsFirst` runs it backwards, as a walker settling into a sit).
+    /// Blends toward `o` in stages, so a change of pose has the overlap of a cat's and not the slide of a blend: one part leads and the
+    /// others follow it, each on its own stretch of `t`, and the tail comes last.
+    ///   - `headFirst`: the head and eyes lead, then the chest and the shoulders, then the haunch, the front legs, the hind legs. A cat turns
+    ///     this way toward where it is going, lies down this way (the front goes down, then the hind) and gets up from lying the same way
+    ///     (the head comes up, the chest rises onto the front legs, the rear follows).
+    ///   - `legsFirst`: the hips lead: the hind legs and the haunch, then the front legs and the chest, the head last. A cat sits down this
+    ///     way (it leans back, the hips touch, then the chest comes up), and pushes off into a leap.
     func staged(to o: PetPose, _ t: CGFloat, order: Order = .headFirst) -> PetPose {
         let t = min(1, max(0, t))
         func part(_ a: CGFloat, _ b: CGFloat) -> CGFloat { PetAnimation.smooth(Double((t - a) / (b - a))) }
-        let (head, body, legs, tail) = order == .headFirst ? (part(0, 0.5), part(0.1, 0.75), part(0.2, 0.9), part(0.1, 1)) : (part(0.5, 1), part(0.25, 0.9), part(0, 0.7), part(0, 1))
-        var r = blended(to: o, body)
-        let h = blended(to: o, head), l = blended(to: o, legs), tl = blended(to: o, tail)
+        let w: (head: CGFloat, chest: CGFloat, haunch: CGFloat, front: CGFloat, hind: CGFloat, tail: CGFloat) = order == .headFirst
+            ? (part(0, 0.5), part(0.1, 0.7), part(0.15, 0.8), part(0.2, 0.85), part(0.25, 0.9), part(0.1, 1))
+            : (part(0.45, 1), part(0.2, 0.85), part(0, 0.65), part(0.15, 0.75), part(0, 0.6), part(0, 1))
+        // Everything not named below (where the cat is, what it plays with) goes with the chest.
+        var r = blended(to: o, w.chest)
+        let h = blended(to: o, w.head)
         r.head = h.head; r.headScale = h.headScale; r.tilt = h.tilt; r.earL = h.earL; r.earR = h.earR; r.eyes = h.eyes; r.look = h.look; r.mouth = h.mouth
-        r.legs = l.legs; r.tail = tl.tail
+        func oval(_ a: PetOval, _ b: PetOval, _ k: CGFloat) -> PetOval {
+            PetOval(a.cx + (b.cx - a.cx) * k, a.cy + (b.cy - a.cy) * k, a.rx + (b.rx - a.rx) * k, a.ry + (b.ry - a.ry) * k, a.angle + (b.angle - a.angle) * k)
+        }
+        r.haunch = oval(haunch, o.haunch, w.haunch)
+        // Turning between the front and the side, each leg goes to the one that stands where it does (`turning`), so none crosses.
+        let (a, b) = t > 0 && t < 1 && isFrontal != o.isFrontal ? turning(to: o) : (legs, o.legs)
+        r.legs = PetLegs(a.farHind.blended(to: b.farHind, w.hind), a.farFront.blended(to: b.farFront, w.front),
+                         a.nearHind.blended(to: b.nearHind, w.hind), a.nearFront.blended(to: b.nearFront, w.front))
+        let k = w.tail
+        func point(_ a: CGPoint, _ b: CGPoint) -> CGPoint { CGPoint(x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k) }
+        r.tail = PetTail(p0: point(tail.p0, o.tail.p0), c1: point(tail.c1, o.tail.c1), c2: point(tail.c2, o.tail.c2), p3: point(tail.p3, o.tail.p3), width: tail.width + (o.tail.width - tail.width) * k)
         if t >= 0.5 { r.action = o.action; r.facing = o.facing } else { r.action = action; r.facing = facing }
         return r
     }
@@ -116,19 +134,19 @@ extension PetAnimation {
             p.headScale -= 0.02 * dip
             return p
         }
-        // Two short licks at the mouth, then two slow wipes up the cheek and back.
-        let lick = u >= 0.5 && u < 1.05 ? CGFloat(sin((u - 0.5) / 0.55 * 2 * .pi * 2)) : 0
+        // Two licks at the mouth (the paw comes up to the tongue as the head bobs down to it), then two slow wipes up the cheek and back.
+        let lick = bump(u, 0.5, 0.775) + bump(u, 0.775, 1.05)
         let w = (u - 1.05) / 0.55
         let wipe: CGFloat = w >= 0 && w < 2 ? CGFloat((1 - cos(w * 2 * .pi)) / 2) : 0
         let mouth = PetLimb(CGPoint(x: 4.6, y: 11.4), CGPoint(x: 9.4, y: 12.6), CGPoint(x: 3.6, y: 15.8), 3.4)
         var arm = p.legs[3].blended(to: mouth, raise)
-        // The wipe carries the paw up along the outside of the cheek; the elbow follows.
-        arm.foot.x += 6.0 * wipe * raise; arm.foot.y += 6.2 * wipe * raise
+        // The wipe carries the paw up round the outside of the cheek, in an arc; the elbow follows, and the head leans into the paw.
+        arm.foot.x += (6.0 * wipe + 1.0 * CGFloat(sin(.pi * Double(wipe)))) * raise; arm.foot.y += 6.2 * wipe * raise
         arm.knee.x += 1.4 * wipe * raise; arm.knee.y += 2.2 * wipe * raise
         arm.foot.y += 0.35 * lick * raise
         p.legs[3] = arm
-        p.tilt += -0.13 * raise - 0.04 * wipe * raise
-        p.head.x += 0.7 * raise; p.head.y += (-0.55 * raise) - 0.35 * max(0, lick) * raise
+        p.tilt += -0.13 * raise - 0.08 * wipe * raise
+        p.head.x += (0.7 + 0.4 * wipe) * raise; p.head.y += (-0.55 - 0.3 * wipe) * raise - 0.35 * lick * raise
         p.eyes = min(p.eyes, 1 - 0.8 * raise)
         p.earL += 0.1 * raise; p.earR += 0.2 * raise
         p.chest.cx += 0.3 * raise
@@ -156,7 +174,7 @@ extension PetAnimation {
             if dir > 0 { p.earR -= 0.4 * ears; p.earL += 0.12 * ears } else { p.earL -= 0.4 * ears; p.earR += 0.12 * ears }
             p.eyes *= 1 + 0.08 * ears
             // The ear nearest the sound twitches once while it listens.
-            let flick = CGFloat(sin(max(0, min(1, (u - 1.3) / 0.45)) * .pi * 2)) * ears
+            let flick = twitch(u, 1.3, 1.75) * ears
             if dir > 0 { p.earR -= 0.12 * flick } else { p.earL -= 0.12 * flick }
         case 3:
             // Up and across: the chin lifts, the eyes track something drifting from one side to the other, the ears follow it.
@@ -166,11 +184,14 @@ extension PetAnimation {
             p.head.x += 0.8 * across * h; p.tilt += -0.1 * across * h
             p.earL -= 0.2 * h; p.earR -= 0.2 * h; p.eyes *= 1 + 0.08 * h
         default:
+            // The ears turn first, the eyes go, and the head follows them a beat later.
+            let ears = keyframe(u, [(0, 0), (0.35, 1), (1.3, 1), (1.85, -1), (2.8, -1), (glanceLength, 0)])
             let side = keyframe(u, [(0, 0), (0.45, 1), (1.4, 1), (1.95, -1), (2.9, -1), (glanceLength, 0)])
+            let head = keyframe(u, [(0, 0), (0.6, 1), (1.52, 1), (2.1, -1), (3.0, -1), (glanceLength, 0)])
             p.look.x += 1.9 * side; p.look.y += 0.2 * abs(side)
-            p.head.x += 0.9 * side
-            p.tilt += -0.08 * side
-            p.earR -= 0.14 * max(0, side); p.earL -= 0.14 * max(0, -side)
+            p.head.x += 0.9 * head
+            p.tilt += -0.08 * head
+            p.earR -= 0.14 * max(0, ears); p.earL -= 0.14 * max(0, -ears)
             p.eyes *= 1 + 0.06 * abs(side)
         }
         return p
@@ -206,14 +227,14 @@ extension PetAnimation {
         p.eyes *= 1 + 0.1 * earsUp
         p.earL -= 0.1 * earsUp; p.earR -= 0.1 * earsUp
         // The ears twitch while only they show.
-        if u > 1.5, u < 2.0 { let k = CGFloat(sin((u - 1.5) / 0.5 * .pi * 3)); p.earL -= 0.3 * k; p.earR += 0.15 * k }
+        if u > 1.5, u < 2.0 { let s = (u - 1.5) / 0.5, k = CGFloat(sin(s * .pi * 3) * sin(s * .pi)); p.earL -= 0.3 * k; p.earR += 0.15 * k }
         // Looks left, then right, then back.
         let around = ramp(u, 2.7, 3.0) * (1 - ramp(u, 3.5, 3.9))
         let sweep = CGFloat(sin((u - 2.7) / 1.0 * .pi * 2))
         p.look.x += 1.8 * sweep * around; p.head.x += 1.0 * sweep * around; p.tilt += -0.1 * sweep * around
         // The paw hooks over the edge and taps it twice.
         let paw = ramp(u, 2.8, 3.1) * (1 - ramp(u, 3.65, 3.95))
-        let tap = u >= 3.1 && u < 3.7 ? CGFloat(sin((u - 3.1) / 0.3 * .pi)) : 0
+        let tap = bump(u, 3.1, 3.4) + bump(u, 3.4, 3.7)
         let edge = ledge - heights.face
         let hook = PetLimb(CGPoint(x: 4.4, y: 11), CGPoint(x: 8.8, y: edge + 1.5), CGPoint(x: 10.6, y: edge + 3.4 + 1.5 * tap), 3.6)
         p.legs[3] = p.legs[3].blended(to: hook, paw * face)
@@ -258,27 +279,31 @@ extension PetAnimation {
     private static func hopping(u: Double, time t: Double, hops: [(start: Double, height: CGFloat)], end: Double) -> PetPose {
         var p = sit(time: t)
         p.action = .celebrate
-        var squashing: CGFloat = 0, landed: CGFloat = 0, lift: CGFloat = 0, air: CGFloat = 0
+        var squashing: CGFloat = 0, landed: CGFloat = 0, lift: CGFloat = 0, air: CGFloat = 0, arms: CGFloat = 0, stretch: CGFloat = 0
         for hop in hops {
             let local = u - hop.start
             let crouch = ramp(local, 0, 0.22) * (1 - ramp(local, 0.22, 0.31))
             let flight = (local - 0.30) / 0.46
             let flying: CGFloat = flight > 0 && flight < 1 ? CGFloat(4 * flight * (1 - flight)) : 0
-            let landing = ramp(local, 0.74, 0.86) * (1 - ramp(local, 0.86, 1.12))
+            // The landing goes on at the speed of the fall: the legs give and push back.
+            let landing = easeOut((local - 0.76) / 0.1) * (1 - ramp(local, 0.86, 1.12))
             squashing += crouch + 1.25 * landing; landed += landing; lift += hop.height * flying; air = max(air, flying)
+            // The push stretches the body up as it leaves the ground; the paws go up with it and come down before it lands.
+            stretch = max(stretch, bump(local, 0.22, 0.56))
+            arms = max(arms, ramp(local, 0.24, 0.46) * (1 - ramp(local, 0.54, 0.84)))
         }
         // Eyes squeezed shut with joy and ears up from the push-off until the cat has settled.
         let joy = ramp(u, 0.26, 0.4) * (1 - ramp(u, end - 0.3, end - 0.05))
         p = squash(p, min(1.4, squashing), ears: 0.18 + 0.1 * min(1, landed))
         p.y = lift
-        p.chest.ry += 0.7 * air; p.head.y += 1.1 * air
+        p.chest.ry += 0.7 * stretch; p.head.y += 1.1 * stretch
         p.eyes *= 1 - 0.78 * joy
         p.earL -= 0.2 * joy; p.earR -= 0.2 * joy
         p.tilt += -0.08 * joy
         p.tail.p3.y += 5 * joy; p.tail.c2.y += 3 * joy; p.tail.p3.x += 1.2 * joy
         // A cheer: the front paws reach up and out beside the head while airborne.
-        p.legs[3] = p.legs[3].blended(to: PetLimb(CGPoint(x: 4.2, y: 11), CGPoint(x: 8.4, y: 12.4), CGPoint(x: 11.6, y: 17.2), 3.3), air)
-        p.legs[1] = p.legs[1].blended(to: PetLimb(CGPoint(x: -4.2, y: 11), CGPoint(x: -8.4, y: 12.4), CGPoint(x: -11.6, y: 17.2), 3.3), air)
+        p.legs[3] = p.legs[3].blended(to: PetLimb(CGPoint(x: 4.2, y: 11), CGPoint(x: 8.4, y: 12.4), CGPoint(x: 11.6, y: 17.2), 3.3), arms)
+        p.legs[1] = p.legs[1].blended(to: PetLimb(CGPoint(x: -4.2, y: 11), CGPoint(x: -8.4, y: 12.4), CGPoint(x: -11.6, y: 17.2), 3.3), arms)
         // Hind legs trail below the body in the air.
         for i in [0, 2] { p.legs[i].foot.y -= 1.2 * air }
         let glint = (hops.last?.start ?? 0) + 0.4
@@ -298,14 +323,16 @@ extension PetAnimation {
         var air = lifted(time: t)
         // The tail only trails a little: it must not swing into place from the carried pose in a few frames.
         air.tail = sit(time: t).tail
-        var p = air.blended(to: sit(time: t), ramp(u, 0.1, fall))
+        // Falling, it gathers its legs under it: they are on the ground before the body is.
+        var p = air.blended(to: sit(time: t), ramp(u, 0.05, fall - 0.04))
         p.action = .land
         p.y = drop * CGFloat(1 - s * s)
-        let impact = ramp(u, fall, fall + 0.1) * (1 - ramp(u, fall + 0.1, fall + 0.36))
+        // The landing takes the fall into a squash at the speed it came down (the legs give), and lets it out again.
+        let impact = easeOut((u - fall) / 0.09) * (1 - ramp(u, fall + 0.09, fall + 0.36))
         p = squash(p, 1.2 * impact, ears: 0.26)
         // A blink on impact, then a gentle rebound.
         if u > fall, u < fall + 0.2 { p.eyes *= CGFloat(1 - 0.85 * sin((u - fall) / 0.2 * .pi)) }
-        if u > fall + 0.14, u < fall + 0.42 { p.y += 0.8 * CGFloat(sin((u - fall - 0.14) / 0.28 * .pi)) }
+        p.y += 0.8 * bump(u, fall + 0.12, fall + 0.44)
         return p
     }
 

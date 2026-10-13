@@ -28,32 +28,29 @@ enum LegacyPetPainter {
         }
         /// Legs lifted to the face are drawn over the head instead of behind it.
         func raised(_ l: PetLimb) -> Bool { l.foot.y > PetAnimation.raisedAbove }
-        func oval(_ o: PetOval) {
-            cg.saveGState(); cg.translateBy(x: o.cx, y: o.cy); cg.rotate(by: o.angle)
-            NSBezierPath(ovalIn: NSRect(x: -o.rx, y: -o.ry, width: 2 * o.rx, height: 2 * o.ry)).fill()
-            cg.restoreGState()
-        }
         let t = pose.tail
         let tail = NSBezierPath(); tail.move(to: t.p0); tail.curve(to: t.p3, controlPoint1: t.c1, controlPoint2: t.c2)
         tail.lineWidth = t.width; tail.lineCapStyle = .round; tail.stroke()
         pose.legs.prefix(2).filter { !raised($0) }.forEach { limb($0) }
-        oval(pose.haunch); oval(pose.chest)
+        // The body has been one figure since the torso was redrawn (`PetTorso`): the old painter draws that figure too, its own way (a
+        // new NSBezierPath every frame), so the two are still held to painting the same cat.
+        let body = NSBezierPath()
+        PetTorso(pose.haunch, pose.chest).trace(move: { body.move(to: $0) }, curve: { body.curve(to: $2, controlPoint1: $0, controlPoint2: $1) })
+        body.close(); body.fill()
         pose.legs.dropFirst(2).filter { !raised($0) }.forEach { limb($0) }
         // The head has its own frame so tilt and scale carry the ears and eyes along.
         cg.saveGState(); cg.translateBy(x: pose.head.x, y: pose.head.y); cg.scaleBy(x: pose.headScale, y: pose.headScale); cg.rotate(by: pose.tilt)
         NSBezierPath(ovalIn: NSRect(x: -9.3, y: -7.4, width: 18.6, height: 14.8)).fill()
+        // The ears and the eyes have been laid out by `PetFace` since the face was made to hold together (an ear's base stays on the
+        // head, the eyes stay in the face): the old painter draws them where it says too, its own way.
         for (side, angle) in [(CGFloat(-1), pose.earL), (CGFloat(1), pose.earR)] {
-            cg.saveGState(); cg.translateBy(x: side * 5.8, y: 4.4); cg.rotate(by: side * -angle); cg.translateBy(x: -side * 5.8, y: -4.4)
+            let corners = PetFace.ear(side: side, angle: angle)
             let ear = NSBezierPath()
-            ear.move(to: CGPoint(x: side * 9.1, y: 1.6)); ear.line(to: CGPoint(x: side * 7.5, y: 12.2)); ear.line(to: CGPoint(x: side * 2.2, y: 6.6)); ear.close(); ear.fill()
-            cg.restoreGState()
+            ear.move(to: corners.outer); ear.line(to: corners.tip); ear.line(to: corners.inner); ear.close(); ear.fill()
         }
         NSColor.black.setFill()
-        let open = max(0, pose.eyes)
-        for side: CGFloat in [-1, 1] {
-            let w = 2.2 + 0.9 * (1 - min(1, open)), h = max(0.55, 2.9 * open)
-            NSBezierPath(ovalIn: NSRect(x: side * 4.3 + pose.look.x - w / 2, y: 0.3 + pose.look.y - h / 2, width: w, height: h)).fill()
-        }
+        let face = PetFace(pose)
+        for side: CGFloat in [-1, 1] { NSBezierPath(ovalIn: face.eyeRect(side)).fill() }
         cg.restoreGState()
         pose.legs.filter(raised).forEach { limb($0, halo: true) }
         if pose.ballSize > 0 {

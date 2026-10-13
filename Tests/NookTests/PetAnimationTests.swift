@@ -282,9 +282,9 @@ final class PetAnimationTests: XCTestCase {
     // MARK: Walking and turning
 
     func testFeetStayPlantedWhileWalking() {
-        // Body speed is one cycle (`4 * halfStride` units) per `2 * pi` of phase. A foot that is down moves back by exactly
+        // Body speed is one stride (`strideLength` units) per `2 * pi` of phase. A foot that is down moves back by exactly
         // that, so its place on the ground does not change; and no foot is ever under the ground.
-        let perCycle = 4 * Double(PetAnimation.halfStride)
+        let perCycle = Double(PetAnimation.strideLength)
         var planted = 0
         var previous: [CGFloat?] = [nil, nil, nil, nil]
         for phase in stride(from: 0.0, to: 8 * .pi, by: 0.01) {
@@ -300,11 +300,24 @@ final class PetAnimationTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(planted, 1000)
-        // Two feet are always down (a trot), so the cat is never off its legs.
+        // Two or three feet are always down (a walk), so the cat is never off its legs.
         for phase in stride(from: 0.0, to: 2 * .pi, by: 0.05) {
             let down = PetAnimation.walk(phase: phase, amp: 1, time: 0).legs.filter { $0.foot.y == 0 }.count
             XCTAssertGreaterThanOrEqual(down, 2, "phase \(phase)")
         }
+        // The feet come down in a lateral sequence, evenly spaced: near hind, near front, far hind, far front.
+        var landed: [(phase: Double, leg: Int)] = []
+        var lifted = PetAnimation.walk(phase: 0, amp: 1, time: 0).legs.map { $0.foot.y > 0 }
+        for phase in stride(from: 0.005, to: 2 * .pi + 0.005, by: 0.005) {
+            let legs = PetAnimation.walk(phase: phase, amp: 1, time: 0).legs
+            for i in 0..<4 { if lifted[i], legs[i].foot.y == 0 { landed.append((phase, i)) }; lifted[i] = legs[i].foot.y > 0 }
+        }
+        let order = landed.sorted { $0.phase < $1.phase }.map(\.leg)
+        XCTAssertEqual(order.count, 4)
+        let sequence = [2, 3, 0, 1], start = sequence.firstIndex(of: order.first ?? 2) ?? 0
+        XCTAssertEqual(order, (0..<4).map { sequence[(start + $0) % 4] }, "near hind, near front, far hind, far front")
+        let gaps = zip(landed.dropFirst(), landed).map { $0.phase - $1.phase }
+        for gap in gaps { XCTAssertEqual(gap, .pi / 2, accuracy: 0.02, "a quarter of a stride apart") }
     }
 
     func testAStrollKeepsItsFeetOnTheGroundInTheMiddleOfTheWalk() {
@@ -327,25 +340,39 @@ final class PetAnimationTests: XCTestCase {
         XCTAssertGreaterThan(planted, 100)
     }
 
-    func testTurningLeadsWithTheHeadThenTheBodyThenTheLegs() {
+    func testTurningLeadsWithTheHeadThenTheBodyThenTheLegsAndNoLegCrossesAnother() {
         let sit = PetAnimation.sit(time: 2), walker = PetAnimation.walk(phase: 0, amp: 0, time: 2)
+        // Turning from the front to the side, each of the sit's legs goes to the leg of the stand that stands where it does.
+        let (from, to) = sit.turning(to: walker)
+        XCTAssertEqual(to, walker.legs)
         func progress(_ pose: PetPose) -> (head: CGFloat, body: CGFloat, legs: CGFloat) {
             ((pose.head.x - sit.head.x) / (walker.head.x - sit.head.x), (pose.haunch.cx - sit.haunch.cx) / (walker.haunch.cx - sit.haunch.cx),
-             (pose.legs[3].foot.x - sit.legs[3].foot.x) / (walker.legs[3].foot.x - sit.legs[3].foot.x))
+             (pose.legs[3].foot.x - from[3].foot.x) / (to[3].foot.x - from[3].foot.x))
         }
         var last = (head: CGFloat(0), body: CGFloat(0), legs: CGFloat(0))
         for t in stride(from: 0.05, to: 0.95, by: 0.05) {
-            let p = progress(sit.staged(to: walker, CGFloat(t)))
+            let pose = sit.staged(to: walker, CGFloat(t)), p = progress(pose)
             XCTAssertGreaterThanOrEqual(p.head, p.body - 1e-6, "head ahead of the body at \(t)")
             XCTAssertGreaterThanOrEqual(p.body, p.legs - 1e-6, "body ahead of the legs at \(t)")
             XCTAssertGreaterThanOrEqual(p.head, last.head - 1e-6); XCTAssertGreaterThanOrEqual(p.body, last.body - 1e-6); XCTAssertGreaterThanOrEqual(p.legs, last.legs - 1e-6)
             last = p
+            // No leg crosses under the body: left to right they stand hind, hind, front, front all the way.
+            let l = pose.legs
+            XCTAssertLessThan(l.farHind.foot.x, l.nearHind.foot.x, "at \(t)"); XCTAssertLessThan(l.nearHind.foot.x, l.farFront.foot.x, "at \(t)")
+            XCTAssertLessThan(l.farFront.foot.x, l.nearFront.foot.x, "at \(t)")
+            XCTAssertLessThan(pose.distance(to: sit.staged(to: walker, CGFloat(t) - 0.05)), 2.5, "and nothing jumps at \(t)")
         }
         XCTAssertEqual(sit.staged(to: walker, 0).distance(to: sit), 0, accuracy: 1e-9)
         XCTAssertEqual(sit.staged(to: walker, 1).distance(to: walker), 0, accuracy: 1e-9)
-        // Sitting down runs the other way round: the legs settle first and the head last.
-        let down = walker.staged(to: sit, 0.4, order: .legsFirst), q = progress(down)
-        XCTAssertLessThan(q.legs, q.body); XCTAssertLessThan(q.body, q.head)
+        // Which leg is which does not show: the first step of the turn is no jump.
+        XCTAssertLessThan(sit.staged(to: walker, 0.01).distance(to: sit), 0.1)
+        // Sitting down runs the other way round: the hips first, then the front legs, and the head last.
+        let down = walker.staged(to: sit, 0.4, order: .legsFirst)
+        let (stand, seat) = walker.turning(to: sit)
+        let hips = (down.haunch.cx - sit.haunch.cx) / (walker.haunch.cx - sit.haunch.cx)
+        let front = (down.legs[3].foot.x - seat[3].foot.x) / (stand[3].foot.x - seat[3].foot.x)
+        let head = (down.head.x - sit.head.x) / (walker.head.x - sit.head.x)
+        XCTAssertLessThan(hips, front); XCTAssertLessThan(front, head)
     }
 
     func testAStrollTurnsOverMoreThanAThirdOfASecondAndNeverFlipsInAFrame() {

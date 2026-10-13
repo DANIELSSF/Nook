@@ -125,17 +125,58 @@ struct PetPose: Equatable {
         // A speck or a ball that is not there has no place: one that fades in or out does it where it is, instead of sliding in.
         if moteSize == 0 { r.mote = o.mote } else if o.moteSize == 0 { r.mote = mote }
         if ballSize == 0 { r.ball = o.ball } else if o.ballSize == 0 { r.ball = ball }
+        if t > 0, t < 1, isFrontal != o.isFrontal {
+            let (a, b) = turning(to: o)
+            r.legs = PetLegs(a.farHind.blended(to: b.farHind, t), a.farFront.blended(to: b.farFront, t), a.nearHind.blended(to: b.nearHind, t), a.nearFront.blended(to: b.nearFront, t))
+        }
         if t >= 0.5 { r.action = o.action; r.facing = o.facing }
         return r
     }
 
-    /// Largest difference between any two numbers of the poses (where a speck or ball is does not count while it is not there).
+    // MARK: Turning round
+
+    /// Whether the cat is seen from the front: its legs stand, left to right, far hind, far front, near front, near hind (the hind feet
+    /// outside the front legs on both sides: a sit, a cat held up). Seen from the side they stand hind, hind, front, front.
+    var isFrontal: Bool {
+        legs.farHind.hip.x < legs.farFront.hip.x && legs.farFront.hip.x < legs.nearFront.hip.x && legs.nearFront.hip.x < legs.nearHind.hip.x
+    }
+
+    /// The legs of this pose and of `o` for a turn between them, from the front to the side or back: the front-on pose's legs are put in
+    /// the places of the side-on pose's that stand where they do (left to right), so each goes to the nearest and none crosses under the
+    /// body on the way. Which leg is which does not show (they are drawn alike), so the picture at either end is the pose's own.
+    func turning(to o: PetPose) -> (PetLegs, PetLegs) {
+        isFrontal ? (Self.paired(legs, like: o.legs), o.legs) : (legs, Self.paired(o.legs, like: legs))
+    }
+
+    /// `a`'s legs put in the slots of `b`'s legs that stand where they do, by where their hips are from left to right.
+    static func paired(_ a: PetLegs, like b: PetLegs) -> PetLegs {
+        func rank(_ l: PetLegs, _ i: Int) -> Int {
+            var k = 0
+            for j in 0..<4 where l[j].hip.x < l[i].hip.x || (l[j].hip.x == l[i].hip.x && j < i) { k += 1 }
+            return k
+        }
+        var r = b
+        for i in 0..<4 {
+            let k = rank(a, i)
+            for j in 0..<4 where rank(b, j) == k { r[j] = a[i] }
+        }
+        return r
+    }
+
+    /// Largest difference between any two numbers of the poses (where a speck or ball is does not count while it is not there; nor which
+    /// leg is which, while the cat is turning: legs that stand where the other pose's do are compared with them).
     func distance(to o: PetPose) -> CGFloat {
         var a = self
         if moteSize == 0 || o.moteSize == 0 { a.mote = o.mote }
         if ballSize == 0 || o.ballSize == 0 { a.ball = o.ball }
         var d: CGFloat = 0
         _ = a.combined(o) { d = max(d, abs($0 - $1)); return $0 }
+        if isFrontal != o.isFrontal {
+            a.legs = Self.paired(legs, like: o.legs)
+            var e: CGFloat = 0
+            _ = a.combined(o) { e = max(e, abs($0 - $1)); return $0 }
+            d = min(d, e)
+        }
         return d
     }
 
@@ -148,10 +189,12 @@ struct PetPose: Equatable {
             max(abs(a.cx - b.cx), abs(a.cy - b.cy), abs(a.rx - b.rx), abs(a.ry - b.ry), abs(a.angle - b.angle) * 8)
         }
         @inline(__always) func limb(_ a: PetLimb, _ b: PetLimb) -> CGFloat { max(gap(a.hip, b.hip), gap(a.knee, b.knee), gap(a.foot, b.foot), abs(a.width - b.width) * 0.5) }
+        @inline(__always) func limbs(_ a: PetLegs, _ b: PetLegs) -> CGFloat { max(limb(a.farHind, b.farHind), limb(a.farFront, b.farFront), limb(a.nearHind, b.nearHind), limb(a.nearFront, b.nearFront)) }
         var d = abs(x - o.x) / max(scale, 0.01)
         d = max(d, abs(y - o.y), oval(haunch, o.haunch), oval(chest, o.chest), gap(head, o.head), gap(look, o.look))
         d = max(d, abs(headScale - o.headScale) * 9.3, abs(tilt - o.tilt) * 9.3, abs(earL - o.earL) * 8, abs(earR - o.earR) * 8, abs(eyes - o.eyes) * 1.6)
-        d = max(d, limb(legs.farHind, o.legs.farHind), limb(legs.farFront, o.legs.farFront), limb(legs.nearHind, o.legs.nearHind), limb(legs.nearFront, o.legs.nearFront))
+        // Which leg is which does not show while the cat turns round: legs that stand where the other pose's do are compared with them.
+        d = max(d, isFrontal != o.isFrontal ? min(limbs(legs, o.legs), limbs(Self.paired(legs, like: o.legs), o.legs)) : limbs(legs, o.legs))
         d = max(d, gap(tail.p0, o.tail.p0), gap(tail.c1, o.tail.c1) * 0.5, gap(tail.c2, o.tail.c2) * 0.5, gap(tail.p3, o.tail.p3), abs(tail.width - o.tail.width) * 0.5)
         if ballSize > 0 || o.ballSize > 0 { d = max(d, ballSize > 0 && o.ballSize > 0 ? gap(ball, o.ball) : 0, abs(ballSize - o.ballSize) * 2.3) }
         if moteSize > 0 || o.moteSize > 0 { d = max(d, moteSize > 0 && o.moteSize > 0 ? gap(mote, o.mote) : 0, abs(moteSize - o.moteSize) * 1.4) }
@@ -190,6 +233,8 @@ struct PetPose: Equatable {
         func add(_ r: CGRect) { rect = rect.union(r) }
         func dot(_ p: CGPoint, _ r: CGFloat) { add(CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)) }
         for o in [haunch, chest] { add(CGRect(x: o.cx - o.halfWidth, y: o.cy - o.halfHeight, width: 2 * o.halfWidth, height: 2 * o.halfHeight)) }
+        // The body's back and belly lines run between the two ovals; a back rounded out over them can rise a little above both.
+        add(PetTorso(haunch, chest).linesBounds)
         // Head outline: ellipse extremes plus ear tips, rotated with the head.
         for c in [CGPoint(x: -9.3, y: 0), CGPoint(x: 9.3, y: 0), CGPoint(x: 0, y: -7.4), CGPoint(x: 0, y: 7.4), CGPoint(x: -7.5, y: 12.2), CGPoint(x: 7.5, y: 12.2)] {
             let x = c.x * headScale, y = c.y * headScale

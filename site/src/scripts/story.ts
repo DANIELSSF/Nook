@@ -168,7 +168,7 @@ class LedgeCat {
     this.amp += (stride - this.amp) * (1 - Math.exp(-dt * 6));
 
     const sitting = A.sit(now, alert);
-    let pose = fromSit(sitting, A.walk((this.walked / (20 * unit)) * 2 * Math.PI, this.amp, now), A.smooth(this.up));
+    let pose = fromSit(sitting, A.walk((this.walked / (A.STRIDE_LENGTH * unit)) * 2 * Math.PI, this.amp, now), A.smooth(this.up));
     let life = 1 - 0.65 * this.up;
 
     // The night: it lies down the same way it gets up, and then curls up as the app's cat does when it naps, in the nap's own

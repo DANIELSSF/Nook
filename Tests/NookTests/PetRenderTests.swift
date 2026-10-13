@@ -220,7 +220,7 @@ final class PetRenderTests: XCTestCase {
             row("susto", sample(PetAnimation.startleLength) { PetAnimation.startle(u: $0, time: 3) }),
             row("cola", sample(PetAnimation.tailPlayLength) { PetAnimation.tailPlay(u: $0, time: 3) }),
             row("hogaza", sample(14) { PetAnimation.loafing(u: $0, length: 14, time: 3, variant: 1) }),
-            row("caza", sample(PetAnimation.huntLength(variant: 0)) { PetAnimation.hunt(u: $0, length: PetAnimation.huntLength(variant: 0), time: 3, variant: 0, shift: -1.2, lunge: 1.2) }),
+            row("caza", sample(PetAnimation.huntLength(variant: 0)) { PetAnimation.hunt(u: $0, length: PetAnimation.huntLength(variant: 0), time: 3, variant: 0, shift: -1.2) }),
             row("estirarse", sample(7) { PetAnimation.perform(.stretch, u: $0, length: 7, time: 3, alert: 0, shift: -0.5) }),
         ]
         rows = rows.filter { !$0.isEmpty }

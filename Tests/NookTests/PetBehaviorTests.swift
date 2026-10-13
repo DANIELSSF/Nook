@@ -130,7 +130,8 @@ final class PetBehaviorTests: XCTestCase {
         XCTAssertLessThan(plain.head.y, rest.head.y - 8, "down on its belly")
         XCTAssertLessThan(plain.eyes, 0.95); XCTAssertEqual(plain.action, .loaf)
         var plainMax: CGFloat = 0
-        for u in times(12) { let p = PetAnimation.loafing(u: u, length: 12, time: 5, variant: 0); plainMax = max(plainMax, p.legs[1].foot.y, p.legs[3].foot.y) }
+        // Lying there (the lying down and the getting up turn the legs round, from the sit's to the loaf's).
+        for u in times(12) where u > 2 && u < 10 { let p = PetAnimation.loafing(u: u, length: 12, time: 5, variant: 0); plainMax = max(plainMax, p.legs[1].foot.y, p.legs[3].foot.y) }
         XCTAssertLessThan(plainMax, 3.1, "no kneading in the plain loaf")
         var far = [CGFloat](), near = [CGFloat]()
         for u in stride(from: 6.0, through: 12, by: 1.0 / 30) {

@@ -20,6 +20,39 @@ export const bump = (t: number, a: number, b: number): number => {
   const s = Math.sin(((t - a) / (b - a)) * Math.PI);
   return s * s;
 };
+/** Leaves at full speed and slows to a stop over 0...1: a burst (a launch, the sweep after a strike). */
+export const easeOut = (t: number): number => { const c = Math.min(1, Math.max(0, t)); return 1 - (1 - c) * (1 - c); };
+/** Starts from rest and arrives at full speed over 0...1: a strike, fastest as it lands. */
+export const easeIn = (t: number): number => { const c = Math.min(1, Math.max(0, t)); return c * c; };
+/** A twitch over `a...b`: out, back past where it was and home again, starting and ending at rest (an ear, the tip of a tail). */
+export const twitch = (t: number, a: number, b: number): number => {
+  if (!(t > a && t < b)) return 0;
+  const s = (t - a) / (b - a);
+  return Math.sin(2 * Math.PI * s) * Math.sin(Math.PI * s);
+};
+/**
+ * A smooth path through `(time, value)` keys: it eases out of the first and into the last, passes the ones in between without stopping,
+ * stops only where it turns back, and never overshoots a key (a monotone cubic, Fritsch and Carlson's; the app's `PetAnimation.spline`).
+ */
+export function spline(u: number, keys: [number, number][]): number {
+  const first = keys[0], last = keys[keys.length - 1];
+  if (!first || !last) return 0;
+  if (u <= first[0]) return first[1];
+  if (u >= last[0]) return last[1];
+  let i = 1;
+  while (i < keys.length - 1 && u > keys[i]![0]) i++;
+  const slope = (k: number) => (keys[k + 1]![1] - keys[k]![1]) / (keys[k + 1]![0] - keys[k]![0]);
+  const tangent = (k: number): number => {
+    if (!(k > 0 && k < keys.length - 1)) return 0;
+    const a = slope(k - 1), b = slope(k);
+    if (!(a * b > 0)) return 0;
+    const ha = keys[k]![0] - keys[k - 1]![0], hb = keys[k + 1]![0] - keys[k]![0];
+    return (3 * (ha + hb)) / ((2 * hb + ha) / a + (hb + 2 * ha) / b);
+  };
+  const a = keys[i - 1]!, b = keys[i]!, h = b[0] - a[0], s = (u - a[0]) / h;
+  const m0 = tangent(i - 1) * h, m1 = tangent(i) * h, s2 = s * s, s3 = s2 * s;
+  return (2 * s3 - 3 * s2 + 1) * a[1] + (s3 - 2 * s2 + s) * m0 + (3 * s2 - 2 * s3) * b[1] + (s3 - s2) * m1;
+}
 /** A ring-down: a sine at `hz` that dies away at `decay` a second, starting at `t0`. */
 export const ringing = (t: number, t0: number, hz: number, decay: number): number => {
   if (t <= t0) return 0;
@@ -109,37 +142,47 @@ export function sit(t: number, alert = 0): Pose {
 
 /** Half the foot travel of a stride, in rig units. */
 export const HALF_STRIDE = 5;
+/** The share of a stride each foot spends on the ground. */
+export const DUTY = 0.62;
+/** How far the body travels in one stride (`2 * pi` of phase), in rig units: a foot on the ground slides back by exactly that. */
+export const STRIDE_LENGTH = (2 * HALF_STRIDE) / DUTY;
 
 /**
  * One foot at gait angle `ph`: how far it is along its stride (-1 back ... 1 forward) and how high it is lifted (0...1). A foot
- * is down for half the cycle and slides back along a straight line, so seen from the ground it stays still.
+ * is down for `DUTY` of the cycle and slides back along a straight line, so seen from the ground it stays still; the rest of the
+ * cycle it swings forward in an arc. Phase 0 is the middle of the swing.
  */
 export function gait(ph: number): { swing: number; lift: number } {
-  let p = (ph - Math.PI / 2) / (2 * Math.PI);
+  let p = ph / (2 * Math.PI) + (1 + DUTY) / 2;
   p -= Math.floor(p);
-  if (p < 0.5) return { swing: 1 - 4 * p, lift: 0 };
-  const s = (p - 0.5) * 2;
+  if (p < DUTY) return { swing: 1 - (2 * p) / DUTY, lift: 0 };
+  const s = (p - DUTY) / (1 - DUTY);
   return { swing: -1 + 2 * smooth(s), lift: Math.sin(s * Math.PI) };
 }
 
-/** Four-legged stand/walk. `phase` is the gait angle, `amp` scales the stride (0 stands still). */
+/**
+ * Four-legged stand/walk. `phase` is the gait angle, `amp` scales the stride (0 stands still). A cat walks in a lateral sequence: a
+ * hind foot, then the front foot on the same side a quarter of a stride later, then the other hind foot and the other front one, each
+ * foot down for most of the stride. The body rides over the planted legs: the hips rise as a hind leg passes under them and the
+ * shoulders as a front leg does, a quarter stride apart; the head stays steadier than either, and the tail's tip lags its middle.
+ */
 export function walk(phase: number, amp: number, t: number): Pose {
   const p = basePose();
   p.action = 'walk';
-  const bob = amp * Math.cos(2 * phase) * 0.45;
-  p.haunch = oval(-6.6, 12.4 + bob, 7.6, 5.4); p.chest = oval(4.4, 12.9 + bob, 7.3, 5.8);
-  p.head = v(12.4, 19.4 + bob * 1.4); p.headScale = 0.82;
+  const hips = amp * Math.cos(2 * phase) * 0.4, shoulders = -amp * Math.cos(2 * phase) * 0.32;
+  p.haunch = oval(-6.6, 12.4 + hips, 7.6, 5.4); p.chest = oval(4.4, 12.9 + shoulders, 7.3, 5.8);
+  p.head = v(12.4, 19.4 + shoulders * 0.3); p.headScale = 0.82;
   p.look = v(1.3, -0.2);
-  // Hip x, gait phase offset (diagonal pairs move together), knee bend.
-  const setup: [number, number, number][] = [[-9.6, 0, -1.8], [6.0, Math.PI, 1.2], [-6.8, Math.PI, -1.8], [8.6, 0, 1.2]];
+  // Hip x, gait phase offset (near hind, near front a quarter later, far hind, far front), knee bend, whether it hangs from the hips.
+  const setup: [number, number, number, boolean][] = [[-9.6, -Math.PI, -1.8, true], [6.0, (-3 * Math.PI) / 2, 1.2, false], [-6.8, 0, -1.8, true], [8.6, -Math.PI / 2, 1.2, false]];
   setup.forEach((s, i) => {
     const step = gait(phase + s[1]);
     const swing = amp * HALF_STRIDE * step.swing, lift = amp * 3.2 * step.lift;
-    const hip = v(s[0], 8.4 + bob), foot = v(s[0] + swing, lift);
+    const hip = v(s[0], 8.4 + (s[3] ? hips : shoulders)), foot = v(s[0] + swing, lift);
     p.legs[i as 0 | 1 | 2 | 3] = limb(hip, v((hip.x + foot.x) / 2 + s[2] * (1 + lift / 4), (hip.y + foot.y) / 2), foot, 3.1);
   });
-  const sway = Math.sin(t * 2.2);
-  p.tail = { p0: v(-12.5, 14), c1: v(-18, 13), c2: v(-19.5 + sway, 19), p3: v(-16 + sway * 1.5, 25 + sway), width: 3.5 };
+  const sway = Math.sin(t * 2.2), tip = Math.sin(t * 2.2 - 0.9);
+  p.tail = { p0: v(-12.5, 14 + hips), c1: v(-18, 13 + hips * 0.6), c2: v(-19.5 + sway, 19), p3: v(-16 + tip * 1.5, 25 + tip), width: 3.5 };
   return p;
 }
 
@@ -178,6 +221,44 @@ export function arch(t: number, tremble = 0): Pose {
 }
 
 /**
+ * The middle of a cat's stretch, between the bow and the arch: it has come forward out of the bow onto its front legs, the middle of
+ * its back let down and its chin up, and one hind leg (the near one) stretched out straight behind it. `tremble` is the shiver of
+ * holding it.
+ */
+export function rearStretch(t: number, tremble = 0): Pose {
+  const p = walk(0, 0, t);
+  p.action = 'stretch';
+  p.haunch = oval(-4.0, 12.2, 7.6, 5.3, 0.08);
+  p.chest = oval(6.8, 12.6, 7.3, 5.8, 0.02);
+  p.head = v(13.6, 19.8); p.headScale = 0.83;
+  p.tilt = 0.12; p.eyes = 0.3; p.earL = 0.12; p.earR = 0.12; p.look = v(1.2, 0.5);
+  p.legs[1] = limb(v(8.4, 9.4), v(10.2, 4.8), v(11.6, 0.2), 3.1);
+  p.legs[3] = limb(v(10.6, 9.4), v(12.2, 4.8), v(13.6, 0.2), 3.1);
+  p.legs[0] = limb(v(-6.8, 9.6), v(-8.0, 5.0), v(-6.4, 0.2), 3.1);
+  p.legs[2] = limb(v(-4.4, 9.6), v(-9.2, 7.4 + tremble * 0.2), v(-14.2, 4.2 + tremble * 0.35), 3.1);
+  p.tail = { p0: v(-10.2, 14.4), c1: v(-14.6, 17.6), c2: v(-16.0, 22.8), p3: v(-12.6, 27.0), width: 3.5 };
+  return p;
+}
+
+/**
+ * The whole stretch of a cat that has got up, beat by beat (the app's `PetAnimation.stretching`): from the stand it `bows`, comes
+ * forward out of it with a hind leg stretched out behind (`reaches`), `arches` its back high (`shiver` is the tremble at the top of it)
+ * and `stands` again. Each beat goes from where the one before ended, so no two are ever mixed with a third: a front paw that has to
+ * move steps (it lifts as it goes), and the tail swings from one beat to the next, curling up by half as it swings.
+ */
+export function stretching(t: number, bows: number, reaches: number, arches: number, stands: number, shiver = 0, tremble = 0): Pose {
+  const stand = walk(0, 0, t), bowing = bow(t), reaching = rearStretch(t, tremble), hooked = arch(t, shiver);
+  const p = blend(blend(blend(blend(stand, bowing, bows), reaching, reaches), hooked, arches), stand, stands);
+  p.tail = swungTail(swungTail(swungTail(swungTail(stand.tail, bowing.tail, bows, 0.5), reaching.tail, reaches, 0.5), hooked.tail, arches, 0.5), stand.tail, stands, 0.5);
+  // The front paws step back under the shoulders, the far one and then the near one.
+  for (const k of [bows, reaches, arches]) {
+    if (!(k > 0 && k < 1)) continue;
+    p.legs[1].foot.y += 1.2 * bump(k, 0, 0.6); p.legs[3].foot.y += 1.2 * bump(k, 0.35, 0.95);
+  }
+  return p;
+}
+
+/**
  * Lying down, seen from the side and facing right. `rest` 1 closes the eyes and tucks the head; `curl` 1 draws the whole cat in on
  * itself, the tail round the front of the face. `asleep` 1 slows the breathing right down.
  */
@@ -199,28 +280,90 @@ export function loaf(rest: number, curl: number, t: number, asleep = 0): Pose {
   return p;
 }
 
-/** Sitting and batting a bouncing ball with the near front paw. */
-export function play(t: number, intensity: number, alert = 0): Pose {
+/** The ball game's beat: the first swat lands `PLAY_FIRST` seconds into it, and one more every `PLAY_EVERY`. */
+export const PLAY_FIRST = 1.1, PLAY_EVERY = 1.3;
+/** Where the ball rests, in reach of the near paw. */
+export const BALL_REST = v(17.6, 2.3);
+
+/** The swat that `u` is nearest to: how long since it landed (negative before it), from the first one on. */
+export function swatAt(u: number): number {
+  const k = Math.max(0, Math.round((u - PLAY_FIRST) / PLAY_EVERY));
+  return u - (PLAY_FIRST + k * PLAY_EVERY);
+}
+
+/**
+ * Where the ball is `u` seconds into the game. It rolls in and settles in reach; from each swat it flies up and out in an arc, comes
+ * down, and bounces lower and lower back to where the paw can reach it, as a ball does. It starts to move at the paw's contact, never
+ * before.
+ */
+export function ball(u: number): V2 {
+  if (u < PLAY_FIRST) {
+    const k = ramp(u, 0.25, 1.0);
+    return v(BALL_REST.x + 3.2 * (1 - k), BALL_REST.y);
+  }
+  const since = (u - PLAY_FIRST) % PLAY_EVERY;
+  // Three arcs, each a parabola under the same pull: up 10 units over 0.62 s, then 1.85 over 0.266 s, then 0.34 over 0.115 s.
+  let y = 0, start = 0;
+  for (const [length, height] of [[0.62, 10], [0.266, 1.85], [0.115, 0.34]] as const) {
+    if (since < start + length) { const s = (since - start) / length; y = height * 4 * s * (1 - s); break; }
+    start += length;
+  }
+  const out = Math.sin(Math.PI * Math.min(1, since / 1.0));
+  return v(BALL_REST.x + 1.8 * out, BALL_REST.y + y);
+}
+
+/**
+ * Sitting and playing with a ball with the near front paw, `u` seconds into the game (`intensity` eases it in and out). Each swat has
+ * its beats: the paw is held ready, cocks up and back, strikes down fast onto the ball (fastest as it lands), sweeps on with it and
+ * comes back; the cat leans into the strike, its eyes and then its head follow the ball, and its tail lashes. The ball moves on the
+ * paw's contact.
+ */
+export function play(t: number, intensity: number, alert = 0, uIn?: number): Pose {
+  const u = uIn ?? t, i = intensity;
   const p = sit(t, alert);
   p.action = 'play';
-  const hop = Math.abs(Math.sin(t * 3.6));
-  const swat = Math.max(0, Math.sin(t * 3.6 - 0.9));
-  p.ball = v(18.5 + 0.8 * Math.sin(t * 1.8), 2.2 + 8.5 * hop * intensity); p.ballSize = intensity;
-  p.look.x += 1.6 * intensity; p.look.y += (0.9 - 1.5 * hop) * intensity; p.tilt += -0.08 * intensity + 0.06 * swat * intensity;
-  p.legs[3] = lerpLimb(p.legs[3], limb(v(4.2, 9.5), v(10 + 2 * swat, 8), v(9.5 + 4 * swat, 8.3 + 5 * swat), 3.4), intensity);
-  p.chest.cx += 0.8 * intensity; p.head.x += 0.8 * intensity;
-  const wag = Math.sin(t * 7.5) * intensity;
-  p.tail.p3.y += 2 * wag; p.tail.p3.x += 1.5 * wag; p.tail.c2.y += 2.5 * wag;
+  const at = ball(u), seen = ball(u - 0.12);
+  p.ball = at; p.ballSize = i;
+  const ready = limb(v(4.2, 9.4), v(9.0, 7.6), v(11.2, 5.2), 3.4);
+  const cocked = limb(v(4.2, 9.8), v(8.6, 11.2), v(10.2, 13.4), 3.4);
+  const contact = limb(v(4.6, 9.2), v(10.8, 6.6), v(15.0, 3.2), 3.4);
+  const swept = limb(v(4.6, 9.6), v(11.2, 9.0), v(15.2, 8.2), 3.4);
+  const tau = swatAt(u);
+  let paw = ready;
+  if (tau >= -0.3 && tau < 0.32) {
+    if (tau < -0.09) paw = lerpLimb(ready, cocked, ramp(tau, -0.3, -0.09));
+    else if (tau < 0) paw = lerpLimb(cocked, contact, easeIn((tau + 0.09) / 0.09));
+    else if (tau < 0.09) paw = lerpLimb(contact, swept, easeOut(tau / 0.09));
+    else paw = lerpLimb(swept, ready, ramp(tau, 0.09, 0.32));
+  }
+  p.legs[3] = lerpLimb(p.legs[3], paw, i);
+  // It draws back a little as it cocks, leans into the strike, and comes back.
+  const lean = spline(tau, [[-0.3, 0], [-0.09, -0.3], [0, 0.7], [0.12, 0.6], [0.5, 0]]);
+  p.chest.cx += (0.6 + lean) * i; p.head.x += (0.7 + 0.8 * lean) * i; p.chest.cy -= 0.3 * Math.max(0, lean) * i;
+  p.legs[3].hip.x += 0.4 * lean * i;
+  // The eyes are on the ball, the head a beat behind them; the ears are forward.
+  const high = (at.y - BALL_REST.y) / 10, late = (seen.y - BALL_REST.y) / 10;
+  p.look.x += 1.5 * i; p.look.y += (-0.6 + 1.6 * high) * i;
+  p.head.y += 1.1 * late * i; p.tilt += (-0.07 - 0.05 * late) * i;
+  p.earL -= 0.14 * i; p.earR -= 0.18 * i; p.eyes *= 1 + 0.1 * i;
+  // The tail lashes, a wave from its middle to its tip.
+  const lash = Math.sin(u * 6), tip = Math.sin(u * 6 - 0.9);
+  p.tail.c2.y += 1.6 * lash * i; p.tail.p3.y += 2.2 * tip * i; p.tail.p3.x += 1.2 * tip * i;
   return p;
 }
 
-/** Sitting with one paw raised, waving. */
-export function wave(t: number, amount: number, alert = 0): Pose {
+/**
+ * Sitting with one paw raised, waving, `u` seconds into the wave (the clock when there is no wave to time it by). The paw waves from the
+ * elbow: the forearm leads and the paw follows it a beat later, and the head tips a little with it.
+ */
+export function wave(t: number, amount: number, alert = 0, uIn?: number): Pose {
   const p = sit(t, alert);
   p.action = 'wave';
-  const w = Math.sin(t * 8);
-  p.legs[3] = lerpLimb(p.legs[3], limb(v(4.2, 11), v(9 + 0.5 * w, 16), v(10.5 + 1.8 * w, 21), 3.4), amount);
-  p.tilt += -0.1 * amount; p.eyes = Math.min(p.eyes, 1 - 0.25 * amount);
+  const local = uIn ?? t;
+  const w = Math.sin(local * 8), tip = Math.sin(local * 8 - 0.7);
+  p.legs[3] = lerpLimb(p.legs[3], limb(v(4.2, 11), v(9 + 0.6 * w, 16), v(10.5 + 1.9 * tip, 21 - 0.4 * Math.abs(tip)), 3.4), amount);
+  p.tilt += (-0.1 - 0.03 * w) * amount; p.eyes = Math.min(p.eyes, 1 - 0.25 * amount);
+  p.chest.cx += 0.3 * amount; p.head.x += 0.25 * amount;
   return p;
 }
 
@@ -318,17 +461,19 @@ export function groom(u: number, t: number, alert = 0, variant = 0): Pose {
     p.headScale -= 0.02 * dip;
     return p;
   }
-  const lick = u >= 0.5 && u < 1.05 ? Math.sin(((u - 0.5) / 0.55) * 2 * Math.PI * 2) : 0;
+  // Two licks at the mouth (the paw comes up to the tongue as the head bobs down to it), then two slow wipes up the cheek and back.
+  const lick = bump(u, 0.5, 0.775) + bump(u, 0.775, 1.05);
   const w = (u - 1.05) / 0.55;
   const wipe = w >= 0 && w < 2 ? (1 - Math.cos(w * 2 * Math.PI)) / 2 : 0;
   const mouth = limb(v(4.6, 11.4), v(9.4, 12.6), v(3.6, 15.8), 3.4);
   const arm = lerpLimb(p.legs[3], mouth, raise);
-  arm.foot.x += 6.0 * wipe * raise; arm.foot.y += 6.2 * wipe * raise;
+  // The wipe carries the paw up round the outside of the cheek, in an arc; the elbow follows, and the head leans into the paw.
+  arm.foot.x += (6.0 * wipe + 1.0 * Math.sin(Math.PI * wipe)) * raise; arm.foot.y += 6.2 * wipe * raise;
   arm.knee.x += 1.4 * wipe * raise; arm.knee.y += 2.2 * wipe * raise;
   arm.foot.y += 0.35 * lick * raise;
   p.legs[3] = arm;
-  p.tilt += -0.13 * raise - 0.04 * wipe * raise;
-  p.head.x += 0.7 * raise; p.head.y += -0.55 * raise - 0.35 * Math.max(0, lick) * raise;
+  p.tilt += -0.13 * raise - 0.08 * wipe * raise;
+  p.head.x += (0.7 + 0.4 * wipe) * raise; p.head.y += (-0.55 - 0.3 * wipe) * raise - 0.35 * lick * raise;
   p.eyes = Math.min(p.eyes, 1 - 0.8 * raise);
   p.earL += 0.1 * raise; p.earR += 0.2 * raise;
   p.chest.cx += 0.3 * raise;
@@ -354,7 +499,7 @@ export function glance(u: number, t: number, alert = 0, variant = 0): Pose {
       p.head.x += 0.9 * dir * h; p.tilt += -0.1 * dir * h;
       if (dir > 0) { p.earR -= 0.4 * ears; p.earL += 0.12 * ears; } else { p.earL -= 0.4 * ears; p.earR += 0.12 * ears; }
       p.eyes *= 1 + 0.08 * ears;
-      const flick = Math.sin(Math.max(0, Math.min(1, (u - 1.3) / 0.45)) * Math.PI * 2) * ears;
+      const flick = twitch(u, 1.3, 1.75) * ears;
       if (dir > 0) p.earR -= 0.12 * flick; else p.earL -= 0.12 * flick;
       break;
     }
@@ -367,11 +512,14 @@ export function glance(u: number, t: number, alert = 0, variant = 0): Pose {
       break;
     }
     default: {
+      // The ears turn first, the eyes go, and the head follows them a beat later.
+      const ears = keyframe(u, [[0, 0], [0.35, 1], [1.3, 1], [1.85, -1], [2.8, -1], [GLANCE_LENGTH, 0]]);
       const side = keyframe(u, [[0, 0], [0.45, 1], [1.4, 1], [1.95, -1], [2.9, -1], [GLANCE_LENGTH, 0]]);
+      const head = keyframe(u, [[0, 0], [0.6, 1], [1.52, 1], [2.1, -1], [3.0, -1], [GLANCE_LENGTH, 0]]);
       p.look.x += 1.9 * side; p.look.y += 0.2 * Math.abs(side);
-      p.head.x += 0.9 * side;
-      p.tilt += -0.08 * side;
-      p.earR -= 0.14 * Math.max(0, side); p.earL -= 0.14 * Math.max(0, -side);
+      p.head.x += 0.9 * head;
+      p.tilt += -0.08 * head;
+      p.earR -= 0.14 * Math.max(0, ears); p.earL -= 0.14 * Math.max(0, -ears);
       p.eyes *= 1 + 0.06 * Math.abs(side);
     }
   }
@@ -400,12 +548,12 @@ export function peek(u: number, t: number, ledge: number, shift = 3.5): Pose {
   p.look.y += -1.0 * ducking;
   p.eyes *= 1 + 0.1 * earsUp;
   p.earL -= 0.1 * earsUp; p.earR -= 0.1 * earsUp;
-  if (u > 1.5 && u < 2.0) { const k = Math.sin(((u - 1.5) / 0.5) * Math.PI * 3); p.earL -= 0.3 * k; p.earR += 0.15 * k; }
+  if (u > 1.5 && u < 2.0) { const q = (u - 1.5) / 0.5, k = Math.sin(q * Math.PI * 3) * Math.sin(q * Math.PI); p.earL -= 0.3 * k; p.earR += 0.15 * k; }
   const around = ramp(u, 2.7, 3.0) * (1 - ramp(u, 3.5, 3.9));
   const sweep = Math.sin(((u - 2.7) / 1.0) * Math.PI * 2);
   p.look.x += 1.8 * sweep * around; p.head.x += 1.0 * sweep * around; p.tilt += -0.1 * sweep * around;
   const paw = ramp(u, 2.8, 3.1) * (1 - ramp(u, 3.65, 3.95));
-  const tap = u >= 3.1 && u < 3.7 ? Math.sin(((u - 3.1) / 0.3) * Math.PI) : 0;
+  const tap = bump(u, 3.1, 3.4) + bump(u, 3.4, 3.7);
   const edge = ledge - heights.face;
   const hook = limb(v(4.4, 11), v(8.8, edge + 1.5), v(10.6, edge + 3.4 + 1.5 * tap), 3.6);
   p.legs[3] = lerpLimb(p.legs[3], hook, paw * face);
@@ -444,25 +592,29 @@ export function celebrate(u: number, t: number, hop = 4, style: Cheer = 'hop'): 
 function hopping(u: number, t: number, hops: [number, number][], end: number): Pose {
   let p = sit(t);
   p.action = 'celebrate';
-  let squashing = 0, landed = 0, lift = 0, air = 0;
+  let squashing = 0, landed = 0, lift = 0, air = 0, arms = 0, stretch = 0;
   for (const [start, height] of hops) {
     const local = u - start;
     const crouch = ramp(local, 0, 0.22) * (1 - ramp(local, 0.22, 0.31));
     const flight = (local - 0.30) / 0.46;
     const flying = flight > 0 && flight < 1 ? 4 * flight * (1 - flight) : 0;
-    const landing = ramp(local, 0.74, 0.86) * (1 - ramp(local, 0.86, 1.12));
+    // The landing goes on at the speed of the fall: the legs give and push back.
+    const landing = easeOut((local - 0.76) / 0.1) * (1 - ramp(local, 0.86, 1.12));
     squashing += crouch + 1.25 * landing; landed += landing; lift += height * flying; air = Math.max(air, flying);
+    // The push stretches the body up as it leaves the ground; the paws go up with it and come down before it lands.
+    stretch = Math.max(stretch, bump(local, 0.22, 0.56));
+    arms = Math.max(arms, ramp(local, 0.24, 0.46) * (1 - ramp(local, 0.54, 0.84)));
   }
   const joy = ramp(u, 0.26, 0.4) * (1 - ramp(u, end - 0.3, end - 0.05));
   p = squash(p, Math.min(1.4, squashing), 0.18 + 0.1 * Math.min(1, landed));
   p.y = lift;
-  p.chest.ry += 0.7 * air; p.head.y += 1.1 * air;
+  p.chest.ry += 0.7 * stretch; p.head.y += 1.1 * stretch;
   p.eyes *= 1 - 0.78 * joy;
   p.earL -= 0.2 * joy; p.earR -= 0.2 * joy;
   p.tilt += -0.08 * joy;
   p.tail.p3.y += 5 * joy; p.tail.c2.y += 3 * joy; p.tail.p3.x += 1.2 * joy;
-  p.legs[3] = lerpLimb(p.legs[3], limb(v(4.2, 11), v(8.4, 12.4), v(11.6, 17.2), 3.3), air);
-  p.legs[1] = lerpLimb(p.legs[1], limb(v(-4.2, 11), v(-8.4, 12.4), v(-11.6, 17.2), 3.3), air);
+  p.legs[3] = lerpLimb(p.legs[3], limb(v(4.2, 11), v(8.4, 12.4), v(11.6, 17.2), 3.3), arms);
+  p.legs[1] = lerpLimb(p.legs[1], limb(v(-4.2, 11), v(-8.4, 12.4), v(-11.6, 17.2), 3.3), arms);
   for (const i of [0, 2] as const) p.legs[i].foot.y -= 1.2 * air;
   const last = hops[hops.length - 1];
   const glint = (last ? last[0] : 0) + 0.4;
@@ -478,13 +630,15 @@ export function land(u: number, t: number, drop = 9): Pose {
   const s = Math.min(1, Math.max(0, u / fall));
   const air = lifted(t);
   air.tail = sit(t).tail;
-  let p = blend(air, sit(t), ramp(u, 0.1, fall));
+  // Falling, it gathers its legs under it: they are on the ground before the body is.
+  let p = blend(air, sit(t), ramp(u, 0.05, fall - 0.04));
   p.action = 'land';
   p.y = drop * (1 - s * s);
-  const impact = ramp(u, fall, fall + 0.1) * (1 - ramp(u, fall + 0.1, fall + 0.36));
+  // The landing takes the fall into a squash at the speed it came down (the legs give), and lets it out again.
+  const impact = easeOut((u - fall) / 0.09) * (1 - ramp(u, fall + 0.09, fall + 0.36));
   p = squash(p, 1.2 * impact, 0.26);
   if (u > fall && u < fall + 0.2) p.eyes *= 1 - 0.85 * Math.sin(((u - fall) / 0.2) * Math.PI);
-  if (u > fall + 0.14 && u < fall + 0.42) p.y += 0.8 * Math.sin(((u - fall - 0.14) / 0.28) * Math.PI);
+  p.y += 0.8 * bump(u, fall + 0.12, fall + 0.44);
   return p;
 }
 
@@ -498,7 +652,8 @@ export function yawn(u: number, t: number): Pose {
   const open = ramp(u, 0.55, 1.2) * (1 - ramp(u, 2.3, 2.95));
   const lids = ramp(u, 0.62, 1.1) * (1 - ramp(u, 2.55, 3.2));
   const tremble = open * Math.sin(u * 46) * ramp(u, 1.35, 1.7) * (1 - ramp(u, 2.1, 2.4));
-  p.mouth = open * (0.95 + 0.05 * Math.sin(u * 5));
+  // It shuts its mouth with a little smack of the lips once the yawn is over.
+  p.mouth = open * (0.95 + 0.05 * Math.sin(u * 5)) + 0.12 * bump(u, 3.0, 3.22);
   p.head.y += 1.3 * open + 0.4 * inhale + 0.12 * tremble;
   p.headScale += 0.035 * open;
   p.eyes *= 1 - 0.94 * lids;
@@ -518,11 +673,13 @@ export function scratch(u: number, t: number): Pose {
   const d = SCRATCH_LENGTH;
   const up = ramp(u, 0, 0.55) * (1 - ramp(u, d - 0.95, d - 0.4));
   const stroke = ramp(u, 0.5, 0.75) * (1 - ramp(u, d - 1.2, d - 0.95));
-  const s = Math.sin(u * 58);
-  const target = limb(v(6.8, 5.4), v(14.6, 9.2), v(10.6 + 1.1 * s * stroke, 17.2 + 1.5 * s * stroke), 3.7);
+  const s = Math.sin(u * 52);
+  const target = limb(v(6.6, 6.4), v(12.4, 9.6), v(10.4 + 1.0 * s * stroke, 16.0 + 1.2 * s * stroke), 3.7);
   p.legs[2] = lerpLimb(p.legs[2], target, up);
-  p.tilt += -0.3 * up + 0.025 * s * stroke;
-  p.head.x += 1.5 * up; p.head.y -= 0.9 * up;
+  // The head tips and comes down to meet the foot, a little ahead of it.
+  const lean = ramp(u, 0, 0.45) * (1 - ramp(u, d - 0.95, d - 0.4));
+  p.tilt += -0.34 * lean + 0.025 * s * stroke;
+  p.head.x += 1.5 * lean; p.head.y -= 1.3 * lean;
   p.eyes *= 1 - 0.8 * up;
   p.earR += 0.3 * up; p.earL -= 0.06 * up;
   p.chest.cx += -0.6 * up + 0.35 * s * stroke;
@@ -542,7 +699,7 @@ export function startle(u: number, t: number, variant = 0): Pose {
   const d = STARTLE_LENGTH;
   const flight = u / 0.34;
   const air = flight > 0 && flight < 1 ? 4 * flight * (1 - flight) : 0;
-  const landing = ramp(u, 0.3, 0.42) * (1 - ramp(u, 0.42, 0.8));
+  const landing = easeOut((u - 0.34) / 0.08) * (1 - ramp(u, 0.42, 0.8));
   const alarm = ramp(u, 0, 0.1) * (1 - ramp(u, 1.2, 2.0));
   const freeze = ramp(u, 0.35, 0.7) * (1 - ramp(u, 1.7, 2.3));
   const puff = ramp(u, 0, 0.12) * (1 - ramp(u, 1.1, 2.5));
@@ -564,39 +721,56 @@ export function startle(u: number, t: number, variant = 0): Pose {
 
 export const TAILPLAY_LENGTH = 3.6;
 
-/** The tail comes round to the front of the feet; the cat looks down at it, its tip flicking, and swats at it twice; the tail whips back out of reach and the cat looks innocent. */
+/**
+ * The tail comes round to the front of the feet, a wave from its base to its tip; the cat looks down at it, its tip flicking, and swats
+ * at it twice with the near paw: each swat cocks the paw up and back, strikes down fast, and on the paw's contact the tip jumps out from
+ * under it and swings; after the second the tail whips back out of reach and the cat looks innocent.
+ */
 export function tailPlay(u: number, t: number): Pose {
   const p = sit(t);
   p.action = 'tailPlay';
   const d = TAILPLAY_LENGTH;
-  const engage = ramp(u, 0, 1.0) * (1 - ramp(u, d - 1.1, d - 0.2));
-  const flick = Math.sin(u * 13) * ramp(u, 1.0, 1.3) * (1 - ramp(u, 2.5, 2.9));
+  // The tail drops to the ground behind the cat, then sweeps under it and comes up on the far side, its tip curling over: the base
+  // leads, the middle follows and the tip comes last, on the way in and on the way out.
   const low = { p0: v(-5.5, 3.5), c1: v(-16, 1.5), c2: v(-17, 0.6), p3: v(-11, 0.8) };
-  const front = { p0: v(-5.5, 3.5), c1: v(-15.5, 1.0), c2: v(3.0, -1.8), p3: v(11.6 + 0.9 * flick, 6.4 + 2.2 * flick) };
-  const at = (a: typeof low, b: typeof low, k: number) => ({ p0: lerpV(a.p0, b.p0, k), c1: lerpV(a.c1, b.c1, k), c2: lerpV(a.c2, b.c2, k), p3: lerpV(a.p3, b.p3, k), width: 3.5 });
+  const front = { p0: v(-5.5, 3.5), c1: v(-15.5, 1.0), c2: v(3.0, -1.8), p3: v(11.6, 6.4) };
+  const engage = (lag: number) => ramp(u, lag, 1.0 + lag) * (1 - ramp(u, d - 1.1 + lag * 0.5, d - 0.25 + lag * 0.5));
+  const path = (a: V2, b: V2, c: V2, k: number): V2 => v((1 - k) * (1 - k) * a.x + 2 * k * (1 - k) * b.x + k * k * c.x, (1 - k) * (1 - k) * a.y + 2 * k * (1 - k) * b.y + k * k * c.y);
   const rest = p.tail;
-  p.tail = engage < 0.5 ? at(rest, low, engage * 2) : at(low, front, (engage - 0.5) * 2);
+  p.tail = { p0: rest.p0, c1: path(rest.c1, low.c1, front.c1, engage(0)), c2: path(rest.c2, low.c2, front.c2, engage(0.08)), p3: path(rest.p3, low.p3, front.p3, engage(0.16)), width: 3.5 };
+  // Its tip lives a life of its own while the cat watches it, and jumps out from under the paw at each swat.
+  const flick = Math.sin(u * 13) * ramp(u, 1.0, 1.3) * (1 - ramp(u, 2.5, 2.9));
+  const contacts = [1.48, 2.1];
+  let kick = 0;
+  contacts.forEach((c, k) => { if (u > c) kick += Math.sin(2 * Math.PI * 2.2 * (u - c)) * Math.exp(-5 * (u - c)) * (k === 0 ? 1 : 1.3); });
+  const tip = engage(0.16);
+  p.tail.p3.x += (0.9 * flick + 2.6 * kick) * tip; p.tail.p3.y += (2.2 * flick + 1.4 * kick) * tip;
+  p.tail.c2.x += 1.0 * kick * tip; p.tail.c2.y += 0.5 * kick * tip;
+  // Head down, eyes on the tip, ears forward.
   const look = ramp(u, 0.5, 1.2) * (1 - ramp(u, d - 1.2, d - 0.5));
   p.head.y -= 1.5 * look; p.look.x += 1.3 * look; p.look.y += -1.0 * look + 0.4 * flick * look;
   p.tilt += -0.08 * look; p.earL -= 0.14 * look; p.earR -= 0.14 * look; p.eyes *= 1 + 0.1 * look;
-  for (const start of [1.45, 2.05]) {
-    const local = (u - start) / 0.42;
-    if (!(local > 0 && local < 1)) continue;
-    const swat = Math.sin(local * Math.PI);
-    const paw = limb(v(4.4, 7.6), v(9.2, 6.2), v(10.0 + 2.0 * swat, 3.0 + 3.0 * swat), 3.4);
-    p.legs[3] = lerpLimb(p.legs[3], paw, swat);
-    p.chest.cx += 0.5 * swat; p.head.x += 0.5 * swat;
+  // The paw: held ready while it watches, then each swat (cocked up and back, a strike that is fastest as it lands, a moment on the tip,
+  // and back).
+  const ready = limb(v(4.4, 7.8), v(8.6, 6.6), v(9.4, 4.4), 3.4);
+  const cocked = limb(v(4.4, 8.4), v(8.2, 9.6), v(9.2, 11.4), 3.4);
+  const strike = limb(v(4.4, 7.6), v(9.6, 6.6), v(11.4, 5.2), 3.4);
+  let paw = ready, lunge = 0;
+  for (const c of contacts) {
+    const tau = u - c;
+    if (!(tau > -0.28 && tau < 0.35)) continue;
+    if (tau < -0.08) paw = lerpLimb(ready, cocked, ramp(tau, -0.28, -0.08));
+    else if (tau < 0) paw = lerpLimb(cocked, strike, easeIn((tau + 0.08) / 0.08));
+    else if (tau < 0.08) paw = strike;
+    else paw = lerpLimb(strike, ready, ramp(tau, 0.08, 0.35));
+    lunge = spline(tau, [[-0.28, 0], [-0.08, -0.25], [0, 0.6], [0.1, 0.5], [0.35, 0]]);
   }
+  const watching = ramp(u, 0.9, 1.2) * (1 - ramp(u, 2.35, 2.75));
+  p.legs[3] = lerpLimb(p.legs[3], paw, watching);
+  p.chest.cx += 0.5 * lunge * watching; p.head.x += 0.5 * lunge * watching;
+  // Looking innocent at the end: a slow blink.
   p.eyes *= 1 - 0.85 * bump(u, d - 0.9, d - 0.15);
   return p;
-}
-
-/**
- * The whole stretch of a cat that has got up: `bowed` reaches the front legs forward with the rear up, `arched` arches the back high
- * (and `shiver` trembles at the top of it). Both 0 is the plain stand it starts from.
- */
-export function stretching(t: number, bowed: number, arched: number, shiver = 0): Pose {
-  return blend(blend(walk(0, 0, t), bow(t), bowed), arch(t, shiver), arched);
 }
 
 /** Lying down in a loaf, awake: it settles onto its belly, its eyes soften and slow-blink, an ear turns now and then, and in variant 1 it kneads the floor; then it gets up again. */
@@ -614,15 +788,17 @@ export function loafing(u: number, d: number, t: number, variant = 0, facing = 1
   target.tail.p3.y += 0.9 * Math.sin(t * 1.3) * settled;
   const knead = variant === 1 ? ramp(u, 3.0, 3.9) * (1 - ramp(u, d - 4.6, d - 3.7)) : 0;
   if (knead > 0) {
-    const beat = Math.sin(u * 5.8);
-    const far = Math.max(0, beat), near = Math.max(0, -beat);
-    target.legs[1] = lerpLimb(limb(v(8, 3.2), v(12.4, 3.2 + 0.4 * far), v(16.2 + 0.8 * far, 1.8 + 3.2 * far), 3), target.legs[1], 1 - knead);
-    target.legs[3] = lerpLimb(limb(v(11, 3.5), v(14.6, 3.4 + 0.4 * near), v(18.2 + 0.8 * near, 1.8 + 3.2 * near), 3), target.legs[3], 1 - knead);
-    target.head.y -= 0.45 * knead * (far + near);
+    // Each paw lifts and pushes forward (a little loop: up, then out, then down), in turn; the presses start and end at rest.
+    const press = (x: number) => Math.pow(Math.max(0, x), 1.5);
+    const far = press(Math.sin(u * 5.8)), near = press(-Math.sin(u * 5.8)), farOut = press(Math.sin(u * 5.8 - 0.5)), nearOut = press(-Math.sin(u * 5.8 - 0.5));
+    target.legs[1] = lerpLimb(limb(v(8, 3.2), v(12.4, 3.2 + 0.4 * far), v(16.2 + 0.8 * farOut, 1.8 + 3.2 * far), 3), target.legs[1], 1 - knead);
+    target.legs[3] = lerpLimb(limb(v(11, 3.5), v(14.6, 3.4 + 0.4 * near), v(18.2 + 0.8 * nearOut, 1.8 + 3.2 * near), 3), target.legs[3], 1 - knead);
+    target.head.y -= 0.45 * knead * (far + near); target.chest.cx += 0.15 * knead * (far - near);
     target.eyes *= 1 - 0.55 * knead;
   }
   if (facing < 0) target = mirror(target);
-  return labelled(u < d / 2 ? staged(base, target, ramp(u, 0, 1.9)) : staged(target, base, ramp(u, d - 1.9, d), 'legsFirst'), 'loaf');
+  // It lies down front first and gets up the same way: the head comes up, the chest rises onto the front legs, and the rear follows.
+  return labelled(u < d / 2 ? staged(base, target, ramp(u, 0, 1.9)) : staged(target, base, ramp(u, d - 1.9, d)), 'loaf');
 }
 
 // MARK: Hunt
@@ -645,7 +821,49 @@ export function crouch(t: number, w = 0): Pose {
   return p;
 }
 
-/** Where the speck is, `u` seconds into the hunt. */
+/**
+ * The middle of a pounce, in the air: the body stretched out long, the front legs reaching forward and down for the speck, the hind legs
+ * trailing back from the push, the tail streaming behind, the eyes huge and on the target.
+ */
+export function leap(t: number): Pose {
+  const p = walk(0, 0, t);
+  p.action = 'hunt';
+  p.haunch = oval(-4.4, 10.8, 7.4, 4.8, 0.10);
+  p.chest = oval(6.8, 10.2, 7.2, 4.5, -0.04);
+  p.head = v(13.8, 12.4); p.headScale = 0.84; p.tilt = 0;
+  p.eyes = 1.25; p.earL = -0.18; p.earR = -0.18; p.look = v(1.6, -0.8);
+  p.legs[1] = limb(v(8.2, 8.8), v(12.2, 7.4), v(16.0, 4.6), 3.1);
+  p.legs[3] = limb(v(10.2, 8.8), v(14.4, 7.2), v(18.2, 4.0), 3.1);
+  p.legs[0] = limb(v(-6.6, 9.4), v(-9.6, 6.6), v(-13.0, 4.8), 3.1);
+  p.legs[2] = limb(v(-4.2, 9.4), v(-7.2, 6.2), v(-10.8, 4.0), 3.1);
+  p.tail = { p0: v(-9.6, 11.8), c1: v(-14.0, 12.2), c2: v(-16.6, 12.6), p3: v(-17.6, 14.2), width: 3.5 };
+  return p;
+}
+
+/**
+ * Landed on it: the front paws pin the speck to the ground, the chest is down between them, the rear still a little up from the leap
+ * with the hind legs folded under, and the cat peers at what it has caught.
+ */
+export function pinned(t: number): Pose {
+  const p = walk(0, 0, t);
+  p.action = 'hunt';
+  p.haunch = oval(-1.4, 9.2, 7.2, 5.0, -0.18);
+  p.chest = oval(7.0, 6.4, 6.9, 4.2, -0.3);
+  p.head = v(13.4, 7.6); p.headScale = 0.84; p.tilt = -0.12;
+  p.eyes = 1.15; p.earL = -0.12; p.earR = -0.12; p.look = v(1.5, -1.0);
+  p.legs[1] = limb(v(8.0, 6.2), v(12.6, 3.6), v(16.8, 0.9), 3.1);
+  p.legs[3] = limb(v(10.0, 6.2), v(14.4, 3.4), v(18.6, 1.0), 3.1);
+  p.legs[0] = limb(v(-3.8, 8.6), v(-0.8, 4.4), v(-3.6, 0.4), 3.1);
+  p.legs[2] = limb(v(-1.2, 8.6), v(1.6, 4.6), v(-1.0, 0.4), 3.1);
+  p.tail = { p0: v(-6.4, 10.2), c1: v(-11.4, 9.6), c2: v(-14.4, 7.2), p3: v(-12.8, 4.0), width: 3.5 };
+  return p;
+}
+
+/**
+ * Where the speck is, `u` seconds into the hunt: it flutters round to the right of the cat's head, lands low in front of it and waits,
+ * twitching; then it is caught (variant 0: it is gone under the paws as they land on it) or gets away (variant 1: it darts up and off
+ * just before they do).
+ */
 export function mote(u: number, variant: number): { point: V2; size: number } {
   const appear = ramp(u, 0, 0.7);
   const fly = v(14.8 + 3.0 * Math.sin(u * 1.7 + 0.4), 21.5 + 5.0 * Math.sin(u * 2.3) + 2.6 * Math.sin(u * 0.9));
@@ -654,7 +872,7 @@ export function mote(u: number, variant: number): { point: V2; size: number } {
   let point = lerpV(fly, rest, land_);
   let size = appear;
   if (variant === 0) {
-    size *= 1 - ramp(u, 7.0, 7.18);
+    size *= 1 - ramp(u, 7.22, 7.3);
   } else {
     const escape = ramp(u, 7.0, 7.7);
     point = lerpV(point, v(19.0, 19.0 + 2.0 * Math.sin(u * 8)), escape);
@@ -663,54 +881,93 @@ export function mote(u: number, variant: number): { point: V2; size: number } {
   return { point, size };
 }
 
-/** The whole hunt: it spots a speck, follows it with its eyes and head, drops into a crouch, wiggles, springs; the speck is caught or gets away; then it sits up again. */
-export function hunt(u: number, d: number, t: number, variant = 0, facing = 1, shift = 0, lunge = 0): Pose {
+/**
+ * The whole hunt, in the beats of a cat (the app's `PetAnimation.hunt`). It notices a speck (the ears prick first, then the eyes go to it,
+ * and the head follows them a beat behind) and follows it, the tip of its tail flicking now and then. The speck lands: the cat locks on
+ * and holds still, goes down into a crouch head first, and stalks it, two creeping steps a front paw at a time. It coils (its rear sways
+ * and its hind feet tread), sinks lower, and freezes, longer than feels comfortable. Then the burst: the hind legs push, the body
+ * stretches out and the front paws reach for the speck in an arc through the air; it lands front paws first, on the speck, and takes the
+ * landing in a short squash. The speck is caught (it peers at it, its tail swishing, looks round pleased and blinks slowly) or gets away
+ * (its head comes up after it, and it looks, a little baffled, back at us); then it sits back up, the front first.
+ */
+export function hunt(u: number, d: number, t: number, variant = 0, facing = 1, shift = 0): Pose {
   const base = sit(t);
   const m = mote(u, variant);
   const f = facing;
+  // 1. Watching from the sit.
   const watch = clonePose(base);
-  const seen = ramp(u, 0.3, 0.9);
+  const ears = ramp(u, 0.3, 0.45), seen = ramp(u, 0.35, 0.8), follow = ramp(u, 0.45, 0.95);
+  const late = mote(Math.max(0, u - 0.25), variant).point;
   const dx = Math.min(1, Math.max(-1, (m.point.x - 3) / 14)), dy = Math.min(1, Math.max(-1, (m.point.y - 19) / 9));
+  const hx = Math.min(1, Math.max(-1, (late.x - 3) / 14)), hy = Math.min(1, Math.max(-1, (late.y - 19) / 9));
   watch.look.x += 1.9 * dx * seen * f; watch.look.y += 1.0 * dy * seen;
-  watch.head.x += 1.2 * dx * seen * f; watch.head.y += 0.9 * Math.max(0, dy) * seen;
-  watch.tilt += -0.12 * dx * seen * f;
-  watch.earL -= 0.2 * seen; watch.earR -= 0.2 * seen; watch.eyes *= 1 + 0.16 * seen;
-  watch.tail.p3.y += 2.0 * Math.sin(u * 9) * seen * ramp(u, 1.5, 2.5);
-  watch.tail.p3.x += 1.0 * Math.sin(u * 7) * seen * ramp(u, 1.5, 2.5);
-  const wiggleAmount = ramp(u, 5.35, 5.75) * (1 - ramp(u, 6.45, 6.75));
-  const w = Math.sin(u * 33) * wiggleAmount;
+  watch.head.x += 1.2 * hx * follow * f; watch.head.y += 0.9 * Math.max(0, hy) * follow;
+  watch.tilt += -0.12 * hx * follow * f;
+  watch.earL -= 0.24 * ears; watch.earR -= 0.24 * ears; watch.eyes *= 1 + 0.16 * seen;
+  const flicks = twitch(u, 1.4, 1.75) + twitch(u, 2.5, 2.8) + twitch(u, 3.5, 3.8);
+  watch.tail.p3.y += 2.2 * flicks; watch.tail.p3.x += 1.0 * flicks * f; watch.tail.c2.y += 0.8 * flicks;
+  // 2-4. The crouch, the stalk and the coil.
+  const wiggle = ramp(u, 5.65, 6.0) * (1 - ramp(u, 6.3, 6.45));
+  const w = Math.sin((u - 5.65) * 2 * Math.PI * 3.4) * wiggle;
   let crouched = crouch(t, w);
-  crouched.tail.p3.y += 0.9 * Math.sin(u * 8) * ramp(u, 4.4, 5);
-  if (f < 0) crouched = mirror(crouched);
-  let p = u < 8.2 ? staged(watch, crouched, ramp(u, 3.7, 4.9)) : staged(crouched, base, ramp(u, 8.2, d), 'legsFirst');
-  const low = ramp(u, 3.7, 4.9) * (1 - ramp(u, 8.2, d));
-  p.x += shift * low * f;
-  const sink = ramp(u, 6.62, 6.86) * (1 - ramp(u, 6.86, 6.9));
-  const flight = (u - 6.88) / 0.52;
-  const airborne = flight > 0 && flight < 1 ? 4 * flight * (1 - flight) : 0;
-  const reach = ramp(u, 6.88, 7.15) * (1 - ramp(u, 7.7, 8.4));
-  const impact = ramp(u, 7.28, 7.38) * (1 - ramp(u, 7.38, 7.75));
-  if (u > 6.5 && u < d) {
-    p.haunch.cx -= 0.9 * sink * f; p.chest.cx -= 0.4 * sink * f; p.head.y -= 0.5 * sink;
-    p.y += 3.4 * airborne - 0.6 * impact;
-    p.x += lunge * f * ramp(u, 6.88, 7.3) * (1 - ramp(u, 8.0, 8.9));
-    p.head.x += 1.4 * reach * f; p.head.y += 0.8 * airborne;
-    p.legs[1].foot = lerpV(p.legs[1].foot, v(15.6 * f, 1.2 + 2.2 * airborne), reach);
-    p.legs[1].knee = lerpV(p.legs[1].knee, v(11.0 * f, 3.8 + 1.5 * airborne), reach);
-    p.legs[3].foot = lerpV(p.legs[3].foot, v(17.4 * f, 1.0 + 2.6 * airborne), reach);
-    p.legs[3].knee = lerpV(p.legs[3].knee, v(12.6 * f, 3.8 + 1.5 * airborne), reach);
-    p.legs[0].foot.x -= 2.2 * airborne * f; p.legs[2].foot.x -= 2.2 * airborne * f;
+  const coil = ramp(u, 5.6, 5.95), sink = ramp(u, 6.66, 6.8);
+  crouched.haunch.cy += 0.5 * coil - 0.3 * sink; crouched.chest.cy -= 0.4 * coil + 0.3 * sink; crouched.chest.ry -= 0.25 * coil;
+  crouched.head.y -= 0.35 * coil + 0.2 * sink; crouched.earL -= 0.06 * coil; crouched.earR -= 0.06 * coil;
+  // The tip of the tail twitches while it waits, quicker in the coil, and is still in the freeze.
+  crouched.tail.p3.y += 0.9 * Math.sin(u * 8) * ramp(u, 4.4, 5) * (1 - ramp(u, 5.6, 5.8)) + 0.8 * Math.sin(u * 22) * wiggle;
+  // The stalk: the body creeps forward in two surges, each after a front paw has stepped, and the hind feet catch up; the head moves least.
+  const creep = 0.45 * ramp(u, 5.05, 5.3) + 0.45 * ramp(u, 5.3, 5.55);
+  crouched.haunch.cx += creep; crouched.chest.cx += creep; crouched.head.x += 0.6 * creep;
+  const ct = crouched.tail;
+  crouched.tail = { p0: v(ct.p0.x + creep, ct.p0.y), c1: v(ct.c1.x + creep, ct.c1.y), c2: v(ct.c2.x + creep, ct.c2.y), p3: v(ct.p3.x + creep, ct.p3.y), width: ct.width };
+  const steps: [0 | 1 | 2 | 3, number, number][] = [[3, ramp(u, 5.0, 5.22), bump(u, 5.0, 5.22)], [1, ramp(u, 5.24, 5.46), bump(u, 5.24, 5.46)],
+    [2, ramp(u, 5.4, 5.58), bump(u, 5.4, 5.58)], [0, ramp(u, 5.46, 5.64), bump(u, 5.46, 5.64)]];
+  for (const [leg, step, lift] of steps) {
+    const l = crouched.legs[leg];
+    l.hip.x += creep; l.knee.x += (creep + 0.9 * step) / 2;
+    l.foot.x += 0.9 * step; l.foot.y += 0.9 * lift;
   }
+  if (f < 0) crouched = mirror(crouched);
+  // Locked on and still from 4.0, it goes down head first.
+  const down = ramp(u, 4.25, 4.95);
+  let p = staged(watch, crouched, down);
+  // 5. The pounce: the burst (the hind legs push first), the arc, and down onto the speck front paws first.
+  const launch = easeOut((u - 6.8) / 0.14), descend = ramp(u, 6.98, 7.3);
+  if (launch > 0) {
+    let flying = leap(t), landed = pinned(t);
+    if (f < 0) { flying = mirror(flying); landed = mirror(landed); }
+    p = staged(p, flying, launch, 'legsFirst');
+    if (descend > 0) p = staged(p, landed, descend);
+  }
+  const flight = (u - 6.84) / 0.46;
+  const airborne = flight > 0 && flight < 1 ? 4 * flight * (1 - flight) : 0;
+  p.y += 3.4 * airborne;
+  // The landing goes on at the speed of the drop: the legs give, and push back.
+  const impact = easeOut((u - 7.3) / 0.08) * (1 - ramp(u, 7.38, 7.65));
+  p.haunch.cy -= 0.6 * impact; p.chest.cy -= 0.5 * impact; p.chest.ry -= 0.3 * impact; p.head.y -= 0.8 * impact;
+  p.earL += 0.12 * impact; p.earR += 0.12 * impact;
+  // 6. Afterwards.
   if (variant === 0) {
-    const round = ramp(u, 7.7, 8.0) * (1 - ramp(u, 8.9, 9.2));
-    p.look.x += 1.8 * Math.sin((u - 7.8) * 3.2) * round; p.head.x += 0.8 * Math.sin((u - 7.8) * 3.2) * round;
-    p.eyes *= 1 - 0.85 * bump(u, 8.5, 9.1);
+    const peer = ramp(u, 7.35, 7.6) * (1 - ramp(u, 7.9, 8.3));
+    p.head.y -= 0.5 * peer; p.look.y -= 0.3 * peer;
+    const swish = Math.sin((u - 7.3) * 9) * ramp(u, 7.3, 7.5) * (1 - ramp(u, 8.3, 8.8));
+    p.tail.p3.y += 1.4 * swish; p.tail.p3.x += 0.8 * swish * f;
+    const round = ramp(u, 7.9, 8.2) * (1 - ramp(u, 8.9, 9.2));
+    const sweep = Math.sin((u - 7.9) * 3.2);
+    p.look.x += 1.8 * sweep * round; p.head.x += 0.8 * sweep * round;
   } else {
-    const follow = ramp(u, 7.0, 7.5) * (1 - ramp(u, 8.0, 8.5));
-    p.look.y += 1.2 * follow; p.head.y += 1.3 * follow;
+    const after = ramp(u, 7.05, 7.45) * (1 - ramp(u, 8.1, 8.6));
+    p.look.y += 2.0 * after; p.head.y += 2.4 * after; p.tilt += 0.06 * after * f;
     const baffled = ramp(u, 8.3, 8.8) * (1 - ramp(u, 9.3, 9.7));
     p.tilt += -0.16 * baffled * f; p.look.x += -0.5 * baffled * f;
   }
+  // 7. It sits back up: its rear is already down, so the front comes up first (the head, the chest onto the front legs).
+  const rise = ramp(u, 8.4, d);
+  if (rise > 0) p = staged(p, base, rise);
+  // Pleased with its catch, it blinks slowly as it settles.
+  if (variant === 0) p.eyes *= 1 - 0.85 * bump(u, 8.5, 9.1);
+  const low = down * (1 - rise);
+  p.x += shift * low * f;
   p.mote = v(m.point.x * f, m.point.y); p.moteSize = m.size;
   p.action = low > 0.5 ? 'hunt' : 'sit';
   return labelled(p, 'hunt');
@@ -725,11 +982,13 @@ export function perform(action: Action, u: number, d: number, t: number, opts: {
   const face = (p: Pose) => (f < 0 ? mirror(p) : p);
   switch (action) {
     case 'stretch': {
-      const bowed = ramp(u, 0.8, 1.6) * (1 - ramp(u, d - 3.4, d - 2.5));
-      const arched = ramp(u, d - 3.6, d - 2.8) * (1 - ramp(u, d - 1.9, d - 1.1));
-      const shiver = arched * Math.sin(t * 38) * ramp(u, d - 3.0, d - 2.6);
-      let target = stretching(t, bowed, arched, shiver);
-      target.x = shift * Math.max(bowed, arched) * (f < 0 ? -1 : 1);
+      // A cat's stretch, in its order: it gets up and turns (head first), bows (the forelegs first), comes forward out of the bow with a
+      // hind leg stretched out behind, arches its back, stands, and sits down again, the hips first.
+      const bows = ramp(u, 0.8, 1.8), reaches = ramp(u, 2.5, 3.2), arches = ramp(u, d - 3.1, d - 2.5), stands = ramp(u, d - 1.8, d - 1.1);
+      const shiver = arches * (1 - stands) * Math.sin(t * 38) * ramp(u, d - 2.6, d - 2.3);
+      const tremble = reaches * (1 - arches) * Math.sin(t * 31) * ramp(u, 3.15, 3.4);
+      let target = stretching(t, bows, reaches, arches, stands, shiver, tremble);
+      target.x = shift * bows * (1 - stands) * (f < 0 ? -1 : 1);
       target = face(target);
       return labelled(u < d / 2 ? staged(base, target, ramp(u, 0, 0.8)) : staged(target, base, ramp(u, d - 0.8, d), 'legsFirst'), 'stretch');
     }
@@ -745,14 +1004,15 @@ export function perform(action: Action, u: number, d: number, t: number, opts: {
       }
       target.zAlpha = ramp(u, 3.1, 4.1) * (1 - ramp(u, d - 3.0, d - 2.0)); target.zRise = (u * 0.3) % 1;
       target = face(target);
-      return labelled(u < d / 2 ? staged(base, target, ramp(u, 0, 1.6)) : staged(target, base, ramp(u, d - 1.4, d), 'legsFirst'), 'sleep');
+      // It lies down front first and gets up the same way: the head comes up, the chest rises onto the front legs, the rear last.
+      return labelled(u < d / 2 ? staged(base, target, ramp(u, 0, 1.6)) : staged(target, base, ramp(u, d - 1.4, d)), 'sleep');
     }
     case 'play': {
       const i = ramp(u, 0.3, 1) * (1 - ramp(u, d - 1, d - 0.3));
-      const p = play(t, i, alert); p.x = shift * i;
+      const p = play(t, i, alert, u); p.x = shift * i;
       return p;
     }
-    case 'wave': return wave(t, ramp(u, 0.2, 0.7) * (1 - ramp(u, d - 0.7, d - 0.2)), alert);
+    case 'wave': return wave(t, ramp(u, 0.2, 0.7) * (1 - ramp(u, d - 0.7, d - 0.2)), alert, u - 0.45);
     case 'groom': return groom(u, t, alert, variant);
     case 'glance': return glance(u, t, alert, variant);
     case 'yawn': return yawn(u, t);
@@ -760,7 +1020,7 @@ export function perform(action: Action, u: number, d: number, t: number, opts: {
     case 'startle': return startle(u, t, variant);
     case 'tailPlay': return tailPlay(u, t);
     case 'loaf': return loafing(u, d, t, variant, f);
-    case 'hunt': return hunt(u, d, t, variant, f, shift, 0);
+    case 'hunt': return hunt(u, d, t, variant, f, shift);
     default: return base;
   }
 }

@@ -235,7 +235,7 @@ final class PetDirectorTests: XCTestCase {
         lively.run(until: 2, { input, _ in input.focus = .typing }) { lively.director.running == nil }
         XCTAssertNil(lively.director.running, "the stretch gave way")
         XCTAssertLessThan(Double(lively.poses.count - at) / 30, PetDirector.fadeFocus + 0.2)
-        XCTAssertLessThan(lively.jump(at..<lively.poses.count), 5)
+        XCTAssertLessThan(lively.jump(at..<lively.poses.count), 5, lively.worstJump(at..<lively.poses.count).what)
 
         let quiet = Rig(.compact, seed: 1)
         quiet.director.start(.groom, stage: quiet.stage)
@@ -254,9 +254,10 @@ final class PetDirectorTests: XCTestCase {
         XCTAssertFalse(header.kinds.isEmpty)
         XCTAssertFalse(header.kinds.contains(.nap), "but never asleep on the job")
         // When the terminal starts working the wing's gesture ends, gently.
+        // (Before its first swat: a swat is fast on its own, and this measures the fade.)
         let rig = Rig(.compact, seed: 1)
         rig.director.start(.play, stage: rig.stage)
-        rig.run(1) { _, _ in }
+        rig.run(0.5) { _, _ in }
         let at = rig.poses.count
         rig.run(until: 2, { input, _ in input.working = true }) { rig.director.running == nil }
         XCTAssertNil(rig.director.running)

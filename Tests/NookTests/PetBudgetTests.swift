@@ -99,13 +99,16 @@ final class PetBudgetTests: XCTestCase {
         XCTAssertEqual(PetCadence.rest(focus: .free, idle: 200, power: .normal), 0.5, "away: twice a second")
         for focus in [PetFocus.free, .reading, .typing] { XCTAssertGreaterThan(PetCadence.rest(focus: focus, power: .saving), PetCadence.rest(focus: focus, power: .normal)) }
         XCTAssertLessThanOrEqual(PetCadence.rest(focus: .typing, power: .saving), 0.5)
-        XCTAssertEqual(PetCadence.fast(.compact, power: .normal), 1.0 / 30); XCTAssertEqual(PetCadence.fast(.header, power: .normal), 1.0 / 30)
-        XCTAssertEqual(PetCadence.fast(.compact, power: .saving), 1.0 / 15, "half the rate on a Mac saving power")
+        // Sixty a second while the cat moves, thirty while it only rests (its blinks and flicks are drawn as they always were).
+        XCTAssertEqual(PetCadence.fast(.compact, power: .normal), 1.0 / 60); XCTAssertEqual(PetCadence.fast(.header, power: .normal), 1.0 / 60)
+        XCTAssertEqual(PetCadence.fast(.compact, power: .normal, moving: false), 1.0 / 30); XCTAssertEqual(PetCadence.fast(.header, power: .normal, moving: false), 1.0 / 30)
+        XCTAssertEqual(PetCadence.fast(.compact, power: .saving), 1.0 / 30, "half the rate on a Mac saving power")
+        XCTAssertEqual(PetCadence.fast(.compact, power: .saving, moving: false), 1.0 / 15)
         XCTAssertLessThan(PetCadence.threshold(focus: .free, power: .normal), PetCadence.threshold(focus: .typing, power: .normal))
         XCTAssertGreaterThan(PetCadence.threshold(focus: .free, power: .saving), PetCadence.threshold(focus: .free, power: .normal))
-        // Thirty a second divides what every screen refreshes at: no frame is held longer than the one before it.
-        for refresh in [60.0, 120.0] { XCTAssertEqual(refresh / 30, (refresh / 30).rounded()) }
-        XCTAssertGreaterThanOrEqual(PetAnimation.compactInterval, 1.0 / 30 - 1e-9); XCTAssertLessThanOrEqual(PetAnimation.restInterval, 0.25)
+        // Sixty and thirty a second divide what every screen refreshes at: no frame is held longer than the one before it.
+        for refresh in [60.0, 120.0] { XCTAssertEqual(refresh / 60, (refresh / 60).rounded()); XCTAssertEqual(refresh / 30, (refresh / 30).rounded()) }
+        XCTAssertGreaterThanOrEqual(PetAnimation.compactInterval, 1.0 / 60 - 1e-9); XCTAssertLessThanOrEqual(PetAnimation.restInterval, 0.25)
     }
 
     func testTheDriverDrawsOnlyWhatMovedAndIgnoresATickRightAfterAnother() {

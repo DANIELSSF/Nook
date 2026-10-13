@@ -54,11 +54,14 @@ enum PetPainter {
         let legs = pose.legs
         if legs.farHind.foot.y <= raisedAbove { limb(legs.farHind, in: cg) }
         if legs.farFront.foot.y <= raisedAbove { limb(legs.farFront, in: cg) }
-        oval(pose.haunch, in: cg)
-        oval(pose.chest, in: cg)
-        if let stripe = coat.stripe { flankStripes(pose.haunch, stripe, in: cg) }
+        // The body is one figure: the haunch and the chest joined by the back and the belly (`PetTorso`).
+        let torso = PetTorso(pose.haunch, pose.chest)
+        torso.addPath(to: cg); cg.fillPath()
         if legs.nearHind.foot.y <= raisedAbove { limb(legs.nearHind, in: cg) }
         if legs.nearFront.foot.y <= raisedAbove { limb(legs.nearFront, in: cg) }
+        // The flank's stripes go over the near legs where they lie against the body: under them, a seated cat's near thigh would
+        // cover all of one but a curled sliver at its edge (the far side's legs are behind the body, so both sides now match).
+        if let stripe = coat.stripe { flankStripes(pose.haunch, stripe, inside: torso, in: cg) }
 
         // The head has its own frame, so tilt and scale carry the ears, the face and what is worn on it along.
         cg.saveGState()
@@ -66,21 +69,17 @@ enum PetPainter {
         cg.fillEllipse(in: CGRect(x: -9.3, y: -7.4, width: 18.6, height: 14.8))
         ear(side: -1, angle: pose.earL, in: cg)
         ear(side: 1, angle: pose.earR, in: cg)
-        if let stripe = coat.stripe { foreheadStripes(stripe, in: cg) }
+        // The face: the eyes where the cat looks (kept in the face), and the face turned with them (`PetFace`).
+        let face = PetFace(pose)
+        if let stripe = coat.stripe { foreheadStripes(stripe, turn: face.turn, in: cg) }
         if look.accessory == .collar || look.accessory == .bow { neckwear(look.accessory, swing: pose.swing, in: cg) }
         cg.setFillColor(black)
-        let open = max(0, pose.eyes)
-        let w = 2.2 + 0.9 * (1 - min(1, open)), h = max(0.55, 2.9 * open)
-        cg.fillEllipse(in: CGRect(x: -4.3 + pose.look.x - w / 2, y: 0.3 + pose.look.y - h / 2, width: w, height: h))
-        cg.fillEllipse(in: CGRect(x: 4.3 + pose.look.x - w / 2, y: 0.3 + pose.look.y - h / 2, width: w, height: h))
-        if pose.glisten > 0.02 { glints(pose, w: w, h: h, in: cg) }
-        if pose.tear > 0.01 { tear(pose.tear, in: cg) }
-        if pose.mouth > 0.02 {
-            let m = pose.mouth
-            let rx = 1.1 + 1.8 * m, ry = 0.3 + 3.2 * m
-            cg.fillEllipse(in: CGRect(x: -rx, y: -3.1 - 0.5 * m - ry, width: 2 * rx, height: 2 * ry))
-        }
-        if look.accessory == .glasses { glasses(in: cg) }
+        cg.fillEllipse(in: face.eyeRect(-1))
+        cg.fillEllipse(in: face.eyeRect(1))
+        if pose.glisten > 0.02 { glints(pose, face, in: cg) }
+        if pose.tear > 0.01 { tear(pose.tear, turn: face.turn, in: cg) }
+        if let mouth = face.mouth { cg.fillEllipse(in: mouth) }
+        if look.accessory == .glasses { glasses(turn: face.turn, in: cg) }
         cg.restoreGState()
 
         // Raised paws, over the face; a thin black seam keeps a white forearm readable on the white head.
@@ -118,19 +117,11 @@ enum PetPainter {
         cg.setLineWidth(l.width); cg.strokePath()
     }
 
-    private static func oval(_ o: PetOval, in cg: CGContext) {
-        cg.saveGState()
-        cg.translateBy(x: o.cx, y: o.cy); cg.rotate(by: o.angle)
-        cg.fillEllipse(in: CGRect(x: -o.rx, y: -o.ry, width: 2 * o.rx, height: 2 * o.ry))
-        cg.restoreGState()
-    }
-
+    /// An ear, turned as `PetFace.ear` turns it: its base stays on the head.
     private static func ear(side: CGFloat, angle: CGFloat, in cg: CGContext) {
-        cg.saveGState()
-        cg.translateBy(x: side * 5.8, y: 4.4); cg.rotate(by: side * -angle); cg.translateBy(x: -side * 5.8, y: -4.4)
-        cg.move(to: CGPoint(x: side * 9.1, y: 1.6)); cg.addLine(to: CGPoint(x: side * 7.5, y: 12.2)); cg.addLine(to: CGPoint(x: side * 2.2, y: 6.6))
+        let e = PetFace.ear(side: side, angle: angle)
+        cg.move(to: e.outer); cg.addLine(to: e.tip); cg.addLine(to: e.inner)
         cg.closePath(); cg.fillPath()
-        cg.restoreGState()
     }
 
     // MARK: Stripes (the tabby coats)
@@ -153,9 +144,10 @@ enum PetPainter {
         cg.restoreGState()
     }
 
-    /// Two short bars on each side of the body, where the haunch shows beside the chest.
-    private static func flankStripes(_ h: PetOval, _ stripe: CGColor, in cg: CGContext) {
+    /// Two short bars on each side of the body, where the haunch shows beside the chest; cut to the body's outline, so none pokes out of it.
+    private static func flankStripes(_ h: PetOval, _ stripe: CGColor, inside torso: PetTorso, in cg: CGContext) {
         cg.saveGState()
+        torso.addPath(to: cg); cg.clip()
         cg.translateBy(x: h.cx, y: h.cy); cg.rotate(by: h.angle)
         cg.setStrokeColor(stripe); cg.setLineWidth(0.9)
         for side in [CGFloat(-1), 1] {
@@ -166,12 +158,13 @@ enum PetPainter {
         cg.restoreGState()
     }
 
-    /// The tabby's "M": three short strokes on the forehead.
-    private static func foreheadStripes(_ stripe: CGColor, in cg: CGContext) {
+    /// The tabby's "M": three short strokes on the forehead. Higher up the head than the eyes, they go half as far as the face turns.
+    private static func foreheadStripes(_ stripe: CGColor, turn: CGPoint, in cg: CGContext) {
+        let dx = turn.x * 0.5, dy = turn.y * 0.5
         cg.setStrokeColor(stripe); cg.setLineWidth(0.9)
-        cg.move(to: CGPoint(x: -2.5, y: 6.1)); cg.addLine(to: CGPoint(x: -1.9, y: 3.7))
-        cg.move(to: CGPoint(x: 0, y: 6.4)); cg.addLine(to: CGPoint(x: 0, y: 3.9))
-        cg.move(to: CGPoint(x: 2.5, y: 6.1)); cg.addLine(to: CGPoint(x: 1.9, y: 3.7))
+        cg.move(to: CGPoint(x: -2.5 + dx, y: 6.1 + dy)); cg.addLine(to: CGPoint(x: -1.9 + dx, y: 3.7 + dy))
+        cg.move(to: CGPoint(x: dx, y: 6.4 + dy)); cg.addLine(to: CGPoint(x: dx, y: 3.9 + dy))
+        cg.move(to: CGPoint(x: 2.5 + dx, y: 6.1 + dy)); cg.addLine(to: CGPoint(x: 1.9 + dx, y: 3.7 + dy))
         cg.strokePath()
     }
 
@@ -199,24 +192,27 @@ enum PetPainter {
     }
 
     /// A small white glint at the upper left of each eye: the eyes look wet. It sits on the pupil, so it moves with it and shrinks as a lid closes.
-    private static func glints(_ pose: PetPose, w: CGFloat, h: CGFloat, in cg: CGContext) {
+    private static func glints(_ pose: PetPose, _ face: PetFace, in cg: CGContext) {
+        let w = face.eyeWidth, h = face.eyeHeight
         let r = 0.62 * pose.glisten * min(1, max(0.25, h / 2.9))
         cg.saveGState()
         cg.setFillColor(glintColor)
         for side in [CGFloat(-1), 1] {
-            let cx = side * 4.3 + pose.look.x - w * 0.2, cy = 0.3 + pose.look.y + h * 0.18
+            let eye = face.eye(side)
+            let cx = eye.x - w * 0.2, cy = eye.y + h * 0.18
             cg.fillEllipse(in: CGRect(x: cx - r, y: cy - r, width: 2 * r, height: 2 * r))
         }
         cg.restoreGState()
     }
 
-    /// A tear: a drop that wells at the lower lid of the left eye, runs down the cheek, swells a little as it goes and is gone before the chin. `u` is how far it has run.
-    private static func tear(_ u: CGFloat, in cg: CGContext) {
+    /// A tear: a drop that wells at the lower lid of the left eye, runs down the cheek, swells a little as it goes and is gone before the chin. `u` is how far it has run;
+    /// it runs on the face, so it is where the face has turned (`turn`).
+    private static func tear(_ u: CGFloat, turn: CGPoint, in cg: CGContext) {
         let run = u * u * (3 - 2 * u)
         let swell = CGFloat(sin(Double(min(1, u * 1.15)) * .pi * 0.5))
         let fade = u < 0.82 ? 1 : max(0, 1 - (u - 0.82) / 0.18)
         let r = 0.5 + 0.35 * swell
-        let x = -4.5 - 0.45 * run, y = -1.2 - 5.4 * run
+        let x = -4.5 - 0.45 * run + turn.x, y = -1.2 - 5.4 * run + turn.y
         cg.saveGState()
         cg.setAlpha(min(1, u * 8) * fade)
         cg.setFillColor(tearColor)
@@ -227,12 +223,13 @@ enum PetPainter {
         cg.restoreGState()
     }
 
-    /// Round glasses: a thin black rim around each eye. The rim stays on the face while the pupils move inside it.
-    private static func glasses(in cg: CGContext) {
+    /// Round glasses: a thin black rim around each eye. They sit on the face, so they go where it turns (`turn`), and the pupils move inside them.
+    private static func glasses(turn: CGPoint, in cg: CGContext) {
+        let x = turn.x, y = turn.y
         cg.setStrokeColor(black); cg.setLineWidth(0.75)
-        cg.strokeEllipse(in: CGRect(x: -4.3 - 3.2, y: 0.3 - 3.2, width: 6.4, height: 6.4))
-        cg.strokeEllipse(in: CGRect(x: 4.3 - 3.2, y: 0.3 - 3.2, width: 6.4, height: 6.4))
-        cg.move(to: CGPoint(x: -1.1, y: 0.9)); cg.addLine(to: CGPoint(x: 1.1, y: 0.9))
+        cg.strokeEllipse(in: CGRect(x: -4.3 - 3.2 + x, y: 0.3 - 3.2 + y, width: 6.4, height: 6.4))
+        cg.strokeEllipse(in: CGRect(x: 4.3 - 3.2 + x, y: 0.3 - 3.2 + y, width: 6.4, height: 6.4))
+        cg.move(to: CGPoint(x: -1.1 + x, y: 0.9 + y)); cg.addLine(to: CGPoint(x: 1.1 + x, y: 0.9 + y))
         cg.strokePath()
     }
 

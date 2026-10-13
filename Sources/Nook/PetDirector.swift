@@ -396,7 +396,7 @@ struct PetDirector {
         var taken: CGFloat = CGFloat(min(1, curious)) * 0.6
         if dragging { taken = 1 }
         if let c = celebration { taken = max(taken, c.weight * PetAnimation.ramp(c.age, 0, 0.18) * (1 - PetAnimation.ramp(c.age, c.length - 0.4, c.length))) }
-        if let l = landing { taken = max(taken, l.weight * PetAnimation.ramp(l.age, 0, 0.12) * (1 - PetAnimation.ramp(l.age, l.length - 0.3, l.length))) }
+        if let l = landing { taken = max(taken, l.weight * (1 - PetAnimation.ramp(l.age, l.length - 0.3, l.length))) }
         if let r = running {
             let presence = r.weight * PetAnimation.ramp(r.age, 0, 0.8) * (1 - PetAnimation.ramp(r.age, r.length - 0.8, r.length))
             taken = max(taken, presence * (r.kind == .nap ? 1 : 0.65))
@@ -719,9 +719,11 @@ struct PetDirector {
             pose = pose.blended(to: p, c.weight * PetAnimation.ramp(c.age, 0, 0.18))
         }
         if let l = landing {
+            // It is put down from where the pointer let go of it: it is in the air from its first frame (the view showed the cat in the
+            // pointer's hand until then), never rising there from the sit.
             var p = PetAnimation.land(u: l.age, time: wall)
             p.x = pose.x
-            pose = pose.blended(to: p, l.weight * PetAnimation.ramp(l.age, 0, 0.12))
+            pose = pose.blended(to: p, l.weight)
         }
         if input.perk > 0 { pose = PetAnimation.perked(from: pose, time: wall, amount: input.perk, age: input.perkAge) }
         // A cat in bed does not turn to look at the pointer.
@@ -746,7 +748,7 @@ struct PetDirector {
         case .startle: p = PetAnimation.startle(u: r.age, time: wall, variant: r.variant)
         case .tailPlay: p = PetAnimation.tailPlay(u: r.age, time: wall)
         case .loaf: p = PetAnimation.loafing(u: r.age, length: r.length, time: wall, variant: r.variant, facing: r.facing)
-        case .hunt: p = PetAnimation.hunt(u: r.age, length: r.length, time: wall, variant: r.variant, facing: r.facing, shift: compact ? -1.2 : 0, lunge: compact ? 1.2 : min(6, stage.travel * 0.3))
+        case .hunt: p = PetAnimation.hunt(u: r.age, length: r.length, time: wall, variant: r.variant, facing: r.facing, shift: compact ? -1.2 : 0)
         case .stroll, .home:
             return PetAnimation.route(r.steps, u: r.age, startX: r.startX, travel: max(1, stage.travel), scale: stage.scale, time: wall, alert: alert)
         }
