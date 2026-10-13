@@ -1,0 +1,230 @@
+/*
+ * The film (src/components/Film.astro, src/film/). A frame like a cinema's: 16:9 on a wide screen, 4:5 on a phone, as tall as the
+ * window allows. Inside it a stage in the page's light (a warm paper studio, or a dark one), a MacBook on it that the camera moves over
+ * (src/film/player.ts sets one transform on `.film__world`), the titles over the shots, and under it the controls. Everything that moves
+ * is a transform or an opacity; nothing in the world is filtered, so a camera move costs a composite and the raster of what it shows.
+ */
+.film {
+  --film-bg: light-dark(#efebe2, #070908);
+  --film-bg-2: light-dark(#e2ddd1, #111614);
+  padding-block: clamp(72px, 9vw, 128px) 0;
+}
+.film__head { display: grid; gap: 18px; justify-items: center; text-align: center; margin-bottom: clamp(32px, 4.5vw, 56px); }
+.film__head .lede { max-width: 48ch; text-align: center; }
+
+/* The frame's width: the column, but never so wide that the frame and its controls are taller than the window (below the page's
+   scroll padding, where the hero's link brings them). */
+.film__player { --fw: min(100%, max(320px, calc((100svh - 230px) * 16 / 9))); container: film / inline-size; display: grid; justify-items: center; }
+.film__frame {
+  position: relative; width: var(--fw); aspect-ratio: 16 / 9; overflow: hidden; isolation: isolate;
+  border-radius: var(--radius-lg); background: var(--film-bg);
+  box-shadow: var(--shadow-lift), 0 0 0 1px var(--line);
+  container: frame / inline-size;
+}
+/* A narrow column (a phone, a tablet held upright): a 4:5 frame, again no taller than the window allows. */
+@container film (max-width: 719px) {
+  .film__frame { aspect-ratio: 4 / 5; }
+  .film__frame, .film__controls, .film__text { --fw: min(100%, max(300px, calc((100svh - 230px) * 4 / 5))); }
+}
+
+/* The hero's way to the film: a quiet link under its buttons. */
+.hero__film {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 6px; margin-top: -6px;
+  font-size: 0.9875rem; font-weight: 600; color: var(--ink-2); transition: color 0.2s;
+}
+.hero__film-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-soft), 0 0 0 1px var(--line); transition: transform 0.3s var(--ease-out); }
+.hero__film-ic svg { width: 12px; height: 12px; }
+@media (hover: hover) { .hero__film:hover { color: var(--ink); } .hero__film:hover .hero__film-ic { transform: scale(1.08); } }
+
+/* MARK: The stage */
+.film__stage { position: absolute; inset: 0; overflow: hidden; perspective: 2200px; perspective-origin: 50% 50%; contain: paint; }
+.film__bg {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(60% 70% at 50% 42%, light-dark(#fbf9f4, #18201d), transparent 72%),
+    radial-gradient(90% 60% at 50% 110%, var(--film-bg-2), transparent 70%),
+    var(--film-bg);
+}
+.film__night { position: absolute; inset: 0; background: #000; opacity: 0; visibility: hidden; }
+.film__world { position: absolute; left: 0; top: 0; width: var(--sw, 1512px); height: var(--sh, 945px); transform-origin: 0 0; }
+
+/* The MacBook: a black glass lid with a thin aluminium edge, the screen in it, and the base's front edge under it. */
+.mac { position: absolute; left: 0; top: 0; width: var(--sw); height: var(--sh); }
+.mac__lid {
+  position: absolute; left: -18px; top: -18px; right: -18px; bottom: -18px; border-radius: 38px 38px 24px 24px;
+  background: linear-gradient(180deg, #070708, #030303);
+  box-shadow: inset 0 0 0 2px #2a2c2f, inset 0 0 0 3.5px #0a0a0b, 0 0 0 1px light-dark(rgb(0 0 0 / 0.18), rgb(255 255 255 / 0.1));
+}
+.mac__base {
+  position: absolute; left: calc((var(--sw) - 1760px) / 2); top: calc(var(--sh) + 18px); width: 1760px; height: 30px;
+  border-radius: 3px 3px 46px 46px / 3px 3px 28px 28px;
+  background: linear-gradient(180deg, #5b5e63 0%, #3a3c40 22%, #222326 70%, #121314 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+.mac__scoop { position: absolute; left: 50%; top: 0; width: 250px; height: 11px; margin-left: -125px; border-radius: 0 0 16px 16px; background: linear-gradient(180deg, #17181a, #2c2e31); }
+.mac__shadow {
+  position: absolute; left: -260px; right: -260px; top: calc(var(--sh) + 26px); height: 160px;
+  background: radial-gradient(48% 46% at 50% 22%, light-dark(rgb(70 50 20 / 0.32), rgb(0 0 0 / 0.75)), transparent 72%);
+}
+.mac__screen { position: absolute; inset: 0; overflow: hidden; border-radius: 12px 12px 3px 3px; background: #000; }
+.mac__glass { position: absolute; inset: 0; overflow: hidden; border-radius: 12px 12px 3px 3px; pointer-events: none; }
+.mac__glare {
+  position: absolute; top: -10%; bottom: -10%; left: -40%; width: 180%;
+  background: linear-gradient(104deg, transparent 38%, rgb(255 255 255 / 0.1) 47%, rgb(255 255 255 / 0.16) 50%, rgb(255 255 255 / 0.06) 54%, transparent 62%);
+  transform: translateX(-70%);
+}
+.mac__notch { position: absolute; left: calc(50% - 102px); top: 0; z-index: 3; width: 204px; height: 34px; border-radius: 0 0 12px 12px; background: #000; }
+
+/* The desktop: a wallpaper in the page's light, three windows of the visitor's own, the menu bar. */
+.fdesk { position: absolute; inset: 0; }
+.fdesk__wall {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(52% 64% at 18% 78%, light-dark(#c6e9db, #12493b), transparent 70%),
+    radial-gradient(46% 58% at 86% 24%, light-dark(#f4d2c2, #4b2633), transparent 70%),
+    radial-gradient(60% 70% at 62% 92%, light-dark(#dcd3f3, #261f4c), transparent 72%),
+    linear-gradient(160deg, light-dark(#e7ecf3, #101a2c), light-dark(#efe7ef, #1a1430));
+}
+.fdesk__bar {
+  position: absolute; left: 0; right: 0; top: 0; height: 36px; z-index: 2; display: flex; align-items: center; gap: 14px; padding: 0 24px;
+  background: light-dark(rgb(255 255 255 / 0.5), rgb(12 12 20 / 0.5));
+}
+.fdesk__dim { position: absolute; inset: 0; z-index: 2; background: light-dark(#f1ede4, #040605); opacity: 0; visibility: hidden; }
+.fdesk__off { position: absolute; inset: 0; z-index: 2; background: #000; opacity: 0; visibility: hidden; }
+.fwin {
+  position: absolute; z-index: 1; border-radius: 12px; overflow: hidden;
+  background: light-dark(rgb(255 255 255 / 0.94), rgb(28 31 42 / 0.96));
+  box-shadow: 0 0 0 1px light-dark(rgb(0 0 0 / 0.08), rgb(255 255 255 / 0.08)), 0 34px 60px -24px rgb(0 0 0 / 0.45);
+}
+.fwin__bar { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 13px; font: 600 12px/1 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.6), rgb(255 255 255 / 0.6)); }
+.fwin__bar i { width: 11px; height: 11px; border-radius: 50%; background: #ff6058; }
+.fwin__bar i:nth-child(2) { background: #ffbd2e; } .fwin__bar i:nth-child(3) { background: #29c840; }
+.fwin__bar span { margin-left: 10px; }
+.fwin__body { display: grid; gap: 11px; padding: 12px 20px 18px; }
+.fwin__h { font: 700 17px/1.3 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.86), rgb(255 255 255 / 0.86)); }
+.fwin__text { font: 500 14px/1.5 var(--font-sans); color: light-dark(rgb(30 30 40 / 0.74), rgb(255 255 255 / 0.74)); }
+.fwin__line { height: 9px; border-radius: 5px; background: light-dark(rgb(30 30 40 / 0.13), rgb(255 255 255 / 0.14)); }
+.fwin__img { height: 120px; border-radius: 9px; background: linear-gradient(135deg, light-dark(#bfe3d6, #1d5b4b), light-dark(#f2cdbb, #5a2f3a)); }
+/* The windows keep clear of the left third, where the titles are, and of the edges of the shots under the notch: nothing readable is
+   ever behind a title, and no window is sliced by the frame. The visitor's document sits under the notch; the rest lie low. */
+.fwin--term { left: 1010px; top: 590px; width: 430px; height: 290px; background: light-dark(rgb(251 251 250 / 0.97), rgb(17 19 24 / 0.97)); }
+.fwin--prev { left: 96px; top: 600px; width: 330px; height: 250px; }
+.fwin--doc { left: 528px; top: 120px; width: 500px; height: 330px; z-index: 1; }
+.fwin__term { display: grid; gap: 2px; padding: 12px 18px; font: 500 13.5px/1.55 var(--font-mono); color: light-dark(rgb(30 30 40 / 0.8), rgb(255 255 255 / 0.8)); white-space: pre; overflow: hidden; }
+.fterm--prompt { color: light-dark(#1c745a, #51d9ad); }
+.fterm--dim { color: light-dark(rgb(30 30 40 / 0.45), rgb(255 255 255 / 0.42)); }
+.fterm--user { color: light-dark(#1c1b18, #fff); font-weight: 650; }
+.fterm--ai { color: light-dark(rgb(30 30 40 / 0.86), rgb(255 255 255 / 0.86)); }
+.fterm__caret { display: inline-block; width: 8px; height: 15px; vertical-align: -2px; background: light-dark(#1c745a, #51d9ad); }
+
+/* A shot: a box as wide as a demo's scene, under the notch; only the one playing is shown. */
+.fshot { position: absolute; left: var(--shot-x); top: 0; z-index: 4; width: var(--shot-w); height: var(--h, 400px); visibility: hidden; opacity: 0; }
+.fshot .island { margin-top: 0; }
+:root:not(.js) .fshot[data-shot='main'] { visibility: visible; opacity: 1; }
+.fshot .peek__bell .icon { transform-origin: 50% 12%; }
+/* The sound of an alert, drawn: rings that spread from its bell. */
+.fsound { position: absolute; left: 0; top: 0; z-index: 35; width: 0; height: 0; pointer-events: none; }
+.fsound i { position: absolute; left: -24px; top: -24px; width: 48px; height: 48px; border-radius: 50%; border: 2px solid var(--ring, #51d9ad); opacity: 0; visibility: hidden; }
+
+/* The cat's close-up: the app's black stage, a glow under it and a floor. */
+.fstudio { position: absolute; inset: 0; z-index: 2; overflow: hidden; visibility: hidden; opacity: 0; background: radial-gradient(70% 90% at 64% 100%, #14201b, #050706 72%); }
+.fstudio__glow { position: absolute; inset: 0; background: radial-gradient(30% 36% at 64% 66%, rgb(81 217 173 / 0.17), transparent 72%); }
+.fstudio__floor { position: absolute; left: 40%; right: 12%; bottom: 23%; height: 1px; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.22), transparent); }
+.fstudio__cat { --u: 0.6cqi; position: absolute; left: 64%; bottom: calc(23% - var(--u) * 2); transform: translateX(-50%); }
+.fstudio__coats { position: absolute; left: 64%; bottom: 12%; translate: -50% 0; display: grid; place-items: center; visibility: hidden; opacity: 0; }
+.fstudio__coat {
+  grid-area: 1 / 1; padding: 0.45em 1.1em; border-radius: 999px; white-space: nowrap; opacity: 0;
+  font: 600 1.25cqi/1 var(--font-sans); letter-spacing: 0.02em; color: rgb(255 255 255 / 0.86); background: rgb(255 255 255 / 0.08); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+  transition: opacity 0.18s ease;
+}
+.fstudio__coat.is-on { opacity: 1; }
+
+/* MARK: Titles */
+.film__scrim {
+  position: absolute; inset: 0; z-index: 3; opacity: 0; visibility: hidden; pointer-events: none;
+  /* The title's side of the frame, in the studio's own color: solid behind the whole column of words, and soft only in the gap before
+     the shot, so no window, line or letter of the stage ever shows through a title. */
+  background: linear-gradient(90deg, var(--film-bg) 0%, var(--film-bg) 35%, color-mix(in srgb, var(--film-bg) 70%, transparent) 38.5%, transparent 42.5%);
+}
+.film__type { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.ktitle { position: absolute; visibility: hidden; opacity: 0; color: var(--ink); font-weight: 680; line-height: 1.04; letter-spacing: -0.035em; text-wrap: balance; }
+.ktitle[data-tone='light'] { color: #fff; }
+.ktitle__line { display: block; }
+/* Each word rises inside a window of its own height (its descenders included). */
+.kw { display: inline-block; overflow: clip; padding: 0.04em 0 0.12em; margin: -0.04em 0 -0.12em; vertical-align: top; }
+.kw > span { display: inline-block; }
+.ktitle[data-place='side'] { left: 6.5%; top: 50%; width: 33%; translate: 0 -50%; font-size: 4.3cqi; }
+.ktitle[data-place='center'] { left: 6%; right: 6%; top: 64%; text-align: center; font-size: 4.2cqi; }
+.ktitle[data-place='brand'] { left: 0; right: 0; top: 7.5%; text-align: center; font-size: 8.6cqi; font-weight: 700; letter-spacing: -0.05em; line-height: 1; }
+.ktitle[data-place='line'] { left: 6%; right: 6%; top: 21.5%; text-align: center; font-size: 2.3cqi; font-weight: 560; letter-spacing: -0.02em; color: var(--ink-2); }
+/* The sound's level meter, beside its title. */
+.ktitle__wave { display: flex; align-items: center; gap: 0.12em; height: 0.9em; margin-top: 0.32em; }
+.ktitle__wave i { width: 0.1em; height: 100%; border-radius: 0.05em; background: currentColor; opacity: 0.8; transform: scaleY(0.25); }
+.ktitle__wave i:nth-child(2n) { height: 70%; } .ktitle__wave i:nth-child(3n) { height: 85%; }
+
+@container film (max-width: 719px) {
+  .film__scrim { background: linear-gradient(0deg, var(--film-bg) 0%, var(--film-bg) 29%, color-mix(in srgb, var(--film-bg) 70%, transparent) 32.5%, transparent 36.5%); }
+  .ktitle[data-place='side'] { left: 7%; right: 7%; top: auto; bottom: 6%; width: auto; translate: none; font-size: 8.2cqi; }
+  .ktitle[data-place='center'] { top: 66%; font-size: 7.6cqi; }
+  .ktitle[data-place='brand'] { top: 13%; font-size: 17cqi; }
+  .ktitle[data-place='line'] { top: 27%; font-size: 4.6cqi; }
+  .fstudio { background: radial-gradient(90% 70% at 50% 64%, #14201b, #050706 72%); }
+  .fstudio__glow { background: radial-gradient(44% 30% at 50% 46%, rgb(81 217 173 / 0.17), transparent 72%); }
+  .fstudio__floor { left: 14%; right: 14%; bottom: 42%; }
+  .fstudio__cat { --u: 1.45cqi; left: 50%; bottom: calc(42% - var(--u) * 2); }
+  .fstudio__coats { left: 50%; bottom: 34%; }
+  .fstudio__coat { font-size: 3cqi; }
+}
+
+.film__keys { position: absolute; right: 4%; bottom: 6%; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+@container film (max-width: 719px) { .film__keys { right: 5%; bottom: auto; top: 5%; } }
+.film__veil { position: absolute; inset: 0; z-index: 6; background: #000; opacity: 0; visibility: hidden; pointer-events: none; }
+
+/* The film holds still with the timeline: its looping CSS (the working dots, a caret, a spinner) stops too. */
+.film:not(.is-playing) .film__stage, .film:not(.is-playing) .film__stage * { animation-play-state: paused !important; }
+
+/* The end: play it again, or go and get it. */
+.film__end { position: absolute; left: 0; right: 0; bottom: 8%; z-index: 7; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; padding-inline: 16px; }
+.film__end[hidden] { display: none; }
+.film__end .btn { --h: 48px; font-size: 1rem; }
+.film__replay-ic { width: 1.1em; height: 1.1em; }
+@media (prefers-reduced-motion: no-preference) { :root:not(.is-reduced) .film__end:not([hidden]) { animation: rise 0.8s var(--ease-out) both; } }
+@container film (max-width: 719px) { .film__end { bottom: 5%; } .film__end .btn { --h: 44px; font-size: 0.9375rem; padding-inline: 1.1em; } }
+
+/* MARK: Controls */
+.film__controls { width: var(--fw); display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.film__toggle {
+  position: relative; flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  color: var(--ink); background: var(--surface); box-shadow: var(--shadow-soft), 0 0 0 1px var(--line); transition: transform 0.2s var(--ease-out), background-color 0.2s;
+}
+@media (hover: hover) { .film__toggle:hover { background: var(--surface-2); } }
+.film__toggle:active { transform: scale(0.94); }
+.film__toggle:focus-visible { border-radius: 50%; }
+.film__ic { display: none; width: 16px; height: 16px; }
+.film[data-film='playing'] .film__ic--pause { display: block; }
+.film[data-film='ended'] .film__ic--replay { display: block; }
+.film:not([data-film='playing']):not([data-film='ended']) .film__ic--play { display: block; }
+.film__bar { flex: 1; min-width: 0; display: grid; gap: 7px; }
+.film__track { display: flex; gap: 4px; height: 22px; align-items: center; cursor: pointer; border-radius: 6px; -webkit-tap-highlight-color: transparent; }
+.film__track:focus-visible { outline-offset: 4px; border-radius: 8px; }
+.film__seg { position: relative; height: 4px; min-width: 6px; flex: 1 1 0; border-radius: 2px; overflow: hidden; background: var(--line-strong); transition: height 0.2s var(--ease-out); }
+@media (hover: hover) { .film__track:hover .film__seg { height: 6px; } }
+.film__seg.is-current { height: 6px; }
+.film__fill { position: absolute; inset: 0; border-radius: inherit; background: var(--ink); transform-origin: 0 50%; transform: scaleX(0); }
+.film__now { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8125rem; color: var(--ink-3); }
+.film__now span:first-child { color: var(--ink-2); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.film__time { flex: none; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .film__track { height: 32px; } }
+
+/* The text alternative: always read aloud; shown, with its note, when the film is a still frame. */
+.film__text { width: var(--fw); max-width: 760px; margin-top: 22px; }
+.film__note { margin-bottom: 14px; font-size: 0.9375rem; color: var(--ink-2); }
+.film__chapters { counter-reset: ch; display: grid; gap: 10px; font-size: 0.9375rem; line-height: 1.55; color: var(--ink-2); }
+.film__chapters li { counter-increment: ch; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: baseline; }
+.film__chapters li::before {
+  content: counter(ch); display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  font-size: 0.75rem; font-weight: 700; color: var(--mint); background: var(--mint-soft); transform: translateY(-1px);
+}
+.film__chapters strong { color: var(--ink); font-weight: 650; }
+:root.js:not(.is-reduced) .film__text { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.is-reduced .film__controls { display: none; }

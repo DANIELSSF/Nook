@@ -52,21 +52,40 @@ enum PetAnimation {
         var p = PetPose()
         p.action = .walk
         let hips = amp * CGFloat(cos(2 * phase)) * 0.4, shoulders = -amp * CGFloat(cos(2 * phase)) * 0.32
-        p.haunch = PetOval(-6.6, 12.4 + hips, 7.6, 5.4); p.chest = PetOval(4.4, 12.9 + shoulders, 7.3, 5.8)
+        p.haunch = PetOval(-6.6, 12.4 + hips, 7.6, 5.4); p.chest = PetOval(4.4, 12.6 + shoulders, 7.3, 6.3)
+        // A cat on its feet carries its body as one piece: the back straight from the rump to the shoulders, the belly from the chest to the thigh.
+        p.carriage = 1
         p.head = CGPoint(x: 12.4, y: 19.4 + shoulders * 0.3); p.headScale = 0.82
         p.look = CGPoint(x: 1.3, y: -0.2)
-        // Hip x, gait phase offset (near hind, near front a quarter later, far hind, far front), knee bend, whether it hangs from the hips.
-        let setup: [(CGFloat, Double, CGFloat, Bool)] = [(-9.6, -.pi, -1.8, true), (6.0, -3 * .pi / 2, 1.2, false), (-6.8, 0, -1.8, true), (8.6, -.pi / 2, 1.2, false)]
+        // Hip x, gait phase offset (near hind, near front a quarter later, far hind, far front), whether it is a hind leg. The legs stand
+        // under the ends of the body, the hind ones under the rump and the front ones under the chest, and come out of it from well inside
+        // (their hips are the broad tops of the legs: `PetLimbShape`), not hung from its middle.
+        let setup: [(CGFloat, Double, Bool)] = [(-11.6, -.pi, true), (6.8, -3 * .pi / 2, false), (-9.2, 0, true), (9.6, -.pi / 2, false)]
         for (i, s) in setup.enumerated() {
             let step = gait(phase + s.1)
-            let swing = amp * halfStride * step.swing, lift = amp * 3.2 * step.lift
-            let hip = CGPoint(x: s.0, y: 8.4 + (s.3 ? hips : shoulders)), foot = CGPoint(x: s.0 + swing, y: lift)
-            p.legs[i] = PetLimb(hip, CGPoint(x: (hip.x + foot.x) / 2 + s.2 * (1 + lift / 4), y: (hip.y + foot.y) / 2), foot, 3.1)
+            let swing = amp * halfStride * step.swing, raise = amp * step.lift
+            let hip = CGPoint(x: s.0, y: s.2 ? 10.8 + hips : 10.4 + shoulders), foot = CGPoint(x: s.0 + swing, y: 3.2 * raise)
+            p.legs[i] = s.2 ? hindLeg(hip, foot, raise: raise) : frontLeg(hip, foot, raise: raise)
         }
         let sway = CGFloat(sin(t * 2.2)), tip = CGFloat(sin(t * 2.2 - 0.9))
         p.tail = PetTail(p0: CGPoint(x: -12.5, y: 14 + hips), c1: CGPoint(x: -18, y: 13 + hips * 0.6), c2: CGPoint(x: -19.5 + sway, y: 19), p3: CGPoint(x: -16 + tip * 1.5, y: 25 + tip))
         return p
     }
+    /// A hind leg standing on its toes, as a cat's does: its hock is low (under two fifths of the way up from the foot) and behind the line from
+    /// the hip to the foot, so the thigh comes down and back to it and the foot goes down and forward from it. `raise` 0...1 is how far
+    /// the foot is lifted in a step: the hock folds further back and the paw hangs under it.
+    static func hindLeg(_ hip: CGPoint, _ foot: CGPoint, raise: CGFloat = 0, width: CGFloat = 3.1) -> PetLimb {
+        let hock = CGPoint(x: foot.x + (hip.x - foot.x) * 0.38 - 2.2 - 0.7 * raise, y: foot.y + (hip.y - foot.y) * 0.38 + 0.3 * raise)
+        return PetLimb(hip, hock, foot, width)
+    }
+
+    /// A front leg: a straight column from the shoulder while it stands, its wrist low on the line to the foot. As the foot is lifted in
+    /// a step the wrist comes forward and the paw folds back under it, and the leg straightens again as the paw reaches to land.
+    static func frontLeg(_ hip: CGPoint, _ foot: CGPoint, raise: CGFloat = 0, width: CGFloat = 3.1) -> PetLimb {
+        let wrist = CGPoint(x: foot.x + (hip.x - foot.x) * 0.26 + 0.15 + 1.9 * raise, y: foot.y + (hip.y - foot.y) * 0.26 + 0.5 * raise)
+        return PetLimb(hip, wrist, foot, width)
+    }
+
     /// Half the foot travel of a stride, in rig units.
     static let halfStride: CGFloat = 5
     /// The share of a stride each foot spends on the ground.
@@ -94,13 +113,16 @@ enum PetAnimation {
         let wiggle = CGFloat(sin(t * 3))
         p.haunch = PetOval(-6.6, 14.6, 7.8, 6.4, -0.42)
         p.chest = PetOval(4.0, 9.3, 7.6, 5.0, -0.38)
+        // The back sags into the bow; the belly, held a little more, does not pinch between the legs.
+        p.carriage = 0.3
         p.head = CGPoint(x: 13.6, y: 7.6); p.headScale = 0.86
         p.tilt = -0.12; p.eyes = 0.15; p.earL = 0.2; p.earR = 0.2; p.look = CGPoint(x: 1.8, y: -0.2)
         let reach = 15.5 + 2 * CGFloat(sin(t * 2))
-        p.legs[1] = PetLimb(CGPoint(x: 6, y: 5.4), CGPoint(x: 11, y: 1.6), CGPoint(x: reach, y: 1.3), 3.1)
-        p.legs[3] = PetLimb(CGPoint(x: 8.6, y: 5.4), CGPoint(x: 13, y: 1.6), CGPoint(x: reach + 2, y: 1.3), 3.1)
-        p.legs[0] = PetLimb(CGPoint(x: -9.6, y: 13.4), CGPoint(x: -11, y: 7), CGPoint(x: -9.1, y: 0.2), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -6.8, y: 13.4), CGPoint(x: -8.2, y: 7), CGPoint(x: -6.3, y: 0.2), 3.1)
+        p.legs[1] = PetLimb(CGPoint(x: 6, y: 6.2), CGPoint(x: 11, y: 1.6), CGPoint(x: reach, y: 1.3), 3.1)
+        p.legs[3] = PetLimb(CGPoint(x: 8.6, y: 6.2), CGPoint(x: 13, y: 1.6), CGPoint(x: reach + 2, y: 1.3), 3.1)
+        // The rear up on straight hind legs, on its toes.
+        p.legs[0] = hindLeg(CGPoint(x: -11.0, y: 13.2), CGPoint(x: -11.4, y: 0.2))
+        p.legs[2] = hindLeg(CGPoint(x: -8.4, y: 13.2), CGPoint(x: -8.2, y: 0.2))
         p.tail = PetTail(p0: CGPoint(x: -12.8, y: 17), c1: CGPoint(x: -17, y: 18), c2: CGPoint(x: -16.5 + wiggle, y: 24), p3: CGPoint(x: -17.5 + 1.2 * wiggle, y: 27.5))
         return p
     }
@@ -114,10 +136,10 @@ enum PetAnimation {
         p.chest = PetOval(4.8, 15.0, 7.4, 5.6, -0.5)
         p.head = CGPoint(x: 11.2, y: 13.0 + tremble * 0.25); p.headScale = 0.84
         p.tilt = -0.34; p.eyes = 0.12; p.earL = 0.34; p.earR = 0.3; p.look = CGPoint(x: 1.2, y: -0.8)
-        p.legs[0] = PetLimb(CGPoint(x: -8.6, y: 11.6), CGPoint(x: -9.4, y: 5.8), CGPoint(x: -9.2, y: 0.2), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -5.8, y: 11.6), CGPoint(x: -6.4, y: 5.8), CGPoint(x: -6.0, y: 0.2), 3.1)
-        p.legs[1] = PetLimb(CGPoint(x: 5.6, y: 11.4), CGPoint(x: 6.6, y: 5.8), CGPoint(x: 7.2, y: 0.2), 3.1)
-        p.legs[3] = PetLimb(CGPoint(x: 8.0, y: 11.4), CGPoint(x: 9.0, y: 5.8), CGPoint(x: 9.4, y: 0.2), 3.1)
+        p.legs[0] = hindLeg(CGPoint(x: -10.2, y: 12.6), CGPoint(x: -11.2, y: 0.2))
+        p.legs[2] = hindLeg(CGPoint(x: -7.6, y: 12.6), CGPoint(x: -8.4, y: 0.2))
+        p.legs[1] = frontLeg(CGPoint(x: 6.0, y: 12.2), CGPoint(x: 7.8, y: 0.2))
+        p.legs[3] = frontLeg(CGPoint(x: 8.6, y: 12.2), CGPoint(x: 10.2, y: 0.2))
         p.tail = PetTail(p0: CGPoint(x: -10.8, y: 16.4), c1: CGPoint(x: -15.8, y: 15.2), c2: CGPoint(x: -17.6 + tremble * 0.6, y: 9.0), p3: CGPoint(x: -16.2, y: 3.8 + tremble * 0.5))
         return p
     }
@@ -130,12 +152,14 @@ enum PetAnimation {
         p.action = .stretch
         p.haunch = PetOval(-4.0, 12.2, 7.6, 5.3, 0.08)
         p.chest = PetOval(6.8, 12.6, 7.3, 5.8, 0.02)
+        // The middle of the back let down a little for the stretch, the belly still carried.
+        p.carriage = 0.6
         p.head = CGPoint(x: 13.6, y: 19.8); p.headScale = 0.83
         p.tilt = 0.12; p.eyes = 0.3; p.earL = 0.12; p.earR = 0.12; p.look = CGPoint(x: 1.2, y: 0.5)
-        p.legs[1] = PetLimb(CGPoint(x: 8.4, y: 9.4), CGPoint(x: 10.2, y: 4.8), CGPoint(x: 11.6, y: 0.2), 3.1)
-        p.legs[3] = PetLimb(CGPoint(x: 10.6, y: 9.4), CGPoint(x: 12.2, y: 4.8), CGPoint(x: 13.6, y: 0.2), 3.1)
-        p.legs[0] = PetLimb(CGPoint(x: -6.8, y: 9.6), CGPoint(x: -8.0, y: 5.0), CGPoint(x: -6.4, y: 0.2), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -4.4, y: 9.6), CGPoint(x: -9.2, y: 7.4 + tremble * 0.2), CGPoint(x: -14.2, y: 4.2 + tremble * 0.35), 3.1)
+        p.legs[1] = frontLeg(CGPoint(x: 8.8, y: 10.4), CGPoint(x: 11.6, y: 0.2))
+        p.legs[3] = frontLeg(CGPoint(x: 11.0, y: 10.4), CGPoint(x: 13.6, y: 0.2))
+        p.legs[0] = hindLeg(CGPoint(x: -8.0, y: 10.8), CGPoint(x: -7.6, y: 0.2))
+        p.legs[2] = PetLimb(CGPoint(x: -5.4, y: 10.6), CGPoint(x: -9.8, y: 7.8 + tremble * 0.2), CGPoint(x: -14.6, y: 4.4 + tremble * 0.35), 3.1)
         p.tail = PetTail(p0: CGPoint(x: -10.2, y: 14.4), c1: CGPoint(x: -14.6, y: 17.6), c2: CGPoint(x: -16.0, y: 22.8), p3: CGPoint(x: -12.6, y: 27.0))
         return p
     }

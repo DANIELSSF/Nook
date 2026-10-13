@@ -21,6 +21,12 @@ export interface Pose {
   x: number;
   haunch: Oval;
   chest: Oval;
+  /**
+   * How the body between the two is carried, 0...1 (the app's `PetPose.carriage`): 0 with a waist, as a cat that sits or lies down has it
+   * (the outline dips between its haunch and its chest), 1 as one piece, as a cat on its feet carries it (the back and the belly run
+   * straight end to end). A stretch lets it down part of the way.
+   */
+  carriage: number;
   head: V2;
   headScale: number;
   tilt: number;
@@ -58,7 +64,7 @@ export const straightLimb = (x: number, hip: number, foot: number, width = 3.2):
 export function basePose(): Pose {
   return {
     action: 'sit', facing: 1, x: 0,
-    haunch: oval(0, 7.2, 9.6, 7.4), chest: oval(0, 13.5, 6.6, 8.5),
+    haunch: oval(0, 7.2, 9.6, 7.4), chest: oval(0, 13.5, 6.6, 8.5), carriage: 0,
     head: v(0, 19.2), headScale: 1, tilt: 0, earL: 0, earR: 0, eyes: 1, look: v(0, 0),
     legs: [straightLimb(-6.2, 6, 3.5, 3), straightLimb(-3.6, 8, 1.3, 3.8), straightLimb(6.2, 6, 3.5, 3), straightLimb(3.6, 8, 1.3, 3.8)],
     tail: { p0: v(-5.5, 3.5), c1: v(-19, -2), c2: v(-19.5, 9), p3: v(-13, 12), width: 3.5 },
@@ -123,7 +129,7 @@ export function blend(a: Pose, b: Pose, tIn: number): Pose {
     action: t >= 0.5 ? b.action : a.action,
     facing: t >= 0.5 ? b.facing : a.facing,
     x: lerp(a.x, b.x, t),
-    haunch: lo(a.haunch, b.haunch, t), chest: lo(a.chest, b.chest, t),
+    haunch: lo(a.haunch, b.haunch, t), chest: lo(a.chest, b.chest, t), carriage: lerp(a.carriage, b.carriage, t),
     head: lv(a.head, b.head, t), headScale: lerp(a.headScale, b.headScale, t), tilt: lerp(a.tilt, b.tilt, t),
     earL: lerp(a.earL, b.earL, t), earR: lerp(a.earR, b.earR, t), eyes: lerp(a.eyes, b.eyes, t), look: lv(a.look, b.look, t),
     legs: [lerpLimb(a.legs[0], b.legs[0], t), lerpLimb(a.legs[1], b.legs[1], t), lerpLimb(a.legs[2], b.legs[2], t), lerpLimb(a.legs[3], b.legs[3], t)],
@@ -212,6 +218,12 @@ export function staged(a: Pose, o: Pose, tIn: number, order: Order = 'headFirst'
 }
 
 /**
+ * The furthest the body's outline moves (rig units) as it goes from having a waist to being carried as one piece (the app's
+ * `PetTorso.carriageReach`): what `distance` counts a change of `carriage` as.
+ */
+export const CARRIAGE_REACH = 0.85;
+
+/**
  * Largest difference between two poses in rig units; used to skip frames that would paint the same picture. Which leg is which does
  * not show while the cat turns round: legs that stand where the other pose's do are compared with them.
  */
@@ -220,7 +232,7 @@ export function distance(a: Pose, b: Pose): number {
   const g = (p: V2, q: V2) => Math.max(Math.abs(p.x - q.x), Math.abs(p.y - q.y));
   const o = (p: Oval, q: Oval) => Math.max(Math.abs(p.cx - q.cx), Math.abs(p.cy - q.cy), Math.abs(p.rx - q.rx), Math.abs(p.ry - q.ry), Math.abs(p.angle - q.angle) * 8);
   const l = (p: Limb, q: Limb) => Math.max(g(p.hip, q.hip), g(p.knee, q.knee), g(p.foot, q.foot), Math.abs(p.width - q.width) * 0.5);
-  d = Math.max(d, Math.abs(a.x - b.x), Math.abs(a.y - b.y), o(a.haunch, b.haunch), o(a.chest, b.chest), g(a.head, b.head), g(a.look, b.look));
+  d = Math.max(d, Math.abs(a.x - b.x), Math.abs(a.y - b.y), o(a.haunch, b.haunch), o(a.chest, b.chest), Math.abs(a.carriage - b.carriage) * CARRIAGE_REACH, g(a.head, b.head), g(a.look, b.look));
   d = Math.max(d, Math.abs(a.headScale - b.headScale) * 9.3, Math.abs(a.tilt - b.tilt) * 9.3, Math.abs(a.earL - b.earL) * 8, Math.abs(a.earR - b.earR) * 8, Math.abs(a.eyes - b.eyes) * 1.6);
   const legs = (x: Legs) => Math.max(l(x[0], b.legs[0]), l(x[1], b.legs[1]), l(x[2], b.legs[2]), l(x[3], b.legs[3]));
   d = Math.max(d, isFrontal(a) !== isFrontal(b) ? Math.min(legs(a.legs), legs(paired(a.legs, b.legs))) : legs(a.legs));

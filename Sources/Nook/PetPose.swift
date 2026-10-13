@@ -66,6 +66,10 @@ struct PetPose: Equatable {
     var x: CGFloat = 0
     var haunch = PetOval(0, 7.2, 9.6, 7.4)
     var chest = PetOval(0, 13.5, 6.6, 8.5)
+    /// How the body between the two is carried, 0...1: 0 with a waist, as a cat that sits or lies down has it (the outline dips between its
+    /// haunch and its chest), 1 as one piece, as a cat on its feet carries it (the back and the belly run straight from end to end;
+    /// `PetTorso`). A stretch lets it down part of the way.
+    var carriage: CGFloat = 0
     var head = CGPoint(x: 0, y: 19.2)
     var headScale: CGFloat = 1
     var tilt: CGFloat = 0
@@ -106,7 +110,7 @@ struct PetPose: Equatable {
         func l(_ a: PetLimb, _ b: PetLimb) -> PetLimb { PetLimb(p(a.hip, b.hip), p(a.knee, b.knee), p(a.foot, b.foot), f(a.width, b.width)) }
         var r = self
         r.x = f(x, o.x)
-        r.haunch = v(haunch, o.haunch); r.chest = v(chest, o.chest)
+        r.haunch = v(haunch, o.haunch); r.chest = v(chest, o.chest); r.carriage = f(carriage, o.carriage)
         r.head = p(head, o.head); r.headScale = f(headScale, o.headScale); r.tilt = f(tilt, o.tilt)
         r.earL = f(earL, o.earL); r.earR = f(earR, o.earR); r.eyes = f(eyes, o.eyes); r.look = p(look, o.look)
         r.legs = PetLegs(l(legs.farHind, o.legs.farHind), l(legs.farFront, o.legs.farFront), l(legs.nearHind, o.legs.nearHind), l(legs.nearFront, o.legs.nearFront))
@@ -191,7 +195,7 @@ struct PetPose: Equatable {
         @inline(__always) func limb(_ a: PetLimb, _ b: PetLimb) -> CGFloat { max(gap(a.hip, b.hip), gap(a.knee, b.knee), gap(a.foot, b.foot), abs(a.width - b.width) * 0.5) }
         @inline(__always) func limbs(_ a: PetLegs, _ b: PetLegs) -> CGFloat { max(limb(a.farHind, b.farHind), limb(a.farFront, b.farFront), limb(a.nearHind, b.nearHind), limb(a.nearFront, b.nearFront)) }
         var d = abs(x - o.x) / max(scale, 0.01)
-        d = max(d, abs(y - o.y), oval(haunch, o.haunch), oval(chest, o.chest), gap(head, o.head), gap(look, o.look))
+        d = max(d, abs(y - o.y), oval(haunch, o.haunch), oval(chest, o.chest), abs(carriage - o.carriage) * PetTorso.carriageReach, gap(head, o.head), gap(look, o.look))
         d = max(d, abs(headScale - o.headScale) * 9.3, abs(tilt - o.tilt) * 9.3, abs(earL - o.earL) * 8, abs(earR - o.earR) * 8, abs(eyes - o.eyes) * 1.6)
         // Which leg is which does not show while the cat turns round: legs that stand where the other pose's do are compared with them.
         d = max(d, isFrontal != o.isFrontal ? min(limbs(legs, o.legs), limbs(Self.paired(legs, like: o.legs), o.legs)) : limbs(legs, o.legs))
@@ -234,13 +238,15 @@ struct PetPose: Equatable {
         func dot(_ p: CGPoint, _ r: CGFloat) { add(CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)) }
         for o in [haunch, chest] { add(CGRect(x: o.cx - o.halfWidth, y: o.cy - o.halfHeight, width: 2 * o.halfWidth, height: 2 * o.halfHeight)) }
         // The body's back and belly lines run between the two ovals; a back rounded out over them can rise a little above both.
-        add(PetTorso(haunch, chest).linesBounds)
+        add(PetTorso(self).linesBounds)
         // Head outline: ellipse extremes plus ear tips, rotated with the head.
         for c in [CGPoint(x: -9.3, y: 0), CGPoint(x: 9.3, y: 0), CGPoint(x: 0, y: -7.4), CGPoint(x: 0, y: 7.4), CGPoint(x: -7.5, y: 12.2), CGPoint(x: 7.5, y: 12.2)] {
             let x = c.x * headScale, y = c.y * headScale
             dot(CGPoint(x: head.x + x * cos(tilt) - y * sin(tilt), y: head.y + x * sin(tilt) + y * cos(tilt)), 0)
         }
-        for leg in legs { for p in [leg.hip, leg.knee, leg.foot] { dot(p, leg.width / 2) } }
+        // Each leg as it is drawn: broad at the hip, with its paw (`PetLimbShape`).
+        let shapes = PetLimbShape.legs(of: self)
+        add(shapes.0.bounds); add(shapes.1.bounds); add(shapes.2.bounds); add(shapes.3.bounds)
         for i in 0...12 {
             let u = CGFloat(i) / 12, v = 1 - u
             dot(CGPoint(x: v * v * v * tail.p0.x + 3 * v * v * u * tail.c1.x + 3 * v * u * u * tail.c2.x + u * u * u * tail.p3.x,

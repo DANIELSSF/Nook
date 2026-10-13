@@ -46,13 +46,20 @@ const DEGREES = 180 / Math.PI;
  * are (two ovals), but the outline is the haunch's round rear and the chest's round front joined by a back line above and a belly line
  * below, each one smooth cubic from one oval to the other. Each line starts from the ovals' common tangent on its side and is let down
  * into the waist part of the way to where their outlines cross (less for the back, more for the belly of a cat seen from the side); the
- * ovals' turn against each other is the spine's bend, which rounds one side out over both and draws the other in.
+ * ovals' turn against each other is the spine's bend, which rounds one side out over both and draws the other in. A cat that stands or
+ * walks carries its body as one piece (`carriage` 1): its back runs straight along the common tangent from the rump to the shoulders,
+ * and its belly from the chest back to the thigh, but for a small tuck of the flank in front of the thigh.
  */
 const TORSO = {
   /** How far into the waist the lines are let down: the share of the way from the common tangent to where the ovals cross. */
   waist: 0.4,
   /** The back is let down by this share less, the belly by this more. */
   level: 0.12,
+  /**
+   * A body carried as one piece: how far the back is let down at both ends (0, straight along the common tangent), and how far the belly
+   * is where it leaves the haunch (the flank's tuck in front of the thigh); it reaches the chest on the tangent.
+   */
+  carried: { back: 0, tuck: 0.2 },
   /** How much each end of a line turns (radians) per radian the chest is turned against the haunch. */
   bend: 0.4,
   /** The furthest a line is let out (radians) over a rounded back, and the furthest share of the way to the notch it is let down. */
@@ -92,8 +99,11 @@ const parameter = (o: Oval, p: V2): number => {
   return Math.atan2((-dx * s + dy * c) / o.ry, (dx * c + dy * s) / o.rx);
 };
 
-/** One line's ends: `side` 1 is the back, -1 the belly. `bent` turns both ends toward the waist (positive) or away from it. */
-function join(h: Oval, c: Oval, ux: number, uy: number, side: number, bent: number): [number, number] {
+/**
+ * One line's ends: `side` 1 is the back, -1 the belly. `bent` turns both ends toward the waist (positive) or away from it. `carried` is
+ * how far the body is carried as one piece.
+ */
+function join(h: Oval, c: Oval, ux: number, uy: number, side: number, bent: number, carried: number): [number, number] {
   // The common tangent on this side: Newton on the angle of its normal, from the perpendicular to the spine.
   let normal = Math.atan2(side * ux, -side * uy);
   for (let i = 0; i < 6; i++) {
@@ -126,8 +136,13 @@ function join(h: Oval, c: Oval, ux: number, uy: number, side: number, bent: numb
     if (spanC > Math.PI) spanC = 0;
   }
   const share = TORSO.waist - TORSO.level * side * ux;
-  const slideH = Math.max(-TORSO.bulge, Math.min(TORSO.reach * spanH, share * spanH + bent));
-  const slideC = Math.max(-TORSO.bulge, Math.min(TORSO.reach * spanC, share * spanC + bent));
+  // Carried as one piece, the back (the upper side of a cat seen from the side) is let down by `carried.back` and the belly only where it
+  // leaves the haunch; a seated cat's two sides, neither above the other, take half of each.
+  const upper = (1 + side * ux) / 2;
+  const shareH = share + (TORSO.carried.back * upper + TORSO.carried.tuck * (1 - upper) - share) * carried;
+  const shareC = share + (TORSO.carried.back * upper - share) * carried;
+  const slideH = Math.max(-TORSO.bulge, Math.min(TORSO.reach * spanH, shareH * spanH + bent));
+  const slideC = Math.max(-TORSO.bulge, Math.min(TORSO.reach * spanC, shareC * spanC + bent));
   return [tangentH + toward * slideH, tangentC + side * slideC];
 }
 
@@ -155,14 +170,15 @@ function line(a: Oval, ta: number, b: Oval, tb: number): string {
 
 /** Where the back line leaves the haunch and reaches the chest, and where the belly line does: each oval's parametric angle (the app's `PetTorso.init`). */
 export interface TorsoJoins { backHaunch: number; backChest: number; bellyHaunch: number; bellyChest: number }
-export function torsoJoins(haunch: Oval, chest: Oval): TorsoJoins {
+export function torsoJoins(haunch: Oval, chest: Oval, carriage = 0): TorsoJoins {
   let ux = chest.cx - haunch.cx, uy = chest.cy - haunch.cy;
   const length = Math.sqrt(ux * ux + uy * uy);
   if (length < 0.001) { ux = 0; uy = 1; } else { ux /= length; uy /= length; }
   // The spine's bend: how far the chest is turned against the haunch (negative arches the back, positive sags it).
   const bent = TORSO.bend * (chest.angle - haunch.angle);
-  const [backHaunch, backChest] = join(haunch, chest, ux, uy, 1, bent);
-  const [bellyHaunch, bellyChest] = join(haunch, chest, ux, uy, -1, -bent);
+  const carried = Math.min(1, Math.max(0, carriage));
+  const [backHaunch, backChest] = join(haunch, chest, ux, uy, 1, bent, carried);
+  const [bellyHaunch, bellyChest] = join(haunch, chest, ux, uy, -1, -bent, carried);
   return { backHaunch, backChest, bellyHaunch, bellyChest };
 }
 
@@ -170,7 +186,7 @@ export function torsoJoins(haunch: Oval, chest: Oval): TorsoJoins {
  * The torso's outline as path data, counterclockwise (the app's `PetTorso.trace`): from the back round the haunch's rear to the belly, the
  * belly line, round the chest's front, and the back line home.
  */
-export function torsoPath(haunch: Oval, chest: Oval, j: TorsoJoins = torsoJoins(haunch, chest)): string {
+export function torsoPath(haunch: Oval, chest: Oval, j: TorsoJoins): string {
   const start = ovalPoint(haunch, j.backHaunch);
   return `M${pt(start.x, start.y)}`
     + arc(haunch, j.backHaunch, wrap(j.bellyHaunch - j.backHaunch))
@@ -191,6 +207,213 @@ function torsoWaist(haunch: Oval, chest: Oval, j: TorsoJoins): string {
     + `L${pt(c.x, c.y)}`
     + line(chest, j.backChest, haunch, j.backHaunch)
     + 'Z';
+}
+
+// MARK: The legs
+
+/**
+ * A leg as the app's `PetLimbShape` draws it, number for number. The poses give a leg as three points and a width (the hip, the knee and
+ * the foot), but it is not a stick of one width: it is broad where it comes out of the body (a hind leg's thigh, a front leg's
+ * shoulder), narrows to the hock or the wrist and ends in a paw. Its shape is three circles (at the hip, inside the body, the knee and
+ * the foot, each joined to the next by their common tangents) and the paw, an oval lying flat under a leg that stands (its sole where
+ * the stick's round end was, its toes a little forward) and pointing along a leg that reaches or is raised. It is traced as one outline
+ * (down one side, round the paw from where that side runs into it to where the other does, up the other side and round the hip; round
+ * on the outside of the knee, a corner where the tangents cross on the inside of it), as the outline and the paw apart where a side
+ * misses the paw, or as its three overlapping pieces where the leg is folded too tight; every piece counterclockwise, so they fill
+ * (nonzero) as their union.
+ */
+export const LIMB = {
+  /** The radii at the hip, the knee and the foot, as shares of the width. */
+  hind: { hip: 0.95, knee: 0.45, foot: 0.38 },
+  front: { hip: 0.78, knee: 0.46, foot: 0.39 },
+  /** The paw's half-length and half-height, and how far forward of the foot a standing paw's centre is, as shares of the width. */
+  paw: { length: 0.6, height: 0.4, toe: 0.18 },
+  /** The black seam round a raised forearm: half of it shows outside. */
+  seam: 1.9,
+};
+
+export interface LimbShape {
+  hip: V2; knee: V2; foot: V2;
+  hipRadius: number; kneeRadius: number; footRadius: number;
+  /** The paw: its centre, the unit direction of its length, its half-length and half-height. */
+  paw: V2; pawAxis: V2; pawLength: number; pawHeight: number;
+}
+
+/** Which way the cat faces, seen from where it is drawn (the app's `PetLimbShape.facing`): 1 its right side, -1 its left, 0 the front. */
+export const limbFacing = (pose: Pose): number => Math.min(1, Math.max(-1, (pose.chest.cx - pose.haunch.cx) / 8));
+
+/** The leg `l` of a `hind` or front leg, for a cat facing `toe` (the app's `PetLimbShape.init`). */
+export function limbShape(l: Limb, hind: boolean, toe: number): LimbShape {
+  const k = hind ? LIMB.hind : LIMB.front, w = l.width;
+  const pawLength = LIMB.paw.length * w, pawHeight = LIMB.paw.height * w;
+  let ux = l.foot.x - l.knee.x, uy = l.foot.y - l.knee.y;
+  const n = Math.sqrt(ux * ux + uy * uy);
+  if (n < 0.001) { ux = 0; uy = -1; } else { ux /= n; uy /= n; }
+  // How much the lower leg stands: 1 within about thirty degrees of straight down, 0 more than seventy from it.
+  const s = Math.min(1, Math.max(0, (-uy - 0.35) / 0.5)), flat = s * s * (3 - 2 * s);
+  let ax = ux * (1 - flat) + (ux < 0 ? -flat : flat), ay = uy * (1 - flat);
+  const an = Math.sqrt(ax * ax + ay * ay);
+  if (an < 0.001) { ax = 1; ay = 0; } else { ax /= an; ay /= an; }
+  const along = 0.5 * w - pawLength, sole = 0.5 * w - pawHeight;
+  return {
+    hip: l.hip, knee: l.knee, foot: l.foot,
+    hipRadius: k.hip * w, kneeRadius: k.knee * w, footRadius: k.foot * w,
+    paw: { x: l.foot.x + ux * along * (1 - flat) + toe * LIMB.paw.toe * w * flat, y: l.foot.y + uy * along * (1 - flat) - sole * flat },
+    pawAxis: { x: ax, y: ay }, pawLength, pawHeight,
+  };
+}
+
+interface Tangents { right: V2; left: V2; phi: number }
+
+/** The common tangents of two circles (the app's `PetLimbShape.tangents`): their unit normals, right and left of the way from `a` to `b`. */
+function tangents(a: V2, ra: number, b: V2, rb: number): Tangents | null {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy);
+  if (!(d > Math.abs(ra - rb) + 0.01)) return null;
+  const ux = dx / d, uy = dy / d, c = (ra - rb) / d, s = Math.sqrt(1 - c * c);
+  return { right: { x: c * ux + s * uy, y: c * uy - s * ux }, left: { x: c * ux - s * uy, y: c * uy + s * ux }, phi: Math.acos(c) };
+}
+
+/** A circle's arc counterclockwise from the unit direction `n`, as cubics of a third of a turn or less (the app's `PetLimbShape.arc`). */
+function circleArc(c: V2, rad: number, n: V2, span: number): string {
+  const count = Math.max(1, Math.ceil(span / ((2 * Math.PI) / 3) - 0.000001));
+  const d = span / count, k = (4 / 3) * Math.tan(d / 4) * rad, cd = Math.cos(d), sd = Math.sin(d);
+  let x0 = n.x, y0 = n.y, out = '';
+  for (let i = 0; i < count; i++) {
+    const x1 = x0 * cd - y0 * sd, y1 = x0 * sd + y0 * cd;
+    out += `C${pt(c.x + rad * x0 - k * y0, c.y + rad * y0 + k * x0)} ${pt(c.x + rad * x1 + k * y1, c.y + rad * y1 - k * x1)} ${pt(c.x + rad * x1, c.y + rad * y1)}`;
+    x0 = x1; y0 = y1;
+  }
+  return out;
+}
+
+/** Two circles and their two common tangents, counterclockwise (the app's `PetLimbShape.hull`); not `round`, straight across `a`'s end. */
+function hull(a: V2, ra: number, b: V2, rb: number, round: boolean): string {
+  const t = tangents(a, ra, b, rb);
+  if (!t) {
+    const [c, rad] = ra >= rb ? [a, ra] : [b, rb];
+    return `M${pt(c.x + rad, c.y)}${circleArc(c, rad, { x: 1, y: 0 }, 2 * Math.PI)}Z`;
+  }
+  return `M${pt(a.x + ra * t.right.x, a.y + ra * t.right.y)}`
+    + `L${pt(b.x + rb * t.right.x, b.y + rb * t.right.y)}`
+    + circleArc(b, rb, t.right, 2 * t.phi)
+    + `L${pt(a.x + ra * t.left.x, a.y + ra * t.left.y)}`
+    + (round ? circleArc(a, ra, t.left, 2 * Math.PI - 2 * t.phi) : '')
+    + 'Z';
+}
+
+/** Where the line through `a` and `b` crosses the one through `c` and `d` (the app's `PetLimbShape.crossing`), or null when far from `near`. */
+function crossing(a: V2, b: V2, c: V2, d: V2, near: V2, within: number): V2 | null {
+  const rx = b.x - a.x, ry = b.y - a.y, sx = d.x - c.x, sy = d.y - c.y;
+  const denominator = rx * sy - ry * sx;
+  let p = { x: (b.x + c.x) / 2, y: (b.y + c.y) / 2 };
+  if (Math.abs(denominator) > 0.000001) {
+    const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denominator;
+    p = { x: a.x + t * rx, y: a.y + t * ry };
+  }
+  const dx = p.x - near.x, dy = p.y - near.y;
+  return dx * dx + dy * dy <= within * within ? p : null;
+}
+
+/** Where the side from `a` (by the knee) to `b` (on the ankle) first meets the paw, and the paw's angle there (the app's `pawHit`). */
+function pawHit(l: LimbShape, a: V2, b: V2): { point: V2; angle: number } | null {
+  const ax = a.x - l.paw.x, ay = a.y - l.paw.y, dx = b.x - a.x, dy = b.y - a.y;
+  const px = (ax * l.pawAxis.x + ay * l.pawAxis.y) / l.pawLength, py = (ay * l.pawAxis.x - ax * l.pawAxis.y) / l.pawHeight;
+  const vx = (dx * l.pawAxis.x + dy * l.pawAxis.y) / l.pawLength, vy = (dy * l.pawAxis.x - dx * l.pawAxis.y) / l.pawHeight;
+  const qa = vx * vx + vy * vy, qb = px * vx + py * vy, qc = px * px + py * py - 1;
+  if (!(qc > 0 && qa > 0.000001)) return null;
+  const disc = qb * qb - qa * qc;
+  if (!(disc > 0)) return null;
+  const root = Math.sqrt(disc), t = (-qb - root) / qa, out = (-qb + root) / qa;
+  const length = Math.sqrt(dx * dx + dy * dy), slack = l.footRadius / Math.max(length, 0.001);
+  if (!(t > 0 && t < 1 + slack && (t > 1 - slack || out > 1))) return null;
+  return { point: { x: a.x + t * dx, y: a.y + t * dy }, angle: Math.atan2(py + t * vy, px + t * vx) };
+}
+
+/** The paw's outline counterclockwise from parametric angle `t0`, as cubics of a third of a turn or less (the app's `pawArc`). */
+function pawArc(l: LimbShape, t0: number, span: number): string {
+  const count = Math.max(1, Math.ceil(span / ((2 * Math.PI) / 3) - 0.000001));
+  const d = span / count, k = (4 / 3) * Math.tan(d / 4), cd = Math.cos(d), sd = Math.sin(d);
+  const ax = l.pawAxis.x * l.pawLength, ay = l.pawAxis.y * l.pawLength, bx = -l.pawAxis.y * l.pawHeight, by = l.pawAxis.x * l.pawHeight;
+  let c0 = Math.cos(t0), s0 = Math.sin(t0), out = '';
+  for (let i = 0; i < count; i++) {
+    const c1 = c0 * cd - s0 * sd, s1 = c0 * sd + s0 * cd;
+    const p0x = l.paw.x + c0 * ax + s0 * bx, p0y = l.paw.y + c0 * ay + s0 * by, v0x = -s0 * ax + c0 * bx, v0y = -s0 * ay + c0 * by;
+    const p1x = l.paw.x + c1 * ax + s1 * bx, p1y = l.paw.y + c1 * ay + s1 * by, v1x = -s1 * ax + c1 * bx, v1y = -s1 * ay + c1 * by;
+    out += `C${pt(p0x + k * v0x, p0y + k * v0y)} ${pt(p1x - k * v1x, p1y - k * v1y)} ${pt(p1x, p1y)}`;
+    c0 = c1; s0 = s1;
+  }
+  return out;
+}
+
+/** The paw on its own, counterclockwise from the toes. */
+function pawPath(l: LimbShape): string {
+  const px = { x: l.pawAxis.x * l.pawLength, y: l.pawAxis.y * l.pawLength }, py = { x: -l.pawAxis.y * l.pawHeight, y: l.pawAxis.x * l.pawHeight };
+  const k = 0.5522847498;
+  const at = (c: number, s: number) => pt(l.paw.x + c * px.x + s * py.x, l.paw.y + c * px.y + s * py.y);
+  return `M${at(1, 0)}C${at(1, k)} ${at(k, 1)} ${at(0, 1)}C${at(-k, 1)} ${at(-1, k)} ${at(-1, 0)}`
+    + `C${at(-1, -k)} ${at(-k, -1)} ${at(0, -1)}C${at(k, -1)} ${at(1, -k)} ${at(1, 0)}Z`;
+}
+
+/** The leg's one outline (the app's `PetLimbShape.traceOutline`), or null where it cannot be traced as one. */
+function limbOutline(l: LimbShape, withPaw: boolean): string | null {
+  const on = (c: V2, rad: number, n: V2): V2 => ({ x: c.x + rad * n.x, y: c.y + rad * n.y });
+  const turn = (a: V2, b: V2): number => Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
+  let upper: Tangents, lower: Tangents, bent = true;
+  const u = tangents(l.hip, l.hipRadius, l.knee, l.kneeRadius), lo = tangents(l.knee, l.kneeRadius, l.foot, l.footRadius);
+  if (u && lo) { upper = u; lower = lo; } else {
+    const dx = l.knee.x - l.hip.x, dy = l.knee.y - l.hip.y;
+    const d = Math.sqrt(dx * dx + dy * dy) + l.kneeRadius <= l.hipRadius + 0.01 ? tangents(l.hip, l.hipRadius, l.foot, l.footRadius) : null;
+    if (!d) return null;
+    upper = d; lower = d; bent = false;
+  }
+  const hipRight = on(l.hip, l.hipRadius, upper.right), hipLeft = on(l.hip, l.hipRadius, upper.left);
+  const footRight = on(l.foot, l.footRadius, lower.right), footLeft = on(l.foot, l.footRadius, lower.left);
+  let rightTurn = 0, leftTurn = 0, rightFrom = hipRight, leftTo = hipLeft;
+  if (bent) {
+    rightTurn = turn(upper.right, lower.right); leftTurn = turn(lower.left, upper.left);
+    if (rightTurn < 0) {
+      const c = crossing(hipRight, on(l.knee, l.kneeRadius, upper.right), on(l.knee, l.kneeRadius, lower.right), footRight, l.knee, 3 * l.kneeRadius);
+      if (!c) return null;
+      rightFrom = c;
+    } else rightFrom = on(l.knee, l.kneeRadius, lower.right);
+    if (leftTurn < 0) {
+      const c = crossing(footLeft, on(l.knee, l.kneeRadius, lower.left), on(l.knee, l.kneeRadius, upper.left), hipLeft, l.knee, 3 * l.kneeRadius);
+      if (!c) return null;
+      leftTo = c;
+    } else leftTo = on(l.knee, l.kneeRadius, lower.left);
+  }
+  let rightHit = { point: footRight, angle: 0 }, leftHit = rightHit;
+  if (withPaw) {
+    const r0 = pawHit(l, rightFrom, footRight), l0 = pawHit(l, leftTo, footLeft);
+    if (!r0 || !l0) return null;
+    rightHit = r0; leftHit = l0;
+  }
+  let d = `M${pt(hipRight.x, hipRight.y)}`;
+  if (bent && rightTurn >= 0) { const k = on(l.knee, l.kneeRadius, upper.right); d += `L${pt(k.x, k.y)}` + circleArc(l.knee, l.kneeRadius, upper.right, rightTurn); }
+  else if (bent) d += `L${pt(rightFrom.x, rightFrom.y)}`;
+  if (withPaw) {
+    let span = leftHit.angle - rightHit.angle;
+    if (span <= 0) span += 2 * Math.PI;
+    d += `L${pt(rightHit.point.x, rightHit.point.y)}` + pawArc(l, rightHit.angle, span);
+  } else d += `L${pt(footRight.x, footRight.y)}` + circleArc(l.foot, l.footRadius, lower.right, 2 * lower.phi);
+  if (bent) d += `L${pt(leftTo.x, leftTo.y)}`;
+  if (bent && leftTurn >= 0) d += circleArc(l.knee, l.kneeRadius, lower.left, leftTurn);
+  d += `L${pt(hipLeft.x, hipLeft.y)}` + circleArc(l.hip, l.hipRadius, upper.left, 2 * Math.PI - 2 * upper.phi) + 'Z';
+  return d;
+}
+
+/** The lower leg and the paw only: what is outlined in black when a paw is raised over the white face. */
+export function forearmPath(l: LimbShape): string {
+  return hull(l.knee, l.kneeRadius, l.foot, l.footRadius, true) + pawPath(l);
+}
+
+/** The whole leg as path data (the app's `PetLimbShape.trace`). */
+export function limbPath(l: LimbShape): string {
+  const one = limbOutline(l, true);
+  if (one) return one;
+  const outline = limbOutline(l, false);
+  if (outline) return outline + pawPath(l);
+  return hull(l.hip, l.hipRadius, l.knee, l.kneeRadius, true) + hull(l.knee, l.kneeRadius, l.foot, l.footRadius, false) + pawPath(l);
 }
 
 // MARK: The face
@@ -308,20 +531,20 @@ export function paint(pose: Pose, look: Look, set: Sink): void {
     set('rings', 'd', d);
   }
 
-  // Legs: a foot raised to the face is drawn over the head, with a thin black seam.
+  // Legs: each broad where it comes out of the body and ending in a paw (the app's `PetLimbShape`). A foot raised to the face is drawn
+  // over the head, with a thin black seam round the forearm and the paw.
+  const toe = limbFacing(pose);
   pose.legs.forEach((l: Limb, i) => {
     const raised = l.foot.y > RAISED_ABOVE;
+    const shape = limbShape(l, i % 2 === 0, toe);
     set(`leg${i}b`, 'display', raised ? 'none' : '');
     set(`leg${i}h`, 'display', raised ? '' : 'none');
     set(`leg${i}f`, 'display', raised ? '' : 'none');
     if (raised) {
-      set(`leg${i}h`, 'points', polyline(l.knee, l.foot));
-      set(`leg${i}h`, 'stroke-width', r(l.width + 1.9));
-      set(`leg${i}f`, 'points', polyline(l.hip, l.knee, l.foot));
-      set(`leg${i}f`, 'stroke-width', r(l.width));
+      set(`leg${i}h`, 'd', forearmPath(shape));
+      set(`leg${i}f`, 'd', limbPath(shape));
     } else {
-      set(`leg${i}b`, 'points', polyline(l.hip, l.knee, l.foot));
-      set(`leg${i}b`, 'stroke-width', r(l.width));
+      set(`leg${i}b`, 'd', limbPath(shape));
     }
   });
 
@@ -329,7 +552,7 @@ export function paint(pose: Pose, look: Look, set: Sink): void {
   // ovals themselves, and only the waist between them as a path: Chrome lays a path's edge a little inside where it lays the same
   // curve given as an `<ellipse>` (and where Core Graphics, the app's painter, lays both), so the ends keep the app's exact edge. The
   // three together are the same figure as the app's one outline. The flank's stripes (drawn over the near legs) are cut to that outline.
-  const joins = torsoJoins(pose.haunch, pose.chest);
+  const joins = torsoJoins(pose.haunch, pose.chest, pose.carriage);
   const oval = (name: string, o: Oval) => {
     set(name, 'rx', r(o.rx)); set(name, 'ry', r(o.ry));
     set(name, 'transform', `translate(${pt(o.cx, o.cy)})${o.angle ? ` rotate(${r(o.angle * DEGREES)})` : ''}`);
@@ -430,11 +653,11 @@ export function paint(pose: Pose, look: Look, set: Sink): void {
 interface Node { p: string; tag: string; attrs?: Record<string, string>; kids?: Node[]; void?: boolean }
 
 const leg = (i: number): Node[] => [
-  { p: `leg${i}b`, tag: 'polyline', attrs: { class: 'cat-stroke' } },
+  { p: `leg${i}b`, tag: 'path', attrs: { class: 'cat-fill' } },
 ];
 const raisedLeg = (i: number): Node[] => [
-  { p: `leg${i}h`, tag: 'polyline', attrs: { class: 'cat-seam' } },
-  { p: `leg${i}f`, tag: 'polyline', attrs: { class: 'cat-stroke' } },
+  { p: `leg${i}h`, tag: 'path', attrs: { class: 'cat-seam', 'stroke-width': String(LIMB.seam) } },
+  { p: `leg${i}f`, tag: 'path', attrs: { class: 'cat-fill' } },
 ];
 
 const TREE: Node[] = [

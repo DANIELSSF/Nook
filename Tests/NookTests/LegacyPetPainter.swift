@@ -15,29 +15,36 @@ enum LegacyPetPainter {
         if let ledge { cg.clip(to: CGRect(x: -400, y: ledge, width: 800, height: 800)) }
         cg.translateBy(x: 0, y: pose.y)
         color.setFill(); color.setStroke()
-        func limb(_ l: PetLimb, halo: Bool = false) {
+        // The legs have been broad at the hip and ended in a paw since they were reshaped (`PetLimbShape`): the old painter draws that
+        // shape too, its own way (a new NSBezierPath every frame), so the two are still held to painting the same cat.
+        func path(_ trace: ((CGPoint) -> Void, (CGPoint) -> Void, (CGPoint, CGPoint, CGPoint) -> Void, () -> Void) -> Void) -> NSBezierPath {
+            let p = NSBezierPath()
+            trace({ p.move(to: $0) }, { p.line(to: $0) }, { p.curve(to: $2, controlPoint1: $0, controlPoint2: $1) }, { p.close() })
+            return p
+        }
+        func limb(_ l: PetLimbShape, halo: Bool = false) {
             if halo {
                 // A paw raised in front of the face is white on white: a thin black seam around the forearm keeps it readable.
-                let seam = NSBezierPath(); seam.move(to: l.knee); seam.line(to: l.foot)
+                let seam = path { l.traceForearm(move: $0, line: $1, curve: $2, close: $3) }
                 NSColor.black.setStroke()
-                seam.lineWidth = l.width + 1.9; seam.lineCapStyle = .round; seam.stroke()
+                seam.lineWidth = PetPainter.seam; seam.lineJoinStyle = .round; seam.stroke()
                 color.setStroke()
             }
-            let path = NSBezierPath(); path.move(to: l.hip); path.line(to: l.knee); path.line(to: l.foot)
-            path.lineWidth = l.width; path.lineCapStyle = .round; path.lineJoinStyle = .round; path.stroke()
+            path { l.trace(move: $0, line: $1, curve: $2, close: $3) }.fill()
         }
         /// Legs lifted to the face are drawn over the head instead of behind it.
-        func raised(_ l: PetLimb) -> Bool { l.foot.y > PetAnimation.raisedAbove }
+        func raised(_ l: PetLimbShape) -> Bool { l.foot.y > PetAnimation.raisedAbove }
+        let shapes = PetLimbShape.legs(of: pose), legs = [shapes.0, shapes.1, shapes.2, shapes.3]
         let t = pose.tail
         let tail = NSBezierPath(); tail.move(to: t.p0); tail.curve(to: t.p3, controlPoint1: t.c1, controlPoint2: t.c2)
         tail.lineWidth = t.width; tail.lineCapStyle = .round; tail.stroke()
-        pose.legs.prefix(2).filter { !raised($0) }.forEach { limb($0) }
+        legs.prefix(2).filter { !raised($0) }.forEach { limb($0) }
         // The body has been one figure since the torso was redrawn (`PetTorso`): the old painter draws that figure too, its own way (a
         // new NSBezierPath every frame), so the two are still held to painting the same cat.
         let body = NSBezierPath()
-        PetTorso(pose.haunch, pose.chest).trace(move: { body.move(to: $0) }, curve: { body.curve(to: $2, controlPoint1: $0, controlPoint2: $1) })
+        PetTorso(pose).trace(move: { body.move(to: $0) }, curve: { body.curve(to: $2, controlPoint1: $0, controlPoint2: $1) })
         body.close(); body.fill()
-        pose.legs.dropFirst(2).filter { !raised($0) }.forEach { limb($0) }
+        legs.dropFirst(2).filter { !raised($0) }.forEach { limb($0) }
         // The head has its own frame so tilt and scale carry the ears and eyes along.
         cg.saveGState(); cg.translateBy(x: pose.head.x, y: pose.head.y); cg.scaleBy(x: pose.headScale, y: pose.headScale); cg.rotate(by: pose.tilt)
         NSBezierPath(ovalIn: NSRect(x: -9.3, y: -7.4, width: 18.6, height: 14.8)).fill()
@@ -52,7 +59,7 @@ enum LegacyPetPainter {
         let face = PetFace(pose)
         for side: CGFloat in [-1, 1] { NSBezierPath(ovalIn: face.eyeRect(side)).fill() }
         cg.restoreGState()
-        pose.legs.filter(raised).forEach { limb($0, halo: true) }
+        legs.filter(raised).forEach { limb($0, halo: true) }
         if pose.ballSize > 0 {
             NSColor.systemMint.withAlphaComponent(0.9).setFill()
             let r = 2.3 * pose.ballSize

@@ -50,15 +50,17 @@ enum PetPainter {
         cg.setLineWidth(t.width); cg.strokePath()
         if let stripe = coat.stripe { tailRings(t, stripe, in: cg) }
 
-        // Far legs, the body, near legs: a leg raised to the face waits to be drawn over the head.
-        let legs = pose.legs
-        if legs.farHind.foot.y <= raisedAbove { limb(legs.farHind, in: cg) }
-        if legs.farFront.foot.y <= raisedAbove { limb(legs.farFront, in: cg) }
+        // Far legs, the body, near legs: a leg raised to the face waits to be drawn over the head. Each leg is broad where it comes out
+        // of the body and ends in a paw (`PetLimbShape`), so the legs and the body are one figure. (Each is filled on its own: Core
+        // Graphics fills a few small shapes quicker than one that spans them all.)
+        let legs = pose.legs, shapes = PetLimbShape.legs(of: pose)
+        if legs.farHind.foot.y <= raisedAbove { shapes.0.addPath(to: cg); cg.fillPath() }
+        if legs.farFront.foot.y <= raisedAbove { shapes.1.addPath(to: cg); cg.fillPath() }
         // The body is one figure: the haunch and the chest joined by the back and the belly (`PetTorso`).
-        let torso = PetTorso(pose.haunch, pose.chest)
+        let torso = PetTorso(pose)
         torso.addPath(to: cg); cg.fillPath()
-        if legs.nearHind.foot.y <= raisedAbove { limb(legs.nearHind, in: cg) }
-        if legs.nearFront.foot.y <= raisedAbove { limb(legs.nearFront, in: cg) }
+        if legs.nearHind.foot.y <= raisedAbove { shapes.2.addPath(to: cg); cg.fillPath() }
+        if legs.nearFront.foot.y <= raisedAbove { shapes.3.addPath(to: cg); cg.fillPath() }
         // The flank's stripes go over the near legs where they lie against the body: under them, a seated cat's near thigh would
         // cover all of one but a curled sliver at its edge (the far side's legs are behind the body, so both sides now match).
         if let stripe = coat.stripe { flankStripes(pose.haunch, stripe, inside: torso, in: cg) }
@@ -67,15 +69,16 @@ enum PetPainter {
         cg.saveGState()
         cg.translateBy(x: pose.head.x, y: pose.head.y); cg.scaleBy(x: pose.headScale, y: pose.headScale); cg.rotate(by: pose.tilt)
         cg.fillEllipse(in: CGRect(x: -9.3, y: -7.4, width: 18.6, height: 14.8))
+        // The two ears (which never meet) in one fill.
         ear(side: -1, angle: pose.earL, in: cg)
         ear(side: 1, angle: pose.earR, in: cg)
+        cg.fillPath()
         // The face: the eyes where the cat looks (kept in the face), and the face turned with them (`PetFace`).
         let face = PetFace(pose)
         if let stripe = coat.stripe { foreheadStripes(stripe, turn: face.turn, in: cg) }
         if look.accessory == .collar || look.accessory == .bow { neckwear(look.accessory, swing: pose.swing, in: cg) }
         cg.setFillColor(black)
-        cg.fillEllipse(in: face.eyeRect(-1))
-        cg.fillEllipse(in: face.eyeRect(1))
+        cg.addEllipse(in: face.eyeRect(-1)); cg.addEllipse(in: face.eyeRect(1)); cg.fillPath()
         if pose.glisten > 0.02 { glints(pose, face, in: cg) }
         if pose.tear > 0.01 { tear(pose.tear, turn: face.turn, in: cg) }
         if let mouth = face.mouth { cg.fillEllipse(in: mouth) }
@@ -84,10 +87,10 @@ enum PetPainter {
 
         // Raised paws, over the face; a thin black seam keeps a white forearm readable on the white head.
         cg.setFillColor(fill); cg.setStrokeColor(fill)
-        if legs.farHind.foot.y > raisedAbove { limb(legs.farHind, halo: true, in: cg, color: fill) }
-        if legs.farFront.foot.y > raisedAbove { limb(legs.farFront, halo: true, in: cg, color: fill) }
-        if legs.nearHind.foot.y > raisedAbove { limb(legs.nearHind, halo: true, in: cg, color: fill) }
-        if legs.nearFront.foot.y > raisedAbove { limb(legs.nearFront, halo: true, in: cg, color: fill) }
+        if legs.farHind.foot.y > raisedAbove { limb(shapes.0, halo: true, in: cg, color: fill) }
+        if legs.farFront.foot.y > raisedAbove { limb(shapes.1, halo: true, in: cg, color: fill) }
+        if legs.nearHind.foot.y > raisedAbove { limb(shapes.2, halo: true, in: cg, color: fill) }
+        if legs.nearFront.foot.y > raisedAbove { limb(shapes.3, halo: true, in: cg, color: fill) }
 
         if pose.ballSize > 0 {
             let r = 2.3 * pose.ballSize
@@ -105,23 +108,24 @@ enum PetPainter {
 
     // MARK: Parts
 
-    private static func limb(_ l: PetLimb, halo: Bool = false, in cg: CGContext, color: CGColor? = nil) {
+    private static func limb(_ l: PetLimbShape, halo: Bool = false, in cg: CGContext, color: CGColor? = nil) {
         if halo {
-            // A paw raised in front of the face is white on white: a thin black seam around the forearm keeps it readable.
+            // A paw raised in front of the face is white on white: a thin black seam around the forearm and the paw keeps it readable.
             cg.setStrokeColor(black)
-            cg.move(to: l.knee); cg.addLine(to: l.foot)
-            cg.setLineWidth(l.width + 1.9); cg.strokePath()
+            l.addForearm(to: cg)
+            cg.setLineWidth(seam); cg.strokePath()
             if let color { cg.setStrokeColor(color) }
         }
-        cg.move(to: l.hip); cg.addLine(to: l.knee); cg.addLine(to: l.foot)
-        cg.setLineWidth(l.width); cg.strokePath()
+        l.addPath(to: cg); cg.fillPath()
     }
+    /// The seam's width: it shows half of it outside the forearm.
+    static let seam: CGFloat = 1.9
 
-    /// An ear, turned as `PetFace.ear` turns it: its base stays on the head.
+    /// Adds an ear, turned as `PetFace.ear` turns it (its base stays on the head), to the context's path.
     private static func ear(side: CGFloat, angle: CGFloat, in cg: CGContext) {
         let e = PetFace.ear(side: side, angle: angle)
         cg.move(to: e.outer); cg.addLine(to: e.tip); cg.addLine(to: e.inner)
-        cg.closePath(); cg.fillPath()
+        cg.closePath()
     }
 
     // MARK: Stripes (the tabby coats)

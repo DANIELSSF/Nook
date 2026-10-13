@@ -4,7 +4,7 @@
  * and when, and the renderer draws the result.
  */
 import {
-  basePose, clonePose, v, oval, limb, lerpLimb, lerpV, blend, mirror, staged, swungTail, type Pose, type V2, type Action,
+  basePose, clonePose, v, oval, limb, lerpLimb, lerpV, blend, mirror, staged, swungTail, type Pose, type V2, type Limb, type Action,
 } from './pose';
 
 // MARK: Helpers
@@ -170,20 +170,43 @@ export function walk(phase: number, amp: number, t: number): Pose {
   const p = basePose();
   p.action = 'walk';
   const hips = amp * Math.cos(2 * phase) * 0.4, shoulders = -amp * Math.cos(2 * phase) * 0.32;
-  p.haunch = oval(-6.6, 12.4 + hips, 7.6, 5.4); p.chest = oval(4.4, 12.9 + shoulders, 7.3, 5.8);
+  p.haunch = oval(-6.6, 12.4 + hips, 7.6, 5.4); p.chest = oval(4.4, 12.6 + shoulders, 7.3, 6.3);
+  // A cat on its feet carries its body as one piece: the back straight from the rump to the shoulders, the belly from the chest to the thigh.
+  p.carriage = 1;
   p.head = v(12.4, 19.4 + shoulders * 0.3); p.headScale = 0.82;
   p.look = v(1.3, -0.2);
-  // Hip x, gait phase offset (near hind, near front a quarter later, far hind, far front), knee bend, whether it hangs from the hips.
-  const setup: [number, number, number, boolean][] = [[-9.6, -Math.PI, -1.8, true], [6.0, (-3 * Math.PI) / 2, 1.2, false], [-6.8, 0, -1.8, true], [8.6, -Math.PI / 2, 1.2, false]];
+  // Hip x, gait phase offset (near hind, near front a quarter later, far hind, far front), whether it is a hind leg. The legs stand under
+  // the ends of the body, the hind ones under the rump and the front ones under the chest, and come out of it from well inside (their
+  // hips are the broad tops of the legs: `limbShape` in render.ts), not hung from its middle.
+  const setup: [number, number, boolean][] = [[-11.6, -Math.PI, true], [6.8, (-3 * Math.PI) / 2, false], [-9.2, 0, true], [9.6, -Math.PI / 2, false]];
   setup.forEach((s, i) => {
     const step = gait(phase + s[1]);
-    const swing = amp * HALF_STRIDE * step.swing, lift = amp * 3.2 * step.lift;
-    const hip = v(s[0], 8.4 + (s[3] ? hips : shoulders)), foot = v(s[0] + swing, lift);
-    p.legs[i as 0 | 1 | 2 | 3] = limb(hip, v((hip.x + foot.x) / 2 + s[2] * (1 + lift / 4), (hip.y + foot.y) / 2), foot, 3.1);
+    const swing = amp * HALF_STRIDE * step.swing, raise = amp * step.lift;
+    const hip = v(s[0], s[2] ? 10.8 + hips : 10.4 + shoulders), foot = v(s[0] + swing, 3.2 * raise);
+    p.legs[i as 0 | 1 | 2 | 3] = s[2] ? hindLeg(hip, foot, raise) : frontLeg(hip, foot, raise);
   });
   const sway = Math.sin(t * 2.2), tip = Math.sin(t * 2.2 - 0.9);
   p.tail = { p0: v(-12.5, 14 + hips), c1: v(-18, 13 + hips * 0.6), c2: v(-19.5 + sway, 19), p3: v(-16 + tip * 1.5, 25 + tip), width: 3.5 };
   return p;
+}
+
+/**
+ * A hind leg standing on its toes, as a cat's does (the app's `PetAnimation.hindLeg`): its hock is low (under two fifths of the way up
+ * from the foot) and behind the line from the hip to the foot. `raise` 0...1 is how far the foot is lifted in a step: the hock folds
+ * further back and the paw hangs under it.
+ */
+export function hindLeg(hip: V2, foot: V2, raise = 0, width = 3.1): Limb {
+  const hock = v(foot.x + (hip.x - foot.x) * 0.38 - 2.2 - 0.7 * raise, foot.y + (hip.y - foot.y) * 0.38 + 0.3 * raise);
+  return limb(hip, hock, foot, width);
+}
+
+/**
+ * A front leg: a straight column from the shoulder while it stands, its wrist low on the line to the foot (the app's
+ * `PetAnimation.frontLeg`). As the foot is lifted in a step the wrist comes forward and the paw folds back under it.
+ */
+export function frontLeg(hip: V2, foot: V2, raise = 0, width = 3.1): Limb {
+  const wrist = v(foot.x + (hip.x - foot.x) * 0.26 + 0.15 + 1.9 * raise, foot.y + (hip.y - foot.y) * 0.26 + 0.5 * raise);
+  return limb(hip, wrist, foot, width);
 }
 
 /** Play-bow: chest down, rear up, front paws reaching out. */
@@ -193,13 +216,16 @@ export function bow(t: number): Pose {
   const wiggle = Math.sin(t * 3);
   p.haunch = oval(-6.6, 14.6, 7.8, 6.4, -0.42);
   p.chest = oval(4.0, 9.3, 7.6, 5.0, -0.38);
+  // The back sags into the bow; the belly, held a little more, does not pinch between the legs.
+  p.carriage = 0.3;
   p.head = v(13.6, 7.6); p.headScale = 0.86;
   p.tilt = -0.12; p.eyes = 0.15; p.earL = 0.2; p.earR = 0.2; p.look = v(1.8, -0.2);
   const reach = 15.5 + 2 * Math.sin(t * 2);
-  p.legs[1] = limb(v(6, 5.4), v(11, 1.6), v(reach, 1.3), 3.1);
-  p.legs[3] = limb(v(8.6, 5.4), v(13, 1.6), v(reach + 2, 1.3), 3.1);
-  p.legs[0] = limb(v(-9.6, 13.4), v(-11, 7), v(-9.1, 0.2), 3.1);
-  p.legs[2] = limb(v(-6.8, 13.4), v(-8.2, 7), v(-6.3, 0.2), 3.1);
+  p.legs[1] = limb(v(6, 6.2), v(11, 1.6), v(reach, 1.3), 3.1);
+  p.legs[3] = limb(v(8.6, 6.2), v(13, 1.6), v(reach + 2, 1.3), 3.1);
+  // The rear up on straight hind legs, on its toes.
+  p.legs[0] = hindLeg(v(-11.0, 13.2), v(-11.4, 0.2));
+  p.legs[2] = hindLeg(v(-8.4, 13.2), v(-8.2, 0.2));
   p.tail = { p0: v(-12.8, 17), c1: v(-17, 18), c2: v(-16.5 + wiggle, 24), p3: v(-17.5 + 1.2 * wiggle, 27.5), width: 3.5 };
   return p;
 }
@@ -212,10 +238,10 @@ export function arch(t: number, tremble = 0): Pose {
   p.chest = oval(4.8, 15.0, 7.4, 5.6, -0.5);
   p.head = v(11.2, 13.0 + tremble * 0.25); p.headScale = 0.84;
   p.tilt = -0.34; p.eyes = 0.12; p.earL = 0.34; p.earR = 0.3; p.look = v(1.2, -0.8);
-  p.legs[0] = limb(v(-8.6, 11.6), v(-9.4, 5.8), v(-9.2, 0.2), 3.1);
-  p.legs[2] = limb(v(-5.8, 11.6), v(-6.4, 5.8), v(-6.0, 0.2), 3.1);
-  p.legs[1] = limb(v(5.6, 11.4), v(6.6, 5.8), v(7.2, 0.2), 3.1);
-  p.legs[3] = limb(v(8.0, 11.4), v(9.0, 5.8), v(9.4, 0.2), 3.1);
+  p.legs[0] = hindLeg(v(-10.2, 12.6), v(-11.2, 0.2));
+  p.legs[2] = hindLeg(v(-7.6, 12.6), v(-8.4, 0.2));
+  p.legs[1] = frontLeg(v(6.0, 12.2), v(7.8, 0.2));
+  p.legs[3] = frontLeg(v(8.6, 12.2), v(10.2, 0.2));
   p.tail = { p0: v(-10.8, 16.4), c1: v(-15.8, 15.2), c2: v(-17.6 + tremble * 0.6, 9.0), p3: v(-16.2, 3.8 + tremble * 0.5), width: 3.5 };
   return p;
 }
@@ -230,12 +256,14 @@ export function rearStretch(t: number, tremble = 0): Pose {
   p.action = 'stretch';
   p.haunch = oval(-4.0, 12.2, 7.6, 5.3, 0.08);
   p.chest = oval(6.8, 12.6, 7.3, 5.8, 0.02);
+  // The middle of the back let down a little for the stretch, the belly still carried.
+  p.carriage = 0.6;
   p.head = v(13.6, 19.8); p.headScale = 0.83;
   p.tilt = 0.12; p.eyes = 0.3; p.earL = 0.12; p.earR = 0.12; p.look = v(1.2, 0.5);
-  p.legs[1] = limb(v(8.4, 9.4), v(10.2, 4.8), v(11.6, 0.2), 3.1);
-  p.legs[3] = limb(v(10.6, 9.4), v(12.2, 4.8), v(13.6, 0.2), 3.1);
-  p.legs[0] = limb(v(-6.8, 9.6), v(-8.0, 5.0), v(-6.4, 0.2), 3.1);
-  p.legs[2] = limb(v(-4.4, 9.6), v(-9.2, 7.4 + tremble * 0.2), v(-14.2, 4.2 + tremble * 0.35), 3.1);
+  p.legs[1] = frontLeg(v(8.8, 10.4), v(11.6, 0.2));
+  p.legs[3] = frontLeg(v(11.0, 10.4), v(13.6, 0.2));
+  p.legs[0] = hindLeg(v(-8.0, 10.8), v(-7.6, 0.2));
+  p.legs[2] = limb(v(-5.4, 10.6), v(-9.8, 7.8 + tremble * 0.2), v(-14.6, 4.4 + tremble * 0.35), 3.1);
   p.tail = { p0: v(-10.2, 14.4), c1: v(-14.6, 17.6), c2: v(-16.0, 22.8), p3: v(-12.6, 27.0), width: 3.5 };
   return p;
 }
@@ -813,8 +841,9 @@ export function crouch(t: number, w = 0): Pose {
   p.chest = oval(3.2, 7.2, 6.8, 4.4, -0.28);
   p.head = v(10.2, 8.8); p.headScale = 0.84; p.tilt = -0.06;
   p.eyes = 1.22; p.earL = -0.2; p.earR = -0.2; p.look = v(1.9, -0.3);
-  p.legs[0] = limb(v(-7.4, 9.4), v(-4.6, 4.6), v(-7.6 + 0.7 * w, 0.5), 3.1);
-  p.legs[2] = limb(v(-4.8, 9.4), v(-2.2, 4.8), v(-5.2 - 0.7 * w, 0.5), 3.1);
+  // Hind legs folded under the raised rear (the hocks back and low, the paws under the hips), front legs tucked forward under the chest.
+  p.legs[0] = limb(v(-8.2, 10.2), v(-10.6 + 0.7 * w, 2.2), v(-7.6 + 0.7 * w, 0.5), 3.1);
+  p.legs[2] = limb(v(-5.8, 10.2), v(-8.2 - 0.7 * w, 2.2), v(-5.2 - 0.7 * w, 0.5), 3.1);
   p.legs[1] = limb(v(4.4, 7.0), v(7.4, 4.0), v(9.8, 0.6), 3.1);
   p.legs[3] = limb(v(6.6, 7.0), v(9.4, 4.0), v(12.0, 0.8), 3.1);
   p.tail = { p0: v(-9.6, 11.6), c1: v(-13.2, 10.8), c2: v(-13.8 + 1.4 * w, 9.2), p3: v(-12.6 + 2.0 * w, 7.4 + 1.2 * w), width: 3.5 };
@@ -832,10 +861,10 @@ export function leap(t: number): Pose {
   p.chest = oval(6.8, 10.2, 7.2, 4.5, -0.04);
   p.head = v(13.8, 12.4); p.headScale = 0.84; p.tilt = 0;
   p.eyes = 1.25; p.earL = -0.18; p.earR = -0.18; p.look = v(1.6, -0.8);
-  p.legs[1] = limb(v(8.2, 8.8), v(12.2, 7.4), v(16.0, 4.6), 3.1);
-  p.legs[3] = limb(v(10.2, 8.8), v(14.4, 7.2), v(18.2, 4.0), 3.1);
-  p.legs[0] = limb(v(-6.6, 9.4), v(-9.6, 6.6), v(-13.0, 4.8), 3.1);
-  p.legs[2] = limb(v(-4.2, 9.4), v(-7.2, 6.2), v(-10.8, 4.0), 3.1);
+  p.legs[1] = limb(v(8.2, 9.6), v(12.2, 7.4), v(16.0, 4.6), 3.1);
+  p.legs[3] = limb(v(10.2, 9.6), v(14.4, 7.2), v(18.2, 4.0), 3.1);
+  p.legs[0] = limb(v(-7.2, 10.4), v(-10.0, 7.0), v(-13.0, 4.8), 3.1);
+  p.legs[2] = limb(v(-4.8, 10.4), v(-7.6, 6.6), v(-10.8, 4.0), 3.1);
   p.tail = { p0: v(-9.6, 11.8), c1: v(-14.0, 12.2), c2: v(-16.6, 12.6), p3: v(-17.6, 14.2), width: 3.5 };
   return p;
 }
@@ -853,8 +882,8 @@ export function pinned(t: number): Pose {
   p.eyes = 1.15; p.earL = -0.12; p.earR = -0.12; p.look = v(1.5, -1.0);
   p.legs[1] = limb(v(8.0, 6.2), v(12.6, 3.6), v(16.8, 0.9), 3.1);
   p.legs[3] = limb(v(10.0, 6.2), v(14.4, 3.4), v(18.6, 1.0), 3.1);
-  p.legs[0] = limb(v(-3.8, 8.6), v(-0.8, 4.4), v(-3.6, 0.4), 3.1);
-  p.legs[2] = limb(v(-1.2, 8.6), v(1.6, 4.6), v(-1.0, 0.4), 3.1);
+  p.legs[0] = limb(v(-4.4, 9.6), v(-6.6, 2.2), v(-3.6, 0.4), 3.1);
+  p.legs[2] = limb(v(-2.0, 9.6), v(-4.0, 2.2), v(-1.0, 0.4), 3.1);
   p.tail = { p0: v(-6.4, 10.2), c1: v(-11.4, 9.6), c2: v(-14.4, 7.2), p3: v(-12.8, 4.0), width: 3.5 };
   return p;
 }

@@ -212,6 +212,7 @@ enum PetMotion {
                                       ("earL", p.earL * 8), ("earR", p.earR * 8), ("look.x", p.look.x), ("look.y", p.look.y),
                                       ("haunch.cx", p.haunch.cx), ("haunch.cy", p.haunch.cy), ("haunch.rx", p.haunch.rx), ("haunch.ry", p.haunch.ry), ("haunch.angle", p.haunch.angle * 8),
                                       ("chest.cx", p.chest.cx), ("chest.cy", p.chest.cy), ("chest.rx", p.chest.rx), ("chest.ry", p.chest.ry), ("chest.angle", p.chest.angle * 8),
+                                      ("carriage", p.carriage * PetTorso.carriageReach),
                                       ("tail.p0.x", p.tail.p0.x), ("tail.p0.y", p.tail.p0.y), ("tail.c1.x", p.tail.c1.x * 0.5), ("tail.c1.y", p.tail.c1.y * 0.5),
                                       ("tail.c2.x", p.tail.c2.x * 0.5), ("tail.c2.y", p.tail.c2.y * 0.5), ("tail.p3.x", p.tail.p3.x), ("tail.p3.y", p.tail.p3.y), ("tail.width", p.tail.width * 0.5)]
         let names = ["farHind", "farFront", "nearHind", "nearFront"]

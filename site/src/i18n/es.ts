@@ -75,6 +75,72 @@ export const es = {
     },
   },
 
+  /** The film right after the hero: everything Nook does, in one continuous film played from code (src/film/). */
+  film: {
+    eyebrow: 'La película',
+    title: 'Todo lo que hace, en un minuto y medio.',
+    lede: 'De la primera vez que lo abres hasta que el gatito se duerme: cada cosa que hace, tal como la hace.',
+    /** The link under the hero's buttons: it scrolls to the film and plays it from the beginning. */
+    heroLink: 'Ver la película',
+    /** What the whole film shows, for assistive technology (the chapters below say it step by step). */
+    alt: 'Película animada de Nook: la isla crece desde el notch de un MacBook, recibe con el gatito, sigue el trabajo de Claude Code, muestra sus subagentes, avisa y pregunta, se escribe en ella, se personaliza y, al final, el gatito se duerme.',
+    controls: {
+      play: 'Reproducir la película',
+      pause: 'Pausar la película',
+      replay: 'Volver a ver',
+      replayLabel: 'Volver a ver la película desde el principio',
+      progress: 'Capítulos de la película',
+      /** `{n}`, `{total}`, `{name}` and `{time}` are filled in by the player. */
+      position: 'Capítulo {n} de {total}: {name}, {time}',
+      download: 'Descargar para macOS',
+    },
+    reducedNote: 'Con Reducir movimiento activado, la película se queda en una imagen fija. Esto es lo que cuenta, capítulo a capítulo:',
+    chaptersTitle: 'Capítulos de la película',
+    /** The film's chapters, in order: the progress bar's marks and the text alternative of the whole film. */
+    chapters: [
+      { id: 'notch', name: 'El notch', text: 'Un gatito vive en el notch de tu Mac. La isla de Nook crece desde ahí.' },
+      { id: 'home', name: 'Para empezar', text: 'La primera vez, el gatito saluda. Sin pestañas, la isla muestra su inicio, y una tarjeta abre Claude Code.' },
+      { id: 'follow', name: 'Sigue su trabajo', text: 'Escribes un mensaje y ves cada herramienta que usa Claude, los cambios en rojo y verde y la respuesta; el gato lo celebra. Cada sesión es una pestaña.' },
+      { id: 'agents', name: 'Subagentes', text: 'La cápsula cuenta los agentes, su lista dice qué hace cada uno, y el medidor despliega tus límites de uso.' },
+      { id: 'question', name: 'Preguntas', text: 'Con la isla recogida baja un aviso ámbar. Un clic abre la pregunta completa y otro la responde.' },
+      { id: 'alerts', name: 'Avisos', text: 'La isla baja un momento cuando algo termina (menta) o falla (rojo suave), con un sonido distinto para cada aviso, si lo quieres.' },
+      { id: 'compose', name: 'Escribe', text: '«/» y Tab completan un comando, soltar un archivo escribe su ruta y Enter envía el mensaje entero.' },
+      { id: 'customize', name: 'A tu manera', text: 'Un color y un icono que se mueve para la pestaña, las pestañas se ordenan arrastrándolas y la isla pasa a su tema claro.' },
+      { id: 'cat', name: 'El gatito', text: 'El gato respira, parpadea, saluda y cambia de pelaje.' },
+      { id: 'quit', name: 'Antes de salir', text: 'Con ⌘Q, un gatito triste pregunta si de verdad quieres salir. Quedarme deja todo como estaba.' },
+      { id: 'end', name: 'Buenas noches', text: 'La isla vuelve al notch y, cuando todo está en calma, el gatito se duerme.' },
+    ],
+    /** The words that move over the shots, a line per entry. */
+    titles: {
+      notch: ['Un gatito', 'vive en tu notch.'],
+      brand: ['Nook'],
+      brandLine: ['Tu terminal, a un gesto de distancia.'],
+      home: ['Te recibe,', 'y empiezas con un clic.'],
+      follow: ['Mira trabajar', 'a tu IA.'],
+      sessions: ['Todas tus sesiones,', 'en una isla.'],
+      agents: ['Cada agente,', 'a la vista.'],
+      question: ['Si necesita algo,', 'te pregunta.'],
+      answer: ['Respondes', 'con un clic.'],
+      alerts: ['Te avisa', 'cuando importa.'],
+      sound: ['Con un sonido', 'para cada aviso.'],
+      compose: ['Escribe', 'a tu manera.'],
+      customize: ['Hazla tuya.'],
+      reorder: ['Ordena tus pestañas.'],
+      theme: ['Clara u oscura.'],
+      breathe: ['Respira.', 'Parpadea.'],
+      wave: ['Saluda.'],
+      coats: ['Y se viste', 'como quieras.'],
+      quit: ['Si te vas,', 'se pone triste.'],
+      end: ['Nook'],
+      endLine: ['Tu terminal, a un gesto de distancia.'],
+    },
+    /** What the film's own windows on the desktop say. */
+    desk: {
+      terminal: 'Terminal — claude',
+      preview: 'Vista previa',
+    },
+  },
+
   story: {
     eyebrow: 'Conoce al gatito',
     title: 'Un gatito vive en tu notch.',

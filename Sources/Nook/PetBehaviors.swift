@@ -198,9 +198,9 @@ extension PetAnimation {
         p.chest = PetOval(3.2, 7.2, 6.8, 4.4, -0.28)
         p.head = CGPoint(x: 10.2, y: 8.8); p.headScale = 0.84; p.tilt = -0.06
         p.eyes = 1.22; p.earL = -0.2; p.earR = -0.2; p.look = CGPoint(x: 1.9, y: -0.3)
-        // Hind legs folded (the thigh forward, the foot back under the hip), front legs tucked forward under the chest.
-        p.legs[0] = PetLimb(CGPoint(x: -7.4, y: 9.4), CGPoint(x: -4.6, y: 4.6), CGPoint(x: -7.6 + 0.7 * w, y: 0.5), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -4.8, y: 9.4), CGPoint(x: -2.2, y: 4.8), CGPoint(x: -5.2 - 0.7 * w, y: 0.5), 3.1)
+        // Hind legs folded under the raised rear (the hocks back and low, the paws under the hips), front legs tucked forward under the chest.
+        p.legs[0] = PetLimb(CGPoint(x: -8.2, y: 10.2), CGPoint(x: -10.6 + 0.7 * w, y: 2.2), CGPoint(x: -7.6 + 0.7 * w, y: 0.5), 3.1)
+        p.legs[2] = PetLimb(CGPoint(x: -5.8, y: 10.2), CGPoint(x: -8.2 - 0.7 * w, y: 2.2), CGPoint(x: -5.2 - 0.7 * w, y: 0.5), 3.1)
         p.legs[1] = PetLimb(CGPoint(x: 4.4, y: 7.0), CGPoint(x: 7.4, y: 4.0), CGPoint(x: 9.8, y: 0.6), 3.1)
         p.legs[3] = PetLimb(CGPoint(x: 6.6, y: 7.0), CGPoint(x: 9.4, y: 4.0), CGPoint(x: 12.0, y: 0.8), 3.1)
         p.tail = PetTail(p0: CGPoint(x: -9.6, y: 11.6), c1: CGPoint(x: -13.2, y: 10.8), c2: CGPoint(x: -13.8 + 1.4 * w, y: 9.2), p3: CGPoint(x: -12.6 + 2.0 * w, y: 7.4 + 1.2 * w))
@@ -216,10 +216,10 @@ extension PetAnimation {
         p.chest = PetOval(6.8, 10.2, 7.2, 4.5, -0.04)
         p.head = CGPoint(x: 13.8, y: 12.4); p.headScale = 0.84; p.tilt = 0
         p.eyes = 1.25; p.earL = -0.18; p.earR = -0.18; p.look = CGPoint(x: 1.6, y: -0.8)
-        p.legs[1] = PetLimb(CGPoint(x: 8.2, y: 8.8), CGPoint(x: 12.2, y: 7.4), CGPoint(x: 16.0, y: 4.6), 3.1)
-        p.legs[3] = PetLimb(CGPoint(x: 10.2, y: 8.8), CGPoint(x: 14.4, y: 7.2), CGPoint(x: 18.2, y: 4.0), 3.1)
-        p.legs[0] = PetLimb(CGPoint(x: -6.6, y: 9.4), CGPoint(x: -9.6, y: 6.6), CGPoint(x: -13.0, y: 4.8), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -4.2, y: 9.4), CGPoint(x: -7.2, y: 6.2), CGPoint(x: -10.8, y: 4.0), 3.1)
+        p.legs[1] = PetLimb(CGPoint(x: 8.2, y: 9.6), CGPoint(x: 12.2, y: 7.4), CGPoint(x: 16.0, y: 4.6), 3.1)
+        p.legs[3] = PetLimb(CGPoint(x: 10.2, y: 9.6), CGPoint(x: 14.4, y: 7.2), CGPoint(x: 18.2, y: 4.0), 3.1)
+        p.legs[0] = PetLimb(CGPoint(x: -7.2, y: 10.4), CGPoint(x: -10.0, y: 7.0), CGPoint(x: -13.0, y: 4.8), 3.1)
+        p.legs[2] = PetLimb(CGPoint(x: -4.8, y: 10.4), CGPoint(x: -7.6, y: 6.6), CGPoint(x: -10.8, y: 4.0), 3.1)
         p.tail = PetTail(p0: CGPoint(x: -9.6, y: 11.8), c1: CGPoint(x: -14.0, y: 12.2), c2: CGPoint(x: -16.6, y: 12.6), p3: CGPoint(x: -17.6, y: 14.2))
         return p
     }
@@ -235,8 +235,8 @@ extension PetAnimation {
         p.eyes = 1.15; p.earL = -0.12; p.earR = -0.12; p.look = CGPoint(x: 1.5, y: -1.0)
         p.legs[1] = PetLimb(CGPoint(x: 8.0, y: 6.2), CGPoint(x: 12.6, y: 3.6), CGPoint(x: 16.8, y: 0.9), 3.1)
         p.legs[3] = PetLimb(CGPoint(x: 10.0, y: 6.2), CGPoint(x: 14.4, y: 3.4), CGPoint(x: 18.6, y: 1.0), 3.1)
-        p.legs[0] = PetLimb(CGPoint(x: -3.8, y: 8.6), CGPoint(x: -0.8, y: 4.4), CGPoint(x: -3.6, y: 0.4), 3.1)
-        p.legs[2] = PetLimb(CGPoint(x: -1.2, y: 8.6), CGPoint(x: 1.6, y: 4.6), CGPoint(x: -1.0, y: 0.4), 3.1)
+        p.legs[0] = PetLimb(CGPoint(x: -4.4, y: 9.6), CGPoint(x: -6.6, y: 2.2), CGPoint(x: -3.6, y: 0.4), 3.1)
+        p.legs[2] = PetLimb(CGPoint(x: -2.0, y: 9.6), CGPoint(x: -4.0, y: 2.2), CGPoint(x: -1.0, y: 0.4), 3.1)
         p.tail = PetTail(p0: CGPoint(x: -6.4, y: 10.2), c1: CGPoint(x: -11.4, y: 9.6), c2: CGPoint(x: -14.4, y: 7.2), p3: CGPoint(x: -12.8, y: 4.0))
         return p
     }

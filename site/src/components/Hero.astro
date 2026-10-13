@@ -56,7 +56,10 @@ const c = t.hero.conversation;
         {t.hero.ctaSecondary} <Icon name="arrow-up-right" />
       </a>
     </div>
-    <ul class="hero__facts" data-rise style="--i:4">
+    <a class="hero__film" href="#pelicula" data-film-play data-rise style="--i:4">
+      <span class="hero__film-ic" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><path d="M5.4 3.6v8.8L12.4 8z" fill="currentColor" /></svg></span>{t.film.heroLink}
+    </a>
+    <ul class="hero__facts" data-rise style="--i:5">
       {t.hero.facts.map((f) => <li>{f}</li>)}
     </ul>
     <p class="hero__nonmac" data-nonmac hidden>{t.download.nonMac}</p>

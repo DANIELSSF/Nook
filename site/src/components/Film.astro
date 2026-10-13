@@ -1,0 +1,128 @@
+---
+/**
+ * The film: everything Nook does in one continuous film, about a minute and a half, played from code (src/film/) on the island the
+ * feature demos use, on a MacBook. It starts when it scrolls into view, pauses off screen and in a background tab, and its chapters
+ * are both the marks of the progress bar and the film's text alternative. With motion reduced it is one still frame and the list.
+ */
+import FilmScreen from './film/FilmScreen.astro';
+import Icon from './Icon.astro';
+import { catMarkup } from '../cat/render';
+import { t } from '../i18n';
+import { urls } from '../config';
+
+const f = t.film;
+type TitleId = keyof typeof f.titles;
+// Where each title sits and what it is written on: `side` beside the shot (under it on a narrow screen), `center` across the
+// middle, `brand` the name over the laptop. `light` titles are white (on the black of the notch or the cat's stage).
+const titles: { id: TitleId; place: 'side' | 'center' | 'brand' | 'line'; tone?: 'light'; sound?: boolean }[] = [
+  { id: 'notch', place: 'center', tone: 'light' },
+  { id: 'brand', place: 'brand' },
+  { id: 'brandLine', place: 'line' },
+  { id: 'home', place: 'side' },
+  { id: 'follow', place: 'side' },
+  { id: 'sessions', place: 'side' },
+  { id: 'agents', place: 'side' },
+  { id: 'question', place: 'side' },
+  { id: 'answer', place: 'side' },
+  { id: 'alerts', place: 'side' },
+  { id: 'sound', place: 'side', sound: true },
+  { id: 'compose', place: 'side' },
+  { id: 'customize', place: 'side' },
+  { id: 'reorder', place: 'side' },
+  { id: 'theme', place: 'side' },
+  { id: 'breathe', place: 'side', tone: 'light' },
+  { id: 'wave', place: 'side', tone: 'light' },
+  { id: 'coats', place: 'side', tone: 'light' },
+  { id: 'quit', place: 'side' },
+  { id: 'end', place: 'brand' },
+  { id: 'endLine', place: 'line' },
+];
+// The coats of the cat's montage, in the order of its settings (the first is the one it wears the rest of the film).
+const coats = ['snow', 'cream', 'silver', 'tabby', 'ginger'] as const;
+const copy = {
+  typed: t.demo.follow.typed,
+  working: t.demo.follow.working,
+  done: t.demo.follow.done,
+  compose: { typed: t.demo.compose.typed, completed: t.demo.compose.completed, lead: t.demo.compose.lead, path: t.demo.compose.path },
+  colors: t.demo.customize.colors,
+  icons: t.demo.customize.icons,
+  usage: t.demo.agents.usage.limits.map((l) => l.pct),
+  greetings: t.demo.home.greetings,
+  coats: coats.map((c) => ({ id: c, name: t.personality.coats[c] })),
+  chapters: f.chapters.map((c) => ({ id: c.id, name: c.name })),
+  controls: f.controls,
+};
+---
+<section class="film" aria-labelledby="film-title" data-film>
+  <header class="film__head container reveal">
+    <p class="eyebrow">{f.eyebrow}</p>
+    <h2 class="h-2" id="film-title">{f.title}</h2>
+    <p class="lede">{f.lede}</p>
+  </header>
+
+  <figure class="film__player container" id="pelicula" aria-labelledby="film-title">
+    <figcaption class="sr-only">{f.alt}</figcaption>
+    <div class="film__frame" data-film-frame>
+      <div class="film__stage" aria-hidden="true">
+        <div class="film__bg"></div>
+        <div class="film__night" data-f="night"></div>
+        <div class="film__world" data-f="world"><FilmScreen /></div>
+
+        {/* The cat's own stage, for its close-up: black, as the app's stages are (a white cat does not read on paper). */}
+        <div class="fstudio" data-f="studio">
+          <i class="fstudio__glow"></i>
+          <i class="fstudio__floor"></i>
+          <div class="fstudio__cat" data-f="studio-cat" set:html={catMarkup()} />
+          <div class="fstudio__coats" data-f="coats">
+            {copy.coats.map((c, i) => <span class:list={['fstudio__coat', { 'is-on': i === 0 }]} data-f={`coat-${c.id}`}>{c.name}</span>)}
+          </div>
+        </div>
+
+        <div class="film__scrim" data-f="scrim"></div>
+        <div class="film__type">
+          {titles.map((ti) => (
+            <div class="ktitle" data-title={ti.id} data-place={ti.place} data-tone={ti.tone}>
+              {f.titles[ti.id].map((line) => (
+                <p class="ktitle__line">{line.split(' ').map((w, i) => <>{i > 0 ? ' ' : null}<span class="kw"><span>{w}</span></span></>)}</p>
+              ))}
+              {ti.sound ? <span class="ktitle__wave" data-f="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span> : null}
+            </div>
+          ))}
+        </div>
+        <div class="film__keys" data-f="keys"></div>
+        <div class="film__veil" data-f="veil"></div>
+      </div>
+
+      <div class="film__end" data-film-end hidden>
+        <button type="button" class="btn btn--primary film__replay" data-film-replay aria-label={f.controls.replayLabel}>
+          <svg class="film__replay-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /><path d="M3.4 2.6v2.6H6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg> {f.controls.replay}
+        </button>
+        <a class="btn btn--ghost film__get" href={urls.download} rel="noopener" data-download><Icon name="download" /> {f.controls.download}</a>
+      </div>
+    </div>
+
+    <div class="film__controls" data-film-controls>
+      <button type="button" class="film__toggle" data-film-toggle aria-label={f.controls.play}>
+        <svg class="film__ic film__ic--play" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg>
+        <svg class="film__ic film__ic--pause" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="4" y="3" width="2.8" height="10" rx="1" fill="currentColor" /><rect x="9.2" y="3" width="2.8" height="10" rx="1" fill="currentColor" /></svg>
+        <svg class="film__ic film__ic--replay" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /><path d="M3.4 2.6v2.6H6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </button>
+      <div class="film__bar">
+        <div class="film__track" data-film-track role="slider" tabindex="0" aria-label={f.controls.progress} aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
+          {f.chapters.map((c, i) => (
+            <span class="film__seg" data-film-seg={i} title={c.name}><i class="film__fill"></i></span>
+          ))}
+        </div>
+        <p class="film__now" aria-hidden="true"><span data-film-chapter>{f.chapters[0]!.name}</span><span class="film__time" data-film-time>0:00</span></p>
+      </div>
+    </div>
+
+    <div class="film__text">
+      <p class="film__note">{f.reducedNote}</p>
+      <ol class="film__chapters" aria-label={f.chaptersTitle}>
+        {f.chapters.map((c) => <li><span><strong>{c.name}.</strong> {c.text}</span></li>)}
+      </ol>
+    </div>
+    <script type="application/json" data-film-copy set:html={JSON.stringify(copy)} />
+  </figure>
+</section>

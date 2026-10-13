@@ -26,6 +26,7 @@ If your npm has `ignore-scripts` on, nothing here needs install scripts, and no 
 | Colours, type, spacing (light and dark in one place, `light-dark()`) | `src/styles/tokens.css` |
 | The cat (the app's, ported: check it with `npm run compare:cat`) | `src/cat/` |
 | The demo player and its scenes | `src/demo/` |
+| The film after the hero: its script, player and cats | `src/film/` (markup in `src/components/Film.astro` and `src/components/film/`) |
 
 The download button points to `https://github.com/<owner>/<repo>/releases/latest/download/<asset>`.
 
@@ -154,6 +155,31 @@ npm run export:demos -- --scene follow --theme both
 
 It builds the site with the demo pages switched on (`EXPORT_DEMOS=1`, never shipped), records each scene at 1280 × 720 with
 Playwright and writes `exports/<scene>-<theme>.webm` and `.mp4` (H.264). Trimming and the MP4 use an ffmpeg already on the Mac (`$FFMPEG`, the PATH — `brew install ffmpeg` — or a `ffmpeg-static` binary you installed yourself); the script never downloads one, and without it writes the raw WebM only. `exports/` is ignored by git.
+
+## The film
+
+Right after the hero, a film of about a minute and a half shows everything Nook does, the way Apple films its products: a MacBook on
+a stage, a camera that moves over it in perspective, short titles that rise word by word, and the island at work in every shot. The hero's
+«Ver la película» scrolls to it and plays it from the start. It is not a video: it is DOM and SVG, the same island markup and styles as the
+demos, played by one GSAP timeline (`src/film/player.ts`), so it is crisp at any size, weighs a few kilobytes and follows the page's theme
+(the studio is paper or dark; the island, like the hardware, is black, and turns to paper when the film shows its light theme).
+
+- **The script** (`src/film/script.ts`) is the demos' language (move, click, type, island, drag, keys…) plus a camera (`cam`: an element
+  framed into the part of the frame beside a title, the laptop tipped and turned), `shot`, `title`, `chapter`, `ring` (an alert's bell, and
+  its sound drawn as rings, since the film has no audio) and the cat's steps. Each chapter is written from its own start, and the chapters are
+  the progress bar's marks. Positions are measured from the markup when the timeline is built, so the same script frames a phone (4:5, the
+  titles under the shot) and a desktop (16:9, the titles beside it).
+- **The cats** (`src/film/cat.ts`) are directed by the timeline instead of living on their own clocks: each frame is the app's own poses
+  (`perform`, `celebrate`, `perked`, `sad`, the nap) mixed as the pet director mixes them, with the small life and the gaze damped on big
+  cats. When the film pauses, a cat settles in a quarter of a second into the still of what it is doing (the sit, a stage of its nap, the
+  drooped sad cat) and eases back when it plays on, so a paused frame never holds it between two poses.
+- **Playing:** it starts when half of it is on screen, pauses off screen and in a background tab, and stays paused if the visitor paused it.
+  Its looping CSS stops with it, so a paused film costs nothing. Space, Enter or K on the progress bar play and pause it; the arrows go from
+  chapter to chapter, Home and End to the first and the last. With motion reduced it is one still frame (the `poster` label) and its chapters
+  are listed under it as its text alternative; they are always there for a screen reader.
+
+In `npm run dev`, `window.__nookFilm.frameAt(seconds)` holds any frame (`frameAt(seconds, false)` draws the cats as a paused film does), for
+tuning a shot or making a frame sheet.
 
 ## Assets
 

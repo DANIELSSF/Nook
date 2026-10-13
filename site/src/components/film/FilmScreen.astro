@@ -1,0 +1,415 @@
+---
+/**
+ * The film's stage: a MacBook seen from the front, its screen at the size of a 14-inch MacBook Pro's (1512 × 945 points), with the
+ * notch at the top and a desktop of the visitor's own around it. Every shot of the film is the island that hangs from that notch, in
+ * one of its states: each `.fshot` is a 640-point-wide box centred under the notch, laid out the way the feature demos lay out their
+ * scenes, so the same markup and the same styles draw the same app. The player (src/film/player.ts) shows one shot at a time, moves
+ * the camera over the laptop and plays the shots on one timeline.
+ *
+ * Elements a script names are `data-t` inside a shot (they may repeat from shot to shot) and `data-f` for the film's own pieces.
+ * All of it is decorative: the film's text alternative is its list of chapters.
+ */
+import Island from '../Island.astro';
+import IslandComposer from '../IslandComposer.astro';
+import HomeStage from '../HomeStage.astro';
+import Icon from '../Icon.astro';
+import { catMarkup } from '../../cat/render';
+import { CURSOR_SVG } from '../../demo/cursor';
+import { TAB_ICONS, iconMarkup } from '../../lib/tabIcons';
+import { t } from '../../i18n';
+import { SCREEN, SHOT } from '../../film/layout';
+
+const d = t.demo;
+const home = d.home;
+const welcome = home.welcome;
+const follow = d.follow;
+const ag = d.agents;
+const u = ag.usage;
+const q = d.question;
+const al = d.alerts;
+const co = d.compose;
+const cu = d.customize;
+const qu = d.quit;
+// The home's cards and the greeting's rows: the same icons as the home demo (HomeScene.astro).
+const rowIcons = ['terminal', 'bell', 'text-cursor'] as const;
+const cards = [{ cls: 'hcard--claude', icon: 'sparkle' }, { cls: 'hcard--codex', icon: 'code' }, { cls: '', icon: 'terminal' }] as const;
+// The sessions of the film: the one the home opens, and the two that join it.
+const sessions = [
+  { name: home.tab.name, color: 'mint', id: 'tab-0' },
+  { name: al.tabs[1]!.name, color: 'blue', id: 'tab-1' },
+  { name: al.tabs[2]!.name, color: 'coral', id: 'tab-2' },
+];
+const peeks = [
+  { id: 'ok', cls: 'peek--ok', tab: al.ok.tab, msg: al.ok.msg, color: 'tc-mint' },
+  { id: 'fail', cls: 'peek--fail', tab: al.fail.tab, msg: al.fail.msg, color: 'tc-coral' },
+];
+// The customize scene's editor: its colors (round the wheel, gray last) and the island in miniature for the theme picker.
+const tints = ['mint', 'teal', 'sky', 'blue', 'violet', 'lavender', 'rose', 'coral', 'peach', 'sand', 'lime', 'gray'];
+const mini = (light: boolean, diag = false) =>
+  `<span class="mini${light ? ' mini--light' : ''}${diag ? ' mini--diag' : ''}"><span class="mini__strip"><b></b><s></s><b></b></span><span class="mini__body"><u></u><em style="width:64px"></em><em style="width:46px"></em><i></i></span></span>`;
+const thumbs = [mini(true) + mini(false, true), mini(true), mini(false)];
+const themeIcons = ['auto', 'sun', 'moon'] as const;
+const settingsIcons = ['sliders', 'paw', 'speaker', 'shield', 'eye-off', 'display'] as const;
+// The Terminal window on the desktop: the session the island follows.
+const term = [
+  ['prompt', '~/sitio ❯ claude'],
+  ['dim', '✻ Claude Code · v2.1.292'],
+  ['user', `> ${follow.typed}`],
+  ['ai', `⏺ ${follow.tool1}`],
+  ['dim', `  ⎿ ${follow.out1}`],
+  ['ai', `⏺ ${follow.tool2}`],
+  ['dim', `  ⎿ ${follow.out2}`],
+] as const;
+const style = `--sw:${SCREEN.w}px;--sh:${SCREEN.h}px;--shot-x:${SHOT.x}px;--shot-w:${SHOT.w}px`;
+---
+<div class="mac" data-f="mac" style={style}>
+  <div class="mac__shadow" aria-hidden="true"></div>
+  <div class="mac__base" data-f="base"><i class="mac__scoop"></i></div>
+  <div class="mac__lid" data-f="lid"></div>
+  <div class="mac__screen" data-f="screen">
+    <div class="fdesk">
+      <div class="fdesk__wall"></div>
+      <div class="fwin fwin--term" data-f="term">
+        <div class="fwin__bar"><i></i><i></i><i></i><span>{t.film.desk.terminal}</span></div>
+        <div class="fwin__term">{term.map(([kind, line]) => <div class={`fterm fterm--${kind}`}>{line}</div>)}<div class="fterm fterm--prompt"><span class="fterm__caret"></span></div></div>
+      </div>
+      <div class="fwin fwin--prev">
+        <div class="fwin__bar"><i></i><i></i><i></i><span>{t.film.desk.preview}</span></div>
+        <div class="fwin__body"><div class="fwin__img"></div><div class="fwin__line"></div><div class="fwin__line" style="width:62%"></div></div>
+      </div>
+      <div class="fwin fwin--doc" data-f="doc">
+        <div class="fwin__bar"><i></i><i></i><i></i><span>{al.other.title}</span></div>
+        <div class="fwin__body">
+          <div class="fwin__h">{al.other.title}</div>
+          {al.other.lines.map((l) => <div class="fwin__text">{l}</div>)}
+          <div class="fwin__line"></div><div class="fwin__line" style="width:72%"></div><div class="fwin__line" style="width:54%"></div>
+        </div>
+      </div>
+      <div class="fdesk__bar">
+        <i class="desk__dot"></i><i class="desk__bar desk__bar--bold"></i><i class="desk__bar"></i><i class="desk__bar"></i><i class="desk__bar"></i>
+        <span class="desk__spacer"></span>
+        <i class="desk__bar desk__bar--sm"></i><i class="desk__bar desk__bar--sm"></i><span class="desk__clock">9:41</span>
+      </div>
+      <div class="fdesk__dim" data-f="dim"></div>
+      <div class="fdesk__off" data-f="off"></div>
+    </div>
+    <i class="mac__notch" aria-hidden="true"></i>
+
+    {/* The first session: the greeting, the home with no tab, and the Claude Code tab it opens (and the two that join it). */}
+    <div class="fshot" data-shot="main" style="--h:400px">
+      <Island id="island" state="collapsed" working oh={316} iw="572px" class="island--home is-home" tabs={[{ ...sessions[0]!, active: true }, sessions[1]!, { ...sessions[2]!, agents: 2 }]}>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--info" data-t="m-info"><span class="dim">✻ Sonnet 5.5 · Max · sitio · v2.1.292</span></div>
+            <div class="msg msg--user" data-t="m-user">{follow.typed}<span class="tag tag--send is-transient" data-t="m-tag">{follow.sending}</span></div>
+            <div class="msg msg--tool" data-t="m-tool1">{follow.tool1}</div>
+            <div class="msg msg--out" data-t="m-out1">{follow.out1}</div>
+            <div class="msg msg--tool" data-t="m-tool2">{follow.tool2}</div>
+            <div class="msg msg--out" data-t="m-out2">{follow.out2}</div>
+            <div class="diff" data-t="m-diff">
+              {follow.diff.map((row) => <div class:list={['diff__row', `diff__row--${row.kind}`]}><span class="diff__n">{row.n}</span><span>{row.kind === 'add' ? '+ ' : '- '}{row.code}</span></div>)}
+            </div>
+            <div class="msg msg--ai" data-t="m-answer">{follow.answer}</div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" status={follow.done} />
+        <Fragment slot="overlays">
+          <div class="hscreen" data-t="welcome">
+            <div class="welcome">
+              <HomeStage w={179} h={160} home={0.5} unit={3.8} cat="welcome-cat" bubble={welcome.hello} />
+              <div class="welcome__text">
+                <div class="welcome__title">{welcome.title}</div>
+                <div class="welcome__lede">{welcome.lede}</div>
+                <div class="welcome__rows">
+                  {welcome.rows.map((row, i) => <div class="wrow"><Icon name={rowIcons[i]!} /><div><b>{row.title}</b><small>{row.text}</small></div></div>)}
+                </div>
+                <div class="welcome__actions">
+                  <span class="hbtn" data-t="start">{welcome.start}<Icon name="arrow" /></span>
+                  <span class="hint"><Icon name="drag" />{welcome.hint}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="hscreen is-transient" data-t="home">
+            <div class="home">
+              <div class="home__hero">
+                <HomeStage w={240} h={132} home={0.4} unit={3.76} cat="home-cat" />
+                <div class="home__words">
+                  <div class="home__over" data-t="over">{home.greetings.afternoon}</div>
+                  <div class="home__title">{home.title}</div>
+                  <div class="home__lede">{home.lede}</div>
+                  <span class="hconnect"><Icon name="link" />{home.connect}</span>
+                  <span class="hint"><Icon name="drag" />{home.hint}</span>
+                </div>
+              </div>
+              <div class="home__cards">
+                {home.cards.map((card, i) => (
+                  <div class:list={['hcard', cards[i]!.cls]} data-t={`card-${i}`}>
+                    <span class="hcard__tile"><Icon name={cards[i]!.icon} /></span>
+                    <span class="hcard__text"><b>{card.title}</b><small>{card.text}</small></span>
+                    <span class="hcard__go"><Icon name="arrow-up-right" /></span>
+                    <span class="hcard__wait"><i></i><i></i><i></i></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* The third session, where Claude has sent out its agents: the capsule, their list and the usage card. */}
+    <div class="fshot" data-shot="agents" style="--h:400px">
+      <Island id="island" state="open" working oh={316} th={388} iw="572px" class="tc-coral" tabs={[sessions[0]!, sessions[1]!, { ...sessions[2]!, active: true, agents: 2 }]}>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--user">{ag.prev.user}</div>
+            <div class="msg msg--ai">{ag.prev.ai}</div>
+            <div class="msg msg--tool">Agent(explorador) <span class="dim">· Haiku</span></div>
+            <div class="msg msg--tool">Agent(revisor) <span class="dim">· Sonnet</span></div>
+            <div class="msg msg--tool">Agent(pruebas) <span class="dim">· Sonnet</span></div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" busy status="Claude · esperando a 3 agentes">
+          <span slot="capsule" class="capsule" data-t="capsule">
+            <span class="capsule__dots"><i class="d-work" data-t="cd-0"></i><i class="d-work" data-t="cd-1"></i><i class="d-done" data-t="cd-2"></i></span>
+            <span>{ag.capsule}</span>
+          </span>
+        </IslandComposer>
+        <Fragment slot="overlays">
+          <div class="pop agents is-transient" data-t="agents">
+            <div class="agents__title">{ag.listTitle}</div>
+            {ag.agents.map((a, i) => (
+              <div class="agent">
+                <i class:list={['agent__dot', a.state === 'done' ? 'd-done' : 'd-work']} data-t={`ad-${i}`}></i>
+                <span class="agent__name">{a.name}<small>{a.meta}</small></span>
+                <span class="agent__time" data-t={`at-${i}`}>{a.time}</span>
+                <span class="agent__call" data-t={`ac-${i}`}>{a.call}</span>
+              </div>
+            ))}
+            <div class="agents__foot"><span class="btn-mini">{ag.manage}</span></div>
+          </div>
+          <div class="usage is-transient" data-t="usage">
+            <div class="usage__head"><b>{u.title}</b><span>Claude Code<i class="live-dot"></i> {u.live}</span></div>
+            <div class="usage__limits">
+              {u.limits.map((l, i) => (
+                <div class="limit">
+                  <div class="limit__name">{l.name}</div>
+                  <div class="limit__pct">{l.pct} %</div>
+                  <div class:list={['meter', { 'meter--warn': l.level === 'warn' }]}><div class="meter__fill" data-t={`meter-${i}`}></div></div>
+                  <div class="limit__reset">{l.reset}</div>
+                </div>
+              ))}
+            </div>
+            <div class="usage__stats">
+              <div class="stat"><div class="stat__k">{u.cost}</div><div class="stat__v">{u.costValue}</div></div>
+              <div class="stat"><div class="stat__k">{u.duration}</div><div class="stat__v">{u.durationValue}</div></div>
+              <div class="stat"><div class="stat__k">{u.changes}</div><div class="stat__v">{u.changesValue}</div></div>
+              <div class="stat"><div class="stat__k">{u.context}</div><div class="stat__v">{u.contextValue}</div></div>
+            </div>
+          </div>
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* A question while the visitor works in another window. */}
+    <div class="fshot" data-shot="question" style="--h:400px">
+      <Island id="island" state="collapsed" working oh={344} iw="572px" tabs={[{ name: q.alertTab, color: 'mint', active: true, question: true }]}>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--user">{q.prev.user}</div>
+            <div class="msg msg--ai">{q.prev.ai}</div>
+            <div class="msg msg--out is-transient" data-t="m-answer">{q.answered}</div>
+            <div class="msg msg--ai is-transient" data-t="m-reply">{q.reply}</div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" status="Claude · esperando tu respuesta" />
+        <Fragment slot="overlays">
+          <div class="island__peek peek--ask is-transient" data-t="peek">
+            <span class="peek__bell" data-t="bell"><Icon name="bell" /></span>
+            <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{q.alertTab}</div><div class="peek__msg">{q.alertMsg}</div></div>
+          </div>
+          <div class="qcard is-transient" data-t="card">
+            <div class="qcard__bar"><span class="qcard__cancel">{q.cancel}</span><Icon name="chevron-down" size={14} /></div>
+            <div class="qcard__label">{q.label}</div>
+            <div class="qcard__title">{q.title}</div>
+            <div class="qopts">
+              {q.options.map((o, i) => (
+                <div class:list={['qopt', { 'is-marked': i === 0 }]} data-t={`opt-${i}`}>
+                  <span class="qopt__n">{i + 1}</span>
+                  <div><div class="qopt__t">{o.title}</div><div class="qopt__d">{o.text}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* Alerts with the island tucked away: a finished task, then a failure, each with its bell (and its sound). */}
+    <div class="fshot" data-shot="alerts" style="--h:400px">
+      <Island id="island" state="collapsed" working oh={316} iw="572px" tabs={[{ ...sessions[0]! }, { ...sessions[1]! }, { ...sessions[2]!, active: true }]}>
+        <Fragment slot="notch-right">
+          <span class="dots" data-t="dots" data-on="true"><i></i><i></i><i></i></span>
+          <span class="badge is-transient" data-t="badge" style="position:absolute">1</span>
+        </Fragment>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--user">{al.prev.user}</div>
+            <div class="msg msg--ai">{al.prev.ai}</div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" />
+        <Fragment slot="overlays">
+          {peeks.map((p) => (
+            <div class:list={['island__peek', p.cls, p.color, 'is-transient']} data-t={`peek-${p.id}`}>
+              <span class="peek__bell" data-t={`bell-${p.id}`}><Icon name="bell" /></span>
+              <div class="peek__text"><div class="peek__tab"><i class="tab__dot"></i>{p.tab}</div><div class="peek__msg">{p.msg}</div></div>
+            </div>
+          ))}
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* Writing: a slash command, a file dropped on the island, a message sent whole. */}
+    <div class="fshot" data-shot="compose" style="--h:400px">
+      <Island id="island" state="open" oh={316} iw="572px" tabs={[{ name: 'Claude Code', color: 'blue', active: true }]}>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--user">{co.prev.user}</div>
+            <div class="msg msg--ai">{co.prev.ai}</div>
+            <div class="msg msg--user is-transient" data-t="m-user">{co.lead}{co.path}<span class="tag tag--send is-transient" data-t="m-tag">{co.sending}</span></div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" drop={co.drop} />
+        <Fragment slot="overlays">
+          <div class="pop slash is-transient" data-t="slash">
+            {co.menu.map((m, i) => (
+              <div class:list={['slash__row', { 'is-sel': i === 0 }]}>
+                <span class="slash__name">/<b>{m.name.slice(0, 1)}</b>{m.name.slice(1)}</span>
+                {m.args ? <span class="slash__args">{m.args}</span> : null}
+                <span class="slash__desc">{m.text}</span>
+              </div>
+            ))}
+          </div>
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* Making it yours: the tab's color and icon, the order of the tabs, and the island's light theme. */}
+    <div class="fshot" data-shot="customize" style="--h:510px">
+      <div class="skinscope" data-t="skin">
+        <Island id="island" state="open" working oh={232} iw="572px" class="tc-mint" tabs={[{ name: cu.tabs[0]!.name, color: 'mint', active: true, id: 'tab-0', marks: ['dot', 'flame'] }, { name: cu.tabs[1]!.name, color: 'blue', id: 'tab-1' }, { name: cu.tabs[2]!.name, color: 'gray', id: 'tab-2' }]}>
+          <div slot="convo" class="island__convo" data-t="convo">
+            <div class="convo__list" data-t="list">
+              <div class="msg msg--user">{cu.user}</div>
+              <div class="msg msg--ai">{cu.ai}</div>
+            </div>
+          </div>
+          <IslandComposer slot="composer" />
+          <Fragment slot="overlays">
+            <div class="pop ctxmenu is-transient" data-t="menu">
+              {cu.menu.map((m, i) => <div class="ctxmenu__row" data-t={`menu-${i}`}>{m}</div>)}
+            </div>
+            <div class="pop ctxmenu ctxmenu--more is-transient" data-t="menu2">
+              {cu.moreMenu.map((m, i) => <div class="ctxmenu__row" data-t={`menu2-${i}`}>{m}</div>)}
+            </div>
+          </Fragment>
+        </Island>
+        <div class="pop editor tc-mint is-transient" data-t="editor">
+          <div class="editor__title">{cu.editorTitle}</div>
+          <div class="editor__who">
+            <span class="editor__preview">
+              <svg class="tabicon is-on" data-t="pv-dot" data-icon="dot" viewBox="0 0 10 10" aria-hidden="true" focusable="false" set:html={iconMarkup('dot', null)} />
+              <svg class="tabicon" data-t="pv-flame" data-icon="flame" viewBox="0 0 10 10" aria-hidden="true" focusable="false" set:html={iconMarkup('flame', null)} />
+            </span>
+            <div class="field"><span>{cu.tabs[0]!.name}</span><i class="caret"></i></div>
+          </div>
+          <div class="editor__sec">
+            <div class="editor__head"><span class="editor__label">{cu.colorLabel}</span><span class="editor__val" data-t="color-name">{cu.colors[0]}</span></div>
+            <div class="swatches">
+              {tints.map((tint, i) => <i class:list={['sw', `tc-${tint}`, { 'is-on': i === 0 }]} data-t={`sw-${i}`}></i>)}
+            </div>
+          </div>
+          <div class="editor__sec">
+            <div class="editor__head"><span class="editor__label">{cu.iconLabel}</span><span class="editor__val" data-t="icon-name">{cu.icons[0]}</span></div>
+            <div class="icons">
+              {TAB_ICONS.map((name, i) => (
+                <span class:list={['ic', { 'is-on': i === 0 }]} data-t={`ic-${i}`} aria-hidden="true">
+                  <svg class="tabicon" data-t={`ic-${i}-svg`} data-icon={name} viewBox="0 0 10 10" focusable="false" set:html={iconMarkup(name, null)} />
+                </span>
+              ))}
+            </div>
+            <div class="editor__note">{cu.iconNote}</div>
+          </div>
+          <div class="editor__sound">
+            <span class="editor__sound-ic"><Icon name="speaker" class="is-live" /><Icon name="speaker-off" class="is-muted" /></span>
+            <span class="editor__sound-text"><b>{cu.soundTitle}</b><small>{cu.soundText}</small></span>
+            <span class="switch is-on"><i></i></span>
+          </div>
+          <div class="editor__foot">
+            <span class="editor__note">{cu.keepNote}</span>
+            <span class="btn-default" data-t="done">{cu.done}</span>
+          </div>
+        </div>
+        <div class="pop settings is-transient" data-t="settings">
+          <div class="settings__bar">
+            <div class="settings__tabs">
+              {settingsIcons.map((icon, i) => <span class:list={['stab', { 'is-on': i === 0 }]}><Icon name={icon} />{i === 0 ? <span>{cu.settings.tabs[0]}</span> : null}</span>)}
+            </div>
+            <span class="settings__x"><Icon name="x" /></span>
+          </div>
+          <div class="settings__body">
+            <div class="editor__label">{cu.settings.appearance}</div>
+            <div class="themes">
+              {cu.settings.themes.map((name, i) => (
+                <span class:list={['theme', { 'is-on': i === 0 }]} data-t={`theme-${i}`}>
+                  <span class="theme__thumb" set:html={thumbs[i]} />
+                  <span class="theme__name"><Icon name={themeIcons[i]!} />{name}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Before quitting: the sad cat; and the island going back into the notch, where the cat falls asleep. */}
+    <div class="fshot" data-shot="quit" style="--h:400px">
+      <Island id="island" state="open" oh={290} iw="572px" tabs={[{ name: qu.tab.name, color: 'mint', active: true }]}>
+        <div slot="convo" class="island__convo" data-t="convo">
+          <div class="convo__list" data-t="list">
+            <div class="msg msg--user">{qu.user}</div>
+            <div class="msg msg--ai">{qu.ai}</div>
+          </div>
+        </div>
+        <IslandComposer slot="composer" />
+        <Fragment slot="overlays">
+          <div class="scrim is-transient" data-t="scrim"></div>
+          <div class="quit-layer">
+            <div class="quit is-transient" data-t="quit">
+              <div class="sadstage" data-t="sad-cat" set:html={catMarkup(undefined, undefined, { unit: 2.93 })} />
+              <div class="quit__body">
+                <div class="quit__title">{qu.title}</div>
+                <p class="quit__text">{qu.text}</p>
+                <div class="quit__actions">
+                  <span class="qbtn qbtn--stay" data-t="stay"><Icon name="heart" />{qu.stay}</span>
+                  <span class="qbtn qbtn--leave"><Icon name="power" />{qu.leave}</span>
+                </div>
+                <p class="quit__hint">{qu.hintBefore}<span class="keycap">⌘Q</span>{qu.hintAfter}</p>
+              </div>
+            </div>
+          </div>
+        </Fragment>
+      </Island>
+    </div>
+
+    {/* A file on its way to the island, the sound of an alert, the cursor and its ripple: the film's, in the screen's points. */}
+    <div class="filechip" data-f="filechip"><Icon name="file" /> {co.file}</div>
+    <div class="fsound" data-f="sound" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="demo__ripple" data-f="ripple"></div>
+    <div class="demo__cursor" data-f="cursor" aria-hidden="true"><div class="demo__cursor-inner" data-f="cursor-inner" set:html={CURSOR_SVG} /></div>
+  </div>
+  {/* The glass over the screen: a band of light that sweeps across it as the screen wakes. */}
+  <div class="mac__glass" aria-hidden="true"><i class="mac__glare" data-f="glare"></i></div>
+</div>
