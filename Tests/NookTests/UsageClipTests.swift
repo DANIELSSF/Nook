@@ -201,6 +201,35 @@ final class UsageClipTests: XCTestCase {
         XCTAssertEqual(found, [], "Drawn past the card's edge:\n" + found.joined(separator: "\n"))
     }
 
+    /// Nook's own usage card (no panel behind it): the rings beside the limits that are Claude's last reading, the note under them, the status line's widest figures and the week of a
+    /// model with a long name stay inside the room as well, at every width and text size, and in the dense layout.
+    func testNooksOwnUsageCardStaysInsideTheRoomToo() throws {
+        let now = Date()
+        var live = statusLine
+        live.saved = ClaudeUsageSnapshot(fetchedAt: now.addingTimeInterval(-5 * 3600), limits: [
+            .init(title: "Current week (Claude Sonnet 4.5 with extended thinking)", percent: 100, resetsAt: now.addingTimeInterval(5 * 86_400), dated: true),
+            .init(title: "Current week (Fable)", percent: 41, resetsAt: now.addingTimeInterval(5 * 86_400), dated: true)])
+        let usage = try XCTUnwrap(ClaudeUsage.nookCard(from: live, now: now))
+        XCTAssertEqual(usage.meters.filter { $0.source == .snapshot }.count, 2, "The two weeks of a model are Claude's last reading.")
+        XCTAssertNotNil(UsageSnapshot.note(for: usage.meters, since: usage.savedAt, now: now), "…and the note says how old it is.")
+        var found: [String] = []
+        for width in [384.0, 444, 516, 586, 616, 664, 734, 974] {
+            for chat in [9.0, 11, 14, 18] {
+                let content = UsageContent(usage: usage, panel: nil, chatSize: chat, dense: false, onMore: { _ in }, enabled: true)
+                    .frame(width: CGFloat(width), alignment: .leading).environment(\.colorScheme, .dark).environment(\.nookTintedGlass, false)
+                let past = try pastTheRoom(content, width: CGFloat(width))
+                if past > 0.5 { found.append("Nook's card at \(Int(width)) pt, chat \(Int(chat)): \(String(format: "%.1f", past)) pt past") }
+            }
+        }
+        for width in [384.0, 516, 664] {
+            let content = UsageContent(usage: usage, panel: nil, chatSize: 11, dense: true, onMore: { _ in }, enabled: true)
+                .frame(width: CGFloat(width), alignment: .leading).environment(\.colorScheme, .dark).environment(\.nookTintedGlass, false)
+            let past = try pastTheRoom(content, width: CGFloat(width))
+            if past > 0.5 { found.append("Nook's card, dense, at \(Int(width)) pt: \(String(format: "%.1f", past)) pt past") }
+        }
+        XCTAssertEqual(found, [], "Drawn past the card's edge:\n" + found.joined(separator: "\n"))
+    }
+
     /// What the status line adds (the dots beside the figures it gave, the context cell, the spend limit's dollars) stays inside the room as well: on a screen that lacks the
     /// limits and the session, and on the ones that have them.
     func testWhatTheStatusLineAddsStaysInsideTheRoomToo() throws {

@@ -459,6 +459,9 @@ struct ClaudeLiveUsage: Equatable {
     var sessionAt: Date?
     var limits: ClaudeStatusPayload.RateLimits?
     var limitsAt: Date?
+    /// Claude's own copy of its latest usage reading for this tab's config (`ClaudeUsageSnapshot`): the per-model weekly limits
+    /// the status line never sends.
+    var saved: ClaudeUsageSnapshot?
 }
 
 // MARK: - The folder, watched
@@ -573,8 +576,32 @@ final class ClaudeStatusWatcher {
 
 extension AppModel {
     /// Hands each Claude tab its live figures: its own reading (found by its record's path, its session id, or its terminal),
-    /// and its config folder's freshest rate limits, which every tab of that folder shares.
+    /// and its config folder's freshest rate limits, which every tab of that folder shares. Claude's own copy of its usage reading
+    /// for each folder follows a moment later (`refreshUsageSnapshots`).
     func applyStatus(_ readings: [ClaudeStatusReading]) {
+        statusReadings = readings
+        assignStatus(readings)
+        refreshUsageSnapshots()
+    }
+
+    /// Reads again, off the main thread, the usage snapshot of every config folder a tab or a reading belongs to (a stat when
+    /// nothing changed), and hands the tabs whatever changed.
+    func refreshUsageSnapshots() {
+        let folders = Set(statusReadings.compactMap(\.payload.configFolder) + sessions.compactMap { $0.transcript.flatMap { Self.configFolder(of: $0.url) } })
+        guard !folders.isEmpty else { return }
+        let reader = usageSnapshotReader
+        usageSnapshotQueue.async { [weak self] in
+            var found: [String: ClaudeUsageSnapshot] = [:]
+            for folder in folders { found[folder] = reader.snapshot(config: folder) }
+            DispatchQueue.main.async {
+                guard let self, found != self.usageSnapshots else { return }
+                self.usageSnapshots = found
+                self.assignStatus(self.statusReadings)
+            }
+        }
+    }
+
+    private func assignStatus(_ readings: [ClaudeStatusReading]) {
         var limits: [String: (ClaudeStatusPayload.RateLimits, Date)] = [:]
         for reading in readings {
             guard let folder = reading.payload.configFolder, let found = reading.payload.rateLimits else { continue }
@@ -591,9 +618,12 @@ extension AppModel {
             }
             let folder = own?.payload.configFolder ?? record.map { Self.configFolder(of: $0) } ?? nil
             let shared = folder.flatMap { limits[$0] }
+            // Claude's snapshot alone makes no live figures: they come with its status line, which the user turned on.
             let live = own == nil && shared == nil ? nil
-                : ClaudeLiveUsage(session: own?.payload, sessionAt: own?.at, limits: shared?.0, limitsAt: shared?.1)
+                : ClaudeLiveUsage(session: own?.payload, sessionAt: own?.at, limits: shared?.0, limitsAt: shared?.1, saved: folder.flatMap { usageSnapshots[$0] })
             if session.liveUsage != live { session.liveUsage = live }
+            // Nook's own usage card is made of these figures: with none left it has nothing to show.
+            if live == nil, session.usageCardOpen { session.usageCardOpen = false }
         }
     }
 

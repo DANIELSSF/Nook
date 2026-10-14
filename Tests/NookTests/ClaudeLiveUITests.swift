@@ -346,7 +346,7 @@ final class ClaudeLiveUITests: XCTestCase {
         XCTAssertEqual(lines.count, 3, detail)
         XCTAssertTrue(lines[0].hasPrefix("Sesión: reinicia"), detail)
         XCTAssertTrue(lines[1].hasPrefix("Semana: reinicia"), detail)
-        XCTAssertEqual(lines[2], "Pulsa para ver el detalle (/usage)")
+        XCTAssertEqual(lines[2], "Pulsa para ver el detalle")
         XCTAssertFalse(detail.contains("Dato de"), "A reading of half a minute needs no warning.")
         XCTAssertTrue(lines[1].contains("\u{00A0}"), "A time is not split by the line's end.")
         // An old reading says how old.

@@ -820,6 +820,9 @@ struct SessionPane: View {
     /// reading that misses the panel for a moment (a screen caught while Claude redraws) does not make it blink away: it
     /// leaves only once the screen has stopped showing it for `ClaudePanelHold.delay`.
     @State private var shownPanel: String?
+    /// «Detalle en Claude» was pressed on Nook's usage card (`AppModel.openClaudeUsage` closed the card and typed /usage): the card stays up until Claude's panel arrives, or a few
+    /// seconds pass (`UsageCardLifecycle`), so that the conversation does not show for a moment between the two.
+    @State private var usageHandoff = false
     /// The welcome of a fresh Claude shows Claude's suggestion as its chip (`ClaudeWelcomeSuggestionKey`): the field's placeholder does not say it again.
     @State private var welcomeShowsSuggestion = false
     /// Bumped to put the keyboard in the panel's card (see `PanelKeyCatcher`).
@@ -955,6 +958,9 @@ struct SessionPane: View {
             .onChange(of: showsPanel) { _, shows in
                 if shows { panelFocus += 1 } else if session.mirrorsAgent { DispatchQueue.main.async { focusField() } }
             }
+            // Nook's usage card (the usage button's) gives way to Claude's own panel, goes with the island, and is not kept when Claude has left the tab or it has nothing to show.
+            .modifier(UsageCardLifecycle(claudePanelOpen: session.panel != nil, islandVisible: model.islandContentVisible, unavailable: usageCardUnavailable,
+                                         handoff: $usageHandoff, close: closeUsageCard))
             // An agent starting in a Nook session turns its terminal into the mirror: the keyboard goes to the field (typing into the
             // terminal that is no longer on show would reach Claude unseen). When it quits the terminal is back and takes it again.
             .onChange(of: session.mirrorsAgent) { _, mirrors in
@@ -1033,10 +1039,14 @@ struct SessionPane: View {
                 // Faded out it is still there, and its text views would go on claiming the pointer over the card: they step out of AppKit's
                 // way once the fade is over, and are back as the card starts to go.
                 .underCover(showsPanel)
-            if let panel = shownPanel, showsPanel {
+            if let panel = shownPanel, showsClaudePanel {
                 panelCard(panel).transition(.opacity)
+            } else if showsUsageCard {
+                usageCard.transition(.opacity)
             }
         }.animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showsPanel)
+            // Nook's card handing over to Claude's panel is a change of card with a card on show before and after: it fades too.
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showsUsageCard)
             // The tip of the control the pointer rests on (`NookTip`), above everything the pane draws. With the list of models open over the row it stays
             // away: the list would be under it.
             .overlayPreferenceValue(NookTipKey.self) { entry in
@@ -1046,14 +1056,42 @@ struct SessionPane: View {
 
     /// The panel's card, with the drop feedback and its confirmation: a file dropped meanwhile goes into the draft.
     private func panelCard(_ text: String) -> some View {
-        ClaudePanelCard(text: text, fontSize: model.display.chatSize, running: session.isRunning,
-                        needsAccessibility: session.isExternal && !DirectKeys.allowed, focusRequest: panelFocus, reading: session.readingPanel, growsIsland: growsIsland,
-                        live: session.liveUsage, onKey: { model.press($0, on: session) }, onScroll: { model.scrollPanel(down: $0, on: session) })
+        dressed(ClaudePanelCard(text: text, fontSize: model.display.chatSize, running: session.isRunning,
+                                needsAccessibility: session.isExternal && !DirectKeys.allowed, focusRequest: panelFocus, reading: session.readingPanel, growsIsland: growsIsland,
+                                live: session.liveUsage, onKey: { model.press($0, on: session) }, onScroll: { model.scrollPanel(down: $0, on: session) }))
+    }
+
+    /// Nook's own usage card (`ClaudePanelCard(nookUsage:)`) in the panel card's place. It is made again every minute, so that the age of Claude's last reading, and the limits that
+    /// have reset meanwhile, stay true for as long as the card is open. Its keys and its buttons close it in Nook (`closeUsageCard`) or ask Claude for its own panel
+    /// (`openClaudeUsage`); none of them presses anything in the terminal.
+    private var usageCard: some View {
+        TimelineView(.everyMinute) { timeline in
+            dressed(ClaudePanelCard(nookUsage: session.liveUsage, fontSize: model.display.chatSize, running: session.isRunning, focusRequest: panelFocus, growsIsland: growsIsland,
+                                    opening: usageHandoff, now: timeline.date, onClose: closeUsageCard, onOpenClaude: openClaudeUsage))
+        }
+    }
+
+    /// What either card wears in the pane: the drop feedback and its confirmation, the notice hanging from under its toolbar, and the margins the pane keeps around it.
+    private func dressed<Card: View>(_ card: Card) -> some View {
+        card
             .overlay { FileDropFeedback(state: model.fileDrop, radius: ClaudePanelCard.radius) }
             .overlay(alignment: .top) { droppedNote }
-            // The notice hangs from under the panel's toolbar (its keys and «Cerrar»), over the panel's text.
+            // The notice hangs from under the card's toolbar (its keys and «Cerrar»), over the card's text.
             .noticeArea(below: ClaudePanelCard.toolbarHeight)
             .padding(.horizontal, ClaudePanelCard.paneEdge).padding(.top, ClaudePanelCard.topMargin).padding(.bottom, ComposerMetrics.bottomInset)
+    }
+
+    /// «Cerrar · esc» on Nook's usage card: it goes, in Nook alone.
+    private func closeUsageCard() {
+        usageHandoff = false
+        model.closeUsageCard(on: session)
+    }
+
+    /// «Detalle en Claude»: Claude's own /usage in its terminal. Nook's card stays until that panel arrives.
+    private func openClaudeUsage() {
+        guard session.agent == .claude, session.isRunning else { return }
+        usageHandoff = true
+        model.openClaudeUsage(on: session)
     }
 
     private func conversationPane(_ layout: PaneLayout) -> some View {
@@ -1318,7 +1356,7 @@ struct SessionPane: View {
 
     /// Why the mode chip cannot pass to the next mode now (see `ClaudeModeStyle.block`); nil when it can.
     private var modeChipBlock: String? {
-        ClaudeModeStyle.block(running: session.isRunning, questionOpen: prompt != nil, panelOpen: showsPanel)
+        ClaudeModeStyle.block(running: session.isRunning, questionOpen: prompt != nil, panelOpen: showsClaudePanel)
     }
 
     /// Claude's own controls stand in the row while its conversation is on show; the strip of menu keys needs the room, so they step aside.
@@ -1694,8 +1732,20 @@ struct SessionPane: View {
         session.forgetChosenField()
         typingFor = nil; cardHiddenFor = nil; answerNudged = false
     }
-    /// Claude's panel is on screen. A question's card wins: with one open there is no panel to show.
-    private var showsPanel: Bool { shownPanel != nil && session.mirrorsAgent && prompt == nil }
+    /// Claude's own panel is on screen. A question's card wins: with one open there is no panel to show.
+    private var showsClaudePanel: Bool { shownPanel != nil && session.mirrorsAgent && prompt == nil }
+    /// Nook's own usage card is on screen: the usage button opened it (`TerminalSession.usageCardOpen`), or the /usage asked of Claude from it is on its way (`usageHandoff`), Claude is
+    /// the tab's agent, and there are figures to put in it (`ClaudeUsage.nookCard`; with none, nothing shows). Claude's own panel wins over it, as a question's card does over both.
+    private var showsUsageCard: Bool {
+        (session.usageCardOpen || usageHandoff) && session.agent == .claude && shownPanel == nil && session.panel == nil && session.mirrorsAgent && prompt == nil
+            && ClaudeUsage.nookCard(from: session.liveUsage) != nil
+    }
+    /// Nook's own usage card is asked for and cannot be on screen for good: Claude is no longer the tab's agent (it quit), or no figure is left to put in it.
+    private var usageCardUnavailable: Bool {
+        (session.usageCardOpen || usageHandoff) && (session.agent != .claude || ClaudeUsage.nookCard(from: session.liveUsage) == nil)
+    }
+    /// A card stands in the place of the conversation and the message field: Claude's panel, or Nook's usage card.
+    private var showsPanel: Bool { showsClaudePanel || showsUsageCard }
 
     // MARK: Session strip
 
@@ -1975,7 +2025,7 @@ struct SessionPane: View {
     /// Confirms, on the composer's top edge, that dropped paths went into the draft behind a question's card.
     @ViewBuilder private var droppedNote: some View {
         if droppedAt != nil {
-            FileDropTag(symbol: "checkmark.circle.fill", text: showsPanel ? "Ruta añadida · la verás al cerrar el panel" : "Ruta añadida · la verás al responder")
+            FileDropTag(symbol: "checkmark.circle.fill", text: showsClaudePanel ? "Ruta añadida · la verás al cerrar el panel" : showsUsageCard ? "Ruta añadida · la verás al cerrar la tarjeta" : "Ruta añadida · la verás al responder")
                 .offset(y: -FileDropTag.overhang).transition(.opacity)
         }
     }

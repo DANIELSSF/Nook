@@ -10,6 +10,10 @@ import AppKit
 //
 // The terminal still owns the panel: every key is pressed there (see `AppModel.press`), and what the card shows is whatever
 // the next reading of the screen says, so the card never claims a tab or a row the screen did not.
+//
+// The same card is also Nook's own usage card (`init(nookUsage:…)`, the usage button's, `AppModel.openUsage`): the usage dashboard made of what Claude's status line and
+// its usage reading give, with no panel of Claude's behind it. It is the card's frame and its content with a toolbar of its own: no keys (there is no panel to move through),
+// «Cerrar · esc» and the Esc key close it in Nook alone, and «Detalle en Claude» asks Claude for its full /usage (`AppModel.openClaudeUsage`). Nothing it does presses a key in the terminal.
 
 /// What the usage bars are drawn in (they are graphics, not text): mint while there is room, amber and then coral as it fills.
 private let panelMint = Color.nookMintFill
@@ -39,8 +43,30 @@ struct ClaudePanelCard: View {
     var live: ClaudeLiveUsage?
 
     private let panel: ClaudePanel
-    /// The panel as a dashboard, when it is Claude's usage panel (see `UsageContent`); nil for any other.
+    /// The panel as a dashboard, when it is Claude's usage panel (see `UsageContent`); nil for any other. For Nook's own card, what its figures make (`ClaudeUsage.nookCard`).
     private let usage: ClaudeUsage?
+    /// What only Nook's own usage card has (`init(nookUsage:…)`); nil for Claude's panel.
+    private let own: Own?
+
+    /// Nook's own usage card's toolbar: the two things it does, and neither reaches the terminal as a key.
+    struct Own {
+        /// «Cerrar · esc», and the Esc key: the card goes, in Nook alone.
+        var onClose: () -> Void
+        /// «Detalle en Claude»: Claude's own /usage in its terminal, for what Nook's card does not have (the tokens by model, what feeds the limits).
+        var onOpenClaude: () -> Void
+        /// That /usage is on its way: the button says so and waits, and the card stays until the panel arrives.
+        var opening: Bool
+
+        /// What the pointer resting on «Detalle en Claude» is told: what it opens and what it leaves fresh; with the terminal closed, why it cannot.
+        static func openTip(running: Bool) -> NookTip {
+            NookTip("Detalle en Claude", detail: UsageFigures.unbroken(running
+                ? "Abre /usage en la terminal de Claude, con el detalle completo: los tokens por modelo y qué consume tus límites. También actualiza la lectura de los límites por modelo."
+                : "La terminal está cerrada."))
+        }
+
+        /// What it says over «Cerrar · esc».
+        static let closeTip = NookTip("Cerrar", detail: "Esc también lo cierra")
+    }
     /// The key just pressed, from the keyboard or a button: it stays lit for a moment so the press is seen to land.
     @State private var flashed: TerminalKey?
     @State private var copied = false
@@ -79,6 +105,22 @@ struct ClaudePanelCard: View {
         panel = ClaudePanel(text)
         // What the status line gave and still describes the present fills what the panel's screen lacks.
         usage = ClaudeUsage(panel).map { $0.filled(from: live?.upToDate(at: now), now: now) }
+        own = nil
+    }
+
+    /// Nook's own usage card: the figures Claude's status line and its usage reading give for this tab (`ClaudeUsage.nookCard`, as of `now`), with no panel behind them. `running` is the
+    /// tab's terminal being alive: «Detalle en Claude» has somewhere to go (Esc and «Cerrar» never need it). With nothing to show it draws an empty card; the island shows none then.
+    init(nookUsage live: ClaudeLiveUsage?, fontSize: Double = DisplaySettings.defaultChatSize, running: Bool = true, focusRequest: Int = 0, growsIsland: Bool = false,
+         opening: Bool = false, now: Date = Date(), onClose: @escaping () -> Void = {}, onOpenClaude: @escaping () -> Void = {}) {
+        text = ""
+        self.fontSize = fontSize
+        self.running = running
+        self.focusRequest = focusRequest
+        self.growsIsland = growsIsland
+        self.live = live
+        panel = ClaudePanel("")
+        usage = ClaudeUsage.nookCard(from: live, now: now)
+        own = Own(onClose: onClose, onOpenClaude: onOpenClaude, opening: opening)
     }
 
     var body: some View {
@@ -93,9 +135,10 @@ struct ClaudePanelCard: View {
         .background { PanelKeyCatcher(focusRequest: focusRequest, onKey: press) }
         // How tall the card would be with all of its content showing, for the island to give it that room. Only the usage card asks: any other panel is plain text that scrolls.
         .preference(key: IslandRoomKey.self, value: usage != nil && growsIsland && scroll.height > 0 ? IslandRoom(height: Self.toolbarHeight + scroll.height, width: scroll.width) : nil)
-        .contextMenu { Button("Copiar el texto del panel") { copy() } }
+        // Nook's own card has no panel's text to copy.
+        .contextMenu { if own == nil { Button("Copiar el texto del panel") { copy() } } }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Panel de Claude")
+        .accessibilityLabel(own == nil ? "Panel de Claude" : "Uso y límites")
         .task(id: flashed) {
             guard flashed != nil else { return }
             try? await Task.sleep(for: .seconds(0.18))
@@ -109,6 +152,13 @@ struct ClaudePanelCard: View {
     }
 
     private func press(_ key: TerminalKey) {
+        // Nook's own card has no panel behind it, so no key of a panel's is its own: Esc closes the card, here, and the rest does nothing. Nothing reaches the terminal.
+        if let own {
+            guard key == .escape else { return }
+            flashed = key
+            own.onClose()
+            return
+        }
         guard running else { return }
         flashed = key
         onKey(key)
@@ -131,13 +181,56 @@ struct ClaudePanelCard: View {
     // MARK: Toolbar
 
     /// Its name, the keys that move through the panel and the way out, in one row: the panel gets all the height that is left.
-    /// When the island is too narrow for all of it, the panel's own name goes first.
+    /// When the island is too narrow for all of it, the panel's own name goes first. Nook's own card has no keys: its name, «Detalle en Claude» and the way out,
+    /// and the action's words go first.
     private var toolbar: some View {
-        ViewThatFits(in: .horizontal) {
-            toolbarRow(named: true)
-            toolbarRow(named: false)
+        Group {
+            if let own {
+                ViewThatFits(in: .horizontal) {
+                    ownToolbarRow(own, labelled: true)
+                    ownToolbarRow(own, labelled: false)
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    toolbarRow(named: true)
+                    toolbarRow(named: false)
+                }
+            }
         }.padding(.horizontal, 10).frame(height: Self.toolbarHeight)
             .overlay(alignment: .bottom) { Rectangle().fill(Color.nookWash(0.07)).frame(height: 0.5) }
+    }
+
+    /// Nook's own card's toolbar: what it is, the way to Claude's full panel, and the way out.
+    private func ownToolbarRow(_ own: Own, labelled: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text("✻").font(.system(size: 14, weight: .bold)).foregroundStyle(claudeSpinner).frame(width: 14)
+            Text("Uso y límites").font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+            Spacer(minLength: 8)
+            openClaudeButton(own, labelled: labelled)
+            ownCloseButton
+        }
+    }
+
+    /// «Detalle en Claude»: a quiet action beside «Cerrar», for what Nook's card does not have. It asks Claude for its own /usage, which also leaves Claude a fresh reading of the
+    /// limits by model. Once asked, and until Claude's panel arrives, it is not a button any more but what is happening, so that it reads as work under way and not as something
+    /// that is not available.
+    @ViewBuilder private func openClaudeButton(_ own: Own, labelled: Bool) -> some View {
+        if own.opening {
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini).scaleEffect(0.8).frame(width: 12, height: 12)
+                if labelled { Text("Abriendo…").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize() }
+            }.foregroundStyle(UsageMetrics.secondary).padding(.horizontal, 7).frame(height: 24)
+                .accessibilityElement(children: .ignore).accessibilityLabel("Abriendo el detalle en Claude")
+        } else {
+            Button(action: own.onOpenClaude) {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.forward.square").font(.system(size: 10.5, weight: .medium)).nookIconMotion(.nudgeUpRight, strength: 0.6)
+                    if labelled { Text("Detalle en Claude").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize() }
+                }.foregroundStyle(UsageMetrics.secondary).padding(.horizontal, 7).frame(height: 24).contentShape(Rectangle())
+            }.buttonStyle(PanelButtonStyle(radius: 8)).disabled(!running)
+                .nookTip(Own.openTip(running: running), id: "usage-open-claude")
+                .accessibilityLabel("Ver el detalle en Claude").accessibilityHint("Abre /usage en la terminal de Claude, con el detalle completo y la lectura al día de los límites por modelo")
+        }
     }
 
     private func toolbarRow(named: Bool) -> some View {
@@ -183,13 +276,24 @@ struct ClaudePanelCard: View {
     }
 
     private var closeButton: some View {
-        Button { press(.escape) } label: {
-            HStack(spacing: 6) {
-                Text("Cerrar").font(.system(size: 10.5, weight: .medium))
-                PanelKeycap(text: "esc")
-            }.foregroundStyle(Color.primary.opacity(0.9)).padding(.horizontal, 8).frame(height: 24).contentShape(Rectangle())
-        }.buttonStyle(PanelButtonStyle(lit: flashed == .escape, rest: 0.1, radius: 8)).disabled(!running)
+        Button { press(.escape) } label: { closeLabel }
+            .buttonStyle(PanelButtonStyle(lit: flashed == .escape, rest: 0.1, radius: 8)).disabled(!running)
             .help(Self.help(for: .escape, needsAccessibility: needsAccessibility)).accessibilityLabel("Cerrar el panel")
+    }
+
+    private var closeLabel: some View {
+        HStack(spacing: 6) {
+            Text("Cerrar").font(.system(size: 10.5, weight: .medium))
+            PanelKeycap(text: "esc")
+        }.foregroundStyle(Color.primary.opacity(0.9)).padding(.horizontal, 8).frame(height: 24).contentShape(Rectangle())
+    }
+
+    /// «Cerrar · esc» on Nook's own card: the card goes in Nook alone, so it needs no terminal to be alive (it is never disabled), and Esc says it too.
+    private var ownCloseButton: some View {
+        Button { press(.escape) } label: { closeLabel }
+            .buttonStyle(PanelButtonStyle(lit: flashed == .escape, rest: 0.1, radius: 8))
+            .nookTip(Own.closeTip, id: "usage-card-close")
+            .accessibilityLabel("Cerrar uso y límites")
     }
 
     /// What a key does in Claude's panels, and what it needs.
@@ -223,7 +327,10 @@ struct ClaudePanelCard: View {
                 ScrollView(.vertical) {
                     Group {
                         if let usage {
-                            UsageContent(usage: usage, panel: panel, chatSize: fontSize, dense: dense, reading: reading, onMore: { more(down: $0) }, enabled: running)
+                            UsageContent(usage: usage, panel: own == nil ? panel : nil, chatSize: fontSize, dense: dense, reading: reading, onMore: { more(down: $0) }, enabled: running)
+                        } else if own != nil {
+                            // Nook's own card with no figure left to show: the island puts it away then, this is only the moment in between.
+                            Text("Sin datos de uso por ahora").font(.system(size: 11)).foregroundStyle(UsageMetrics.secondary)
                         } else {
                             PanelRows(panel: panel, size: size, onMore: { more(down: $0) }, enabled: running)
                         }
@@ -250,6 +357,42 @@ struct ClaudePanelCard: View {
                 .nookScrollFade(active: scroll.height - scroll.offset - geometry.size.height > 2, height: 22, surface: Self.surface)
             }
         }
+    }
+}
+
+// MARK: - Nook's own card, kept honest
+
+/// What the pane does around Nook's own usage card (the usage button's) while it is asked for:
+///
+///   - Claude's own panel takes the card's place when one opens (typed in the terminal, or asked for with «Detalle en Claude»): Nook's card is closed, its figures are in that panel;
+///   - putting the island away closes it: a glance at the limits does not wait there for the next time the island opens, to stand in the way of the conversation and the field;
+///   - Claude leaving the tab (it quit) or having no figure left to show (every limit it had has reset, the reading is gone) closes it too, rather than leave a card that would come back
+///     by itself when Claude or new figures return;
+///   - the /usage asked of Claude from the card (`handoff`) holds the card up until Claude's panel arrives, and lets go after `handoffHold` if it never does.
+struct UsageCardLifecycle: ViewModifier {
+    /// Claude has a panel open in its terminal.
+    var claudePanelOpen: Bool
+    /// The island is on show.
+    var islandVisible: Bool
+    /// The card is asked for, and cannot be on show for good: Claude is not the tab's agent any more, or there is no figure to put in it.
+    var unavailable: Bool
+    @Binding var handoff: Bool
+    /// Closes the card, in Nook alone (`AppModel.closeUsageCard`).
+    var close: () -> Void
+
+    /// How long the card waits for Claude's panel after «Detalle en Claude»: the terminal gets its /usage and Nook reads the screen again.
+    static var handoffHold = 4.0
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: claudePanelOpen, initial: true) { _, open in if open { close() } }
+            .onChange(of: islandVisible) { _, visible in if !visible { close() } }
+            .onChange(of: unavailable, initial: true) { _, gone in if gone { close() } }
+            .task(id: handoff) {
+                guard handoff else { return }
+                try? await Task.sleep(for: .seconds(Self.handoffHold))
+                if !Task.isCancelled { handoff = false }
+            }
     }
 }
 

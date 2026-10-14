@@ -16,6 +16,13 @@ struct ClaudeSessionFile: Equatable {
     var status: String?
     var updatedAt: Date?
     var cwd: String?
+    /// "interactive" for a terminal's Claude, "bg" for a session Claude runs in the background (2.1.299 and later).
+    var kind: String?
+    /// A background session's job ("782bea23"): it keeps it across a /clear, which changes its session id.
+    var jobID: String?
+    /// The job a terminal's Claude moved its session to (moved to the background). Its `sessionId` then stays the one it had, whose
+    /// record ends there; the conversation goes on in the background session of that job, which the terminal shows.
+    var parkedJobID: String?
 
     /// Claude's file is a few hundred bytes; anything much larger is not one.
     static let maxBytes = 64 * 1024
@@ -23,15 +30,26 @@ struct ClaudeSessionFile: Equatable {
     /// The file's fields, or nil for anything that isn't one: malformed, too large, or with a session id that isn't plain.
     static func parse(_ data: Data) -> ClaudeSessionFile? {
         guard data.count <= maxBytes, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let pid = (object["pid"] as? NSNumber)?.int32Value, pid > 0,
-              let id = object["sessionId"] as? String, id.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else { return nil }
+              let pid = (object["pid"] as? NSNumber)?.int32Value, pid > 0, let id = plain(object["sessionId"]) else { return nil }
         var file = ClaudeSessionFile(pid: pid, sessionID: id)
         file.procStart = object["procStart"] as? String
         file.status = object["status"] as? String
         file.cwd = object["cwd"] as? String
         file.updatedAt = (object["updatedAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+        file.kind = object["kind"] as? String
+        file.jobID = plain(object["jobId"])
+        file.parkedJobID = plain(object["parkedJobId"])
         return file
     }
+
+    /// An id fit for a file name: letters, digits, "-" and "_".
+    private static func plain(_ value: Any?) -> String? {
+        guard let id = value as? String, id.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else { return nil }
+        return id
+    }
+
+    /// Whether this is the file of the background session that runs `job`.
+    func runs(job: String) -> Bool { kind == "bg" && jobID == job }
 
     /// `procStart` as a moment: "Tue Oct  6 22:38:49 2026" (UTC), however many spaces stand between its words.
     static func date(procStart: String) -> Date? {
@@ -60,8 +78,9 @@ struct ClaudeProcessLookup {
 }
 
 /// Which record a tab's Claude writes, from what Claude says about it: its process's own file (`ClaudeSessionFile`) and its hooks'
-/// session id, whichever spoke last when they disagree. Asked on every reading, so it is cheap: the process is looked up once (again
-/// only when it is gone), its file is read again only when it changed, and a record is searched for only for a new session id.
+/// session id, whichever spoke last when they disagree. A session moved to the background is followed there, through its job's file.
+/// Asked on every reading, so it is cheap: the process is looked up once (again only when it is gone), its file is read again only
+/// when it changed, and a record is searched for only for a new session id.
 /// Used on the reading queue only.
 final class ClaudeRecordLocator {
     /// A session id Claude's hooks reported, and when it last did.
@@ -76,8 +95,18 @@ final class ClaudeRecordLocator {
     private let configs: [URL]
     private var process: (pid: Int32, started: Date)?
     private var lookedUp = Date.distantPast
-    /// The file last read, by its path, size and modification date: read again only when one of them changes.
-    private var read: (path: String, size: UInt64, modified: Date?, file: ClaudeSessionFile?)?
+    /// A session file as last read, by its path, size and modification date: read again only when one of them changes.
+    private struct Reading {
+        var path: String
+        var size: UInt64
+        var modified: Date
+        var file: ClaudeSessionFile?
+    }
+    /// The process's own file, last read.
+    private var read: Reading?
+    /// The file of the background session the process moved its conversation to, last read, and when it was last searched for.
+    private var job: (id: String, reading: Reading)?
+    private var jobSearched: (id: String, at: Date)?
     /// The latest session id asked about and its record; a record not written yet is searched for again after a while.
     private var resolved: (id: String, url: URL?, at: Date)?
 
@@ -100,19 +129,58 @@ final class ClaudeRecordLocator {
         }
         guard let process else { return nil }
         for config in configs {
-            let path = config.appendingPathComponent("sessions/\(process.pid).json").path
-            var info = stat()
-            guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= ClaudeSessionFile.maxBytes else { continue }
-            let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
-            if read?.path != path || read?.size != UInt64(info.st_size) || read?.modified != modified {
-                let data = FileManager.default.contents(atPath: path).flatMap { $0.count <= ClaudeSessionFile.maxBytes ? $0 : nil }
-                read = (path, UInt64(info.st_size), modified, data.flatMap(ClaudeSessionFile.parse))
+            guard let reading = Self.read(config.appendingPathComponent("sessions/\(process.pid).json").path, cached: read) else { continue }
+            read = reading
+            if let file = reading.file, file.matches(pid: process.pid, startedAt: process.started) {
+                return parked(file, sessions: config.appendingPathComponent("sessions"), now: now) ?? file
             }
-            if let file = read?.file, file.matches(pid: process.pid, startedAt: process.started) { return file }
         }
         // No file of its own: an older Claude, or the process is gone (Claude restarted in this tab) and is looked up again.
         if lookup.started(process.pid).map({ abs($0.timeIntervalSince(process.started)) < 1 }) != true { self.process = nil }
         return nil
+    }
+
+    /// While the process's session is in the background, what the terminal shows: the session its job's file names (a /clear
+    /// there moves it too), and the job's status. Nil while it isn't parked, or until the job's file is found (then the process's
+    /// own file is all there is).
+    private func parked(_ file: ClaudeSessionFile, sessions: URL, now: Date) -> ClaudeSessionFile? {
+        guard let id = file.parkedJobID else { job = nil; return nil }
+        // The job's file is named by its process's pid, which only reading the folder tells: the one found is followed while it
+        // still runs the job, and the folder is searched again only now and then. Caught mid-write or gone, the job's last word
+        // stands: going back to the process's own session would show the record that ended when it moved.
+        if let known = job, known.id == id, let reading = Self.read(known.reading.path, cached: known.reading), reading.file?.runs(job: id) == true {
+            job = (id, reading)
+        } else if jobSearched?.id != id || now.timeIntervalSince(jobSearched?.at ?? .distantPast) >= Self.searchInterval {
+            jobSearched = (id, now)
+            if let found = Self.job(id, in: sessions) { job = (id, found) }
+        }
+        guard let known = job, known.id == id, let background = known.reading.file else { return nil }
+        var shown = file
+        shown.sessionID = background.sessionID
+        shown.status = background.status
+        shown.cwd = background.cwd ?? file.cwd
+        shown.updatedAt = max(file.updatedAt ?? .distantPast, background.updatedAt ?? .distantPast)
+        return shown
+    }
+
+    /// The file at `path` if it can be Claude's, read again only when it changed since `cached`.
+    private static func read(_ path: String, cached: Reading?) -> Reading? {
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= ClaudeSessionFile.maxBytes else { return nil }
+        let modified = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9)
+        if let cached, cached.path == path, cached.size == UInt64(info.st_size), cached.modified == modified { return cached }
+        let data = FileManager.default.contents(atPath: path).flatMap { $0.count <= ClaudeSessionFile.maxBytes ? $0 : nil }
+        return Reading(path: path, size: UInt64(info.st_size), modified: modified, file: data.flatMap(ClaudeSessionFile.parse))
+    }
+
+    /// The file of the background session running `id` in a `sessions` folder; of several (one left by a process that is gone),
+    /// the one written last.
+    private static func job(_ id: String, in sessions: URL) -> Reading? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: sessions.path)) ?? []
+        return names.filter { $0.hasSuffix(".json") && $0.dropLast(5).allSatisfy(\.isNumber) }
+            .compactMap { read(sessions.appendingPathComponent($0).path, cached: nil) }
+            .filter { $0.file?.runs(job: id) == true }
+            .max { ($0.file?.updatedAt ?? .distantPast) < ($1.file?.updatedAt ?? .distantPast) }
     }
 
     /// The session Claude says this terminal works on: its file's or its hooks', the newer when they disagree.

@@ -404,8 +404,9 @@ struct ClaudeUsage: Equatable {
         var resetsSource: Source = .panel
     }
 
-    /// Where a figure comes from: Claude's panel as read from the screen, or its status line's payload, live.
-    enum Source: Equatable { case panel, live }
+    /// Where a figure comes from: Claude's panel as read from the screen, its status line's payload, live, or Claude's own copy
+    /// of its latest usage reading (`ClaudeUsageSnapshot`, as old as `ClaudeUsage.savedAt` says).
+    enum Source: Equatable { case panel, live, snapshot }
 
     /// The "Session" section: what this Claude session cost and used so far.
     struct SessionStats: Equatable {
@@ -530,6 +531,24 @@ struct ClaudeUsage: Equatable {
     /// Claude's status line for this tab, when Nook has it (`filled(from:)`): what the panel never shows (the context window,
     /// the model and effort, the spend limit's dollars, the prompt cache's details) is there.
     var live: ClaudeLiveUsage?
+    /// When Claude took the reading the `.snapshot` meters come from.
+    var savedAt: Date?
+
+    /// Nook's own usage card (`AppModel.openUsage`): no panel, only what Claude's status line and its usage snapshot give.
+    /// Nil when they give no figure to show.
+    static func nookCard(from live: ClaudeLiveUsage?, now: Date = Date(), zone: TimeZone = .current) -> ClaudeUsage? {
+        guard let live = live?.upToDate(at: now) else { return nil }
+        let usage = ClaudeUsage(meters: []).filled(from: live, now: now, zone: zone)
+        return usage.meters.isEmpty && usage.session == nil ? nil : usage
+    }
+
+    init(meters: [Meter], session: SessionStats? = nil) {
+        self.meters = meters
+        self.session = session
+        leftovers = []
+        complete = true
+        details = []
+    }
 
     /// Nil for any other panel: one with a limit's "% used", a section of its own, or Settings open on its Usage tab.
     init?(_ panel: ClaudePanel) {
@@ -957,35 +976,41 @@ extension ClaudeUsage {
     /// The panel's reading with what Claude's status line adds (`ClaudeLiveUsage`): the session's and the week's limits when the
     /// panel's rows lack them (a short screen, a part not read yet), and the session's figures likewise, each marked `.live`.
     /// Where both have a figure the panel's wins, its section being the panel's own, but a reset it shows that has already passed
-    /// gives way to the status line's next one. Per-model weekly limits ("Current week (Fable)"), credits and the tokens per
-    /// model exist only in the panel and stay as read. `live` keeps the rest (context window, model, effort, spend, cache).
+    /// gives way to the status line's next one. Per-model weekly limits ("Current week (Fable)") never come with the status line:
+    /// Claude's own copy of its latest usage reading (`live.saved`) fills them, and any other limit the rows lack, marked
+    /// `.snapshot`; the status line's figure replaces a snapshot's when it is the newer reading. Credits and the tokens per model
+    /// exist only in the panel and stay as read. `live` keeps the rest (context window, model, effort, spend, cache).
     func filled(from live: ClaudeLiveUsage?, now: Date = Date(), zone: TimeZone = .current) -> ClaudeUsage {
         guard let live else { return self }
         var usage = self
         usage.live = live
+        if let saved = live.saved?.upToDate(at: now) {
+            for limit in saved.limits where !usage.meters.contains(where: { $0.title.caseInsensitiveCompare(limit.title) == .orderedSame }) {
+                let meter = Meter(title: limit.title, fraction: min(1, max(0, limit.percent / 100)), label: "\(Int(limit.percent.rounded(.down)))% used",
+                                  resets: limit.resetsAt.map { Self.resets($0, dated: limit.dated, now: now, zone: zone) }, source: .snapshot, resetsSource: .snapshot)
+                usage.meters.insert(meter, at: Self.place(limit.title, in: usage.meters))
+                usage.savedAt = saved.fetchedAt
+            }
+        }
         if let limits = live.limits {
             for (title, limit, dated) in [("Current session", limits.fiveHour, false), ("Current week (all models)", limits.sevenDay, true), ("Spend limit", limits.spendLimit, true)] {
                 guard let limit else { continue }
                 let resets = limit.resetsAt.map { Self.resets($0, dated: dated, now: now, zone: zone) }
+                let meter = Meter(title: title, fraction: min(1, max(0, limit.usedPercentage / 100)), label: "\(Int(limit.usedPercentage.rounded(.down)))% used",
+                                  resets: resets, source: .live, resetsSource: .live)
                 if let index = usage.meters.firstIndex(where: { $0.title.caseInsensitiveCompare(title) == .orderedSame }) {
-                    if let resets, let next = limit.resetsAt, next > now, let shown = usage.meters[index].resets.flatMap({ Self.resetDate($0, now: now, zone: zone) }), shown <= now {
+                    if usage.meters[index].source == .snapshot {
+                        if (live.limitsAt ?? .distantPast) >= (usage.savedAt ?? .distantPast) { usage.meters[index] = meter }
+                    } else if let resets, let next = limit.resetsAt, next > now, let shown = usage.meters[index].resets.flatMap({ Self.resetDate($0, now: now, zone: zone) }), shown <= now {
                         usage.meters[index].resets = resets
                         usage.meters[index].resetsSource = .live
                     }
                     continue
                 }
-                let meter = Meter(title: title, fraction: min(1, max(0, limit.usedPercentage / 100)), label: "\(Int(limit.usedPercentage.rounded(.down)))% used",
-                                  resets: resets, source: .live, resetsSource: .live)
-                // Claude's order: the session's, the week's, then the rest; a spend limit last.
-                let at: Int
-                switch title {
-                case "Current session": at = 0
-                case "Current week (all models)": at = usage.meters.firstIndex { $0.title.caseInsensitiveCompare("Current session") == .orderedSame }.map { $0 + 1 } ?? 0
-                default: at = usage.meters.count
-                }
-                usage.meters.insert(meter, at: at)
+                usage.meters.insert(meter, at: Self.place(title, in: usage.meters))
             }
         }
+        if !usage.meters.contains(where: { $0.source == .snapshot }) { usage.savedAt = nil }
         if let payload = live.session {
             var stats = usage.session ?? SessionStats()
             var filled = Set<SessionStats.Field>()
@@ -1004,6 +1029,19 @@ extension ClaudeUsage {
             }
         }
         return usage
+    }
+
+    /// Where a limit the rows lack goes, in Claude's order: the session's first, the week's for all models next, the per-model
+    /// weeks after the last week shown, anything else (a spend limit) last.
+    static func place(_ title: String, in meters: [Meter]) -> Int {
+        func index(_ match: (String) -> Bool) -> Int? { meters.lastIndex { match($0.title.lowercased()) }.map { $0 + 1 } }
+        let session = index { $0 == "current session" }
+        switch title.lowercased() {
+        case "current session": return 0
+        case "current week (all models)": return session ?? 0
+        case let other where other.hasPrefix("current week ("): return index { $0.hasPrefix("current week (") } ?? session ?? 0
+        default: return meters.count
+        }
     }
 
     /// "$1.75", or "$0.0003" under half a dollar, as Claude prints a cost.

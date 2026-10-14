@@ -19,6 +19,10 @@ import AppKit
 //
 // The words are Spanish (`UsageWords` has Claude's, and gives back what it does not know unchanged: the card never loses a line to a translation). Whatever the
 // card cannot place (`ClaudeUsage.leftovers`) is drawn modestly at the end, as the generic panel draws it.
+//
+// The same dashboard is Nook's own usage card too (`ClaudePanelCard(nookUsage:)`): with no panel of Claude's behind it, it has only what Claude's status line and Claude's own last reading
+// give (the limits, the week of a model among them, and the session), and each figure says where it comes from: a dot where it is live (`UsageLiveMark`), a ring where it is
+// Claude's last reading (`UsageSnapshotMark`), with a note under the limits for how old that reading is once it is old enough to matter (`UsageSnapshot`).
 
 // MARK: - Figures
 
@@ -419,8 +423,13 @@ struct UsageMeterView: View {
     var reservesDetail = false
     /// When Claude's status line gave the figures that came from it (`meter.source`, `meter.resetsSource`): the dot beside them says so.
     var since: Date?
+    /// When Claude took the reading the figures come from when they are its last one (`meter.source == .snapshot`): the ring beside them says so, and its tip how old it is (the limits'
+    /// section says it in plain sight, once, when it is old enough to matter).
+    var savedAt: Date?
     /// The dollars of a spend limit, under its reset.
     var spend: String?
+    /// The moment the card is drawn for, which the reading's age is counted to.
+    var now = Date()
 
     var body: some View {
         let percent = UsageWords.percent(meter.label)
@@ -455,7 +464,8 @@ struct UsageMeterView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(UsageWords.title(meter.title))
         .accessibilityValue(([percent.value + (percent.rest.isEmpty ? "" : " " + percent.rest), resets.map { $0.words + ($0.zone.map { " (\($0))" } ?? "") }, spend,
-                              meter.source == .live || meter.resetsSource == .live ? "en vivo" : nil] + meter.notes.map { Optional($0) })
+                              meter.source == .live || meter.resetsSource == .live ? "en vivo" : nil,
+                              meter.source == .snapshot ? UsageSnapshot.spoken(since: savedAt, now: now) : nil] + meter.notes.map { Optional($0) })
             .compactMap { $0 }.joined(separator: ". "))
     }
 
@@ -464,6 +474,9 @@ struct UsageMeterView: View {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(name).font(.system(size: metrics(11), weight: .medium)).foregroundStyle(UsageMetrics.primary).lineLimit(1).minimumScaleFactor(0.85)
                 if meter.source == .live { UsageLiveMark(since: since, metrics: metrics, id: "limit-" + meter.title).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + metrics(3.5) } }
+                else if meter.source == .snapshot {
+                    UsageSnapshotMark(title: meter.title, since: savedAt, metrics: metrics, id: "limit-" + meter.title, now: now).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + metrics(3.5) }
+                }
             }
             Spacer(minLength: metrics(4))
             figure(percent, tint: tint, words: words)
@@ -496,19 +509,34 @@ private struct UsageLimitsSection: View {
     var metrics: UsageMetrics
     /// What Claude's status line gave, with when: the dots beside what came from it, and the spend limit's dollars.
     var live: ClaudeLiveUsage?
+    /// When Claude took the reading its own limits come from (`ClaudeUsage.savedAt`): the rings beside them, and how old they are.
+    var savedAt: Date?
 
     var body: some View {
         let zone = UsageFigures.commonZone(of: meters.map(\.resets))
         UsageSection(symbol: UsageButton.symbol, title: "Límites", metrics: metrics, accessory: {
             if let zone { Text(zone).font(.system(size: metrics(9), design: .monospaced)).foregroundStyle(UsageMetrics.quiet).lineLimit(1).truncationMode(.head) }
         }, content: {
-            UsageTileGrid(minTile: metrics(128), gap: metrics(metrics.dense ? 14 : 16), rowGap: metrics(metrics.dense ? 9 : 12)) {
-                ForEach(Array(meters.enumerated()), id: \.offset) { _, meter in
-                    UsageMeterView(meter: meter, metrics: metrics, showsZone: zone == nil, reservesDetail: true, since: live?.limitsAt,
-                                   spend: meter.title.caseInsensitiveCompare("Spend limit") == .orderedSame ? UsageLive.spend(live?.limits?.spendLimit) : nil)
+            VStack(alignment: .leading, spacing: metrics(metrics.dense ? 9 : 12)) {
+                UsageTileGrid(minTile: metrics(128), gap: metrics(metrics.dense ? 14 : 16), rowGap: metrics(metrics.dense ? 9 : 12)) {
+                    ForEach(Array(meters.enumerated()), id: \.offset) { _, meter in
+                        UsageMeterView(meter: meter, metrics: metrics, showsZone: zone == nil, reservesDetail: true, since: live?.limitsAt, savedAt: savedAt,
+                                       spend: meter.title.caseInsensitiveCompare("Spend limit") == .orderedSame ? UsageLive.spend(live?.limits?.spendLimit) : nil)
+                    }
                 }
+                // Claude's last reading is as old as the last time Claude asked, which can be hours: said once, with the ring as its key, when it is old enough to matter.
+                if let words = UsageSnapshot.note(for: meters, since: savedAt, now: Date(), dense: metrics.dense) { snapshotNote(words) }
             }
         })
+    }
+
+    private func snapshotNote(_ words: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: metrics(5)) {
+            UsageSnapshotRing(metrics: metrics).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + metrics(3.2) }
+            Text(words).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        }.font(.system(size: metrics(9.5))).foregroundStyle(UsageMetrics.secondary)
+            // Each limit it is about says it already when it is read aloud.
+            .accessibilityHidden(true)
     }
 }
 
@@ -948,10 +976,11 @@ private struct UsageLeftoversSection: View {
 
 // MARK: - The dashboard
 
-/// The panel's content when it is the usage panel: every part of it at once.
+/// The panel's content when it is the usage panel (or Nook's own usage card, with no panel behind it): every part of it at once.
 struct UsageContent: View {
     let usage: ClaudeUsage
-    let panel: ClaudePanel
+    /// The panel the figures were read from. Nil for Nook's own usage card (`ClaudeUsage.nookCard`): there is no panel of Claude's behind it, so no «más» either.
+    let panel: ClaudePanel?
     /// The user's chat text size: the card's sizes follow it a little.
     let chatSize: Double
     /// The card has little height to show in: what matters most is made to fit one screen (`UsageMetrics.dense`).
@@ -973,11 +1002,11 @@ struct UsageContent: View {
     private var partial: Bool { !usage.complete }
 
     var body: some View {
-        let more = Self.offersMore(usage: usage, panel: panel)
+        let more = panel.map { Self.offersMore(usage: usage, panel: $0) } ?? (above: false, below: false)
         VStack(alignment: .leading, spacing: metrics(8)) {
             if more.above { self.more(down: false) }
             // The two summaries stand across the card, one under the other: the limits, which is what anyone opens the panel for, and what this session has cost.
-            if !usage.meters.isEmpty { UsageLimitsSection(meters: usage.meters, metrics: metrics, live: usage.live) }
+            if !usage.meters.isEmpty { UsageLimitsSection(meters: usage.meters, metrics: metrics, live: usage.live, savedAt: usage.savedAt) }
             if let session = usage.session { UsageSessionSection(session: session, metrics: metrics, live: usage.live) }
             UsageMasonry(gap: metrics(8), minColumn: metrics(205)) {
                 if let session = usage.session, !session.models.isEmpty { UsageModelsSection(models: session.models, metrics: metrics) }

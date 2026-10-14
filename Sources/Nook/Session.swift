@@ -220,6 +220,14 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         }
     }
     private(set) var claudeSessionIDAt = Date.distantPast
+    /// What a hook says about the session. Every event names the one the tab's Claude works on now, except SessionEnd: it names
+    /// the one that just ended, and as hooks run async it lands after a /clear has already moved Claude to the next. Taken as a
+    /// claim, it would be the newest word and hold the tab on the old record; it only withdraws that claim, so Claude's own
+    /// file names the next.
+    func noteClaudeHook(_ event: String, sessionID: String) {
+        guard !sessionID.isEmpty else { return }
+        if event != "SessionEnd" { claudeSessionID = sessionID } else if claudeSessionID == sessionID { claudeSessionID = nil }
+    }
     /// Finds this tab's record from what its Claude process says about itself; made for the device it runs on, and anew when Claude
     /// leaves the tab. Used on the reading queue.
     private(set) var recordLocator: ClaudeRecordLocator?
@@ -564,6 +572,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     /// What Claude's status line reports for this tab, live (NookStatusLine.swift): its cost, context and cache, and its
     /// account's rate limits. Nil while Nook's status line is not installed, or Claude has not run it for this tab yet.
     @Published var liveUsage: ClaudeLiveUsage?
+    /// Nook's own usage card is open in this tab (`AppModel.openUsage`): made from `liveUsage`, with nothing typed in the
+    /// terminal, and closed in Nook alone. Claude's own panel, when one opens, is shown in its place.
+    @Published var usageCardOpen = false
     private func showPanel(_ found: String?, agent: TerminalAgent?) {
         let shown = usageReader.read(agent == .claude && prompt == nil ? found : nil)
         if panel != shown { panel = shown }
@@ -1825,8 +1836,22 @@ final class AppModel: ObservableObject {
         pick(pending.choice, in: picker, on: session, scope: pending.scope)
     }
     /// Claude's usage panel (/usage), which Nook then shows as it shows any of Claude's panels.
+    /// The usage button. With Claude's status line on, Nook has the limits itself: its own card opens, nothing is typed in the
+    /// terminal and closing it never reaches there. Without it, Claude's /usage panel opens in the terminal and the island shows it.
     func openUsage(on session: TerminalSession) {
         guard session.agent == .claude, session.isRunning else { return }
+        guard session.liveUsage?.upToDate(at: Date()) != nil else { return session.send("/usage") }
+        // A /usage opened since in another tab of the same account may have left Claude a newer reading.
+        refreshUsageSnapshots()
+        session.usageCardOpen = true
+    }
+    func closeUsageCard(on session: TerminalSession) {
+        if session.usageCardOpen { session.usageCardOpen = false }
+    }
+    /// Claude's full /usage panel from Nook's card (what only it shows: the tokens by model, what feeds the limits), read fresh.
+    func openClaudeUsage(on session: TerminalSession) {
+        guard session.agent == .claude, session.isRunning else { return }
+        session.usageCardOpen = false
         session.send("/usage")
     }
     /// Like a shell's history: kept per tab across launches, without repeats in a row, capped.
@@ -2357,7 +2382,7 @@ final class AppModel: ObservableObject {
             notice = claudeSignalsEnabled ? "Avisos de Claude activados. En una sesión ya abierta, revisa /hooks para aprobar o cargar el cambio; algunas versiones requieren reabrir Claude." : "Avisos de Claude desactivados."
         } catch { notice = error.localizedDescription }
     }
-    private func receiveClaude(_ event: ClaudeSignal) {
+    func receiveClaude(_ event: ClaudeSignal) {
         if let session = sessions.first(where: { $0.externalTTY == event.tty && !event.tty.isEmpty }) { applyClaude(event, to: session); return }
         // A Claude process inside tmux has a pane TTY; its visible client has another.
         let candidates = sessions.map { ($0.id, $0.record, $0.externalTTY) }
@@ -2373,7 +2398,11 @@ final class AppModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                for session in self.sessions where matching.contains(session.id) { self.applyClaude(event, to: session) }
+                // A session moved to the background runs in a process of Claude's own, on a terminal no tab has: its hooks name the
+                // session, and its tab is the one showing that session's record.
+                let shown = matching.isEmpty && !event.sessionID.isEmpty
+                    ? Set(self.sessions.filter { $0.transcript.map { Self.sessionID(of: $0.url) } == event.sessionID }.map(\.id)) : matching
+                for session in self.sessions where shown.contains(session.id) { self.applyClaude(event, to: session) }
             }
         }
     }
@@ -2457,6 +2486,13 @@ final class AppModel: ObservableObject {
     var claudeProcesses = ClaudeProcessLookup.live
     var claudeConfigs: () -> [URL] = { TranscriptLocator.configs() }
 
+    /// The status line's latest readings, and Claude's own copy of its usage reading for each config folder (`ClaudeUsageSnapshot`),
+    /// read on their own queue; tests pass their own reader.
+    var statusReadings: [ClaudeStatusReading] = []
+    var usageSnapshots: [String: ClaudeUsageSnapshot] = [:]
+    var usageSnapshotReader = ClaudeUsageSnapshotReader()
+    let usageSnapshotQueue = DispatchQueue(label: "dev.nook.usage-snapshots", qos: .utility)
+
     /// Shows a subagent's own conversation in the tab's mirror (nil: back to Claude's), read at once.
     func view(agent call: String?, in session: TerminalSession) {
         session.view(agent: call)
@@ -2501,7 +2537,7 @@ final class AppModel: ObservableObject {
     private var shellReadAt = Date.distantPast
 
     private func applyClaude(_ event: ClaudeSignal, to session: TerminalSession) {
-        if !event.sessionID.isEmpty { session.claudeSessionID = event.sessionID }
+        session.noteClaudeHook(event.event, sessionID: event.sessionID)
         switch event.event {
         case "UserPromptSubmit": session.taskState = .working; session.unreadNotice = nil
         case "Stop": noteCompletion(for: session); return raiseAlert(.finished, for: session, message: "Claude terminó su respuesta.")

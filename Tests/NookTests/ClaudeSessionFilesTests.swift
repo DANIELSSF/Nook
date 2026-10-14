@@ -146,6 +146,84 @@ final class ClaudeSessionFilesTests: XCTestCase {
         XCTAssertEqual(locator.sessionID(hook: .init(id: Self.first, at: .distantPast)), Self.first)
     }
 
+    // MARK: A session moved to the background
+
+    /// The window's file once its session went to the background (real files of Claude Code 2.1.291 and 2.1.299, trimmed): it keeps
+    /// the session it had, whose record ends there, and names the job; the job's own process names the session that goes on.
+    private func parkedJSON(session: String = first, job: String? = "782bea23") -> String {
+        var object: [String: Any] = ["pid": 7078, "sessionId": session, "cwd": "/Users/me/app", "procStart": "Tue Oct  6 22:38:49 2026", "version": "2.1.291",
+                                     "kind": "interactive", "status": "idle", "updatedAt": 1_791_995_638_193, "bridgeSessionId": NSNull()]
+        if let job { object["parkedJobId"] = job }
+        return TranscriptFixtures.json(object)
+    }
+
+    private func jobJSON(pid: Int = 18421, session: String = second, job: String = "782bea23", spare: Bool = false, updatedAt: Double = 1_791_997_621_058) -> String {
+        var object: [String: Any] = ["pid": pid, "sessionId": session, "cwd": "/Users/me/app", "procStart": "Wed Oct 14 16:34:00 2026", "version": "2.1.299",
+                                     "kind": "bg", "entrypoint": "cli", "name": "EP2026-449", "jobId": job, "status": "idle", "updatedAt": updatedAt,
+                                     "messagingSocketPath": "/tmp/cc-socks/\(pid).sock"]
+        if spare { object["spare"] = true }
+        return TranscriptFixtures.json(object)
+    }
+
+    func testASessionMovedToTheBackgroundIsReadAsItIsWritten() throws {
+        let window = try XCTUnwrap(ClaudeSessionFile.parse(Data(parkedJSON().utf8)))
+        XCTAssertEqual(window.kind, "interactive")
+        XCTAssertEqual(window.parkedJobID, "782bea23")
+        XCTAssertFalse(window.runs(job: "782bea23"))
+        let background = try XCTUnwrap(ClaudeSessionFile.parse(Data(jobJSON().utf8)))
+        XCTAssertEqual(background.jobID, "782bea23")
+        XCTAssertTrue(background.runs(job: "782bea23"))
+        XCTAssertFalse(background.runs(job: "341dfda1"))
+        XCTAssertNil(try XCTUnwrap(ClaudeSessionFile.parse(Data(parkedJSON(job: "../7078").utf8))).parkedJobID, "A job that isn't plain is no job.")
+    }
+
+    func testASessionMovedToTheBackgroundIsFollowedThere() throws {
+        try write(parkedJSON())
+        try write(jobJSON(pid: 18459, session: "341dfda1-0b0d-4f38-bff0-1e52d193a43d", job: "341dfda1", spare: true), pid: 18459)
+        try write(jobJSON(pid: 17002, session: Self.first, updatedAt: 1_791_990_000_000), pid: 17002)
+        try write(jobJSON(), pid: 18421)
+        try "secret".write(to: config.appendingPathComponent("sessions/18421.f796b5a55095ab30.key"), atomically: true, encoding: .utf8)
+        let locator = locator()
+        XCTAssertEqual(locator.record(hook: nil)?.lastPathComponent, Self.second + ".jsonl",
+                       "The job's session, not the one the window's file still names, nor a spare's or the one a gone process left.")
+        XCTAssertEqual(locator.sessionID(hook: .init(id: Self.first, at: Date(timeIntervalSince1970: 1_791_995_600))), Self.second,
+                       "The old session's hooks spoke before it went to the background.")
+
+        // A /clear in the background session: the job's file names the next.
+        let third = "3912fd9f-747c-4a66-9590-b3ae71f5ea59"
+        try record(third)
+        try write(jobJSON(session: third), pid: 18421, modified: Date(timeIntervalSinceNow: 2))
+        XCTAssertEqual(locator.record(hook: nil)?.lastPathComponent, third + ".jsonl")
+
+        // Brought back to the window: its own file again.
+        try write(json(session: Self.first), modified: Date(timeIntervalSinceNow: 4))
+        XCTAssertEqual(locator.record(hook: nil)?.lastPathComponent, Self.first + ".jsonl")
+    }
+
+    func testAJobWhoseFileIsNotFoundIsSearchedForNowAndThen() throws {
+        try write(parkedJSON())
+        let locator = locator(), now = Date()
+        XCTAssertEqual(locator.sessionFile(now: now)?.sessionID, Self.first, "Until the job's file turns up, the window's own.")
+        try write(jobJSON(), pid: 18421)
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(1))?.sessionID, Self.first, "Searched for again after a while, not on every reading.")
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval + 1))?.sessionID, Self.second)
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval + 2))?.status, "idle", "The job's status.")
+
+        // Caught mid-write, or gone with its process: the job's last word stands, not the session whose record ended when it moved.
+        try write("{\"pid\":18421,\"sessionId\":", pid: 18421, modified: Date(timeIntervalSinceNow: 3))
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval + 3))?.sessionID, Self.second)
+        try FileManager.default.removeItem(at: config.appendingPathComponent("sessions/18421.json"))
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval * 3))?.sessionID, Self.second)
+        // Another process runs the job now.
+        let third = "3912fd9f-747c-4a66-9590-b3ae71f5ea59"
+        try write(jobJSON(pid: 19000, session: third), pid: 19000)
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval * 4))?.sessionID, third)
+        // A job of its own again (moved to the background anew): searched for at once.
+        try write(jobJSON(pid: 19500, session: Self.first, job: "9d0c4e11"), pid: 19500)
+        try write(parkedJSON(job: "9d0c4e11"), modified: Date(timeIntervalSinceNow: 5))
+        XCTAssertEqual(locator.sessionFile(now: now.addingTimeInterval(ClaudeRecordLocator.searchInterval * 4 + 0.5))?.sessionID, Self.first)
+    }
+
     // MARK: The process
 
     func testThePidOfClaudeOnATerminal() {
@@ -210,5 +288,112 @@ final class ClaudeSessionFileFollowTests: XCTestCase {
         model.followTranscript(session)
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         XCTAssertEqual(session.transcript?.url.lastPathComponent, ids[2] + ".jsonl", "/clear in the same process: the new record, at the next reading.")
+    }
+
+    /// The order a real /clear takes: the hooks named the old session, Claude rewrites its file with the new one, and only then does
+    /// the async SessionEnd of the old session reach Nook. It must not hold the tab on the old conversation.
+    func testALateSessionEndOfAClearedSessionDoesNotHoldTheOldRecord() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("nook-sessionend-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let config = home.appendingPathComponent(".claude-work")
+        let project = config.appendingPathComponent("projects/-Users-me-app")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: config.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        let old = "ef58f5bd-266f-48eb-95dc-234a050a8d31", new = "b184ca27-9403-4e38-ac58-51443ed08168"
+        for id in [old, new] { try (TranscriptFixtures.prompt("prompt de \(id.prefix(8))") + "\n").write(to: project.appendingPathComponent(id + ".jsonl"), atomically: true, encoding: .utf8) }
+        let started = ClaudeSessionFile.date(procStart: "Fri Oct  9 14:03:24 2026")!.addingTimeInterval(0.3)
+        func file(_ id: String, modified: Date) throws {
+            let url = config.appendingPathComponent("sessions/71348.json")
+            try TranscriptFixtures.json(["pid": 71348, "sessionId": id, "procStart": "Fri Oct  9 14:03:24 2026", "kind": "interactive", "status": "idle",
+                                         "updatedAt": Date().timeIntervalSince1970 * 1000]).write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        }
+        try file(old, modified: Date(timeIntervalSinceNow: -30))
+
+        let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-sessionend-" + UUID().uuidString)!)
+        model.claudeProcesses = ClaudeProcessLookup(pid: { $0 == "/dev/ttys942" ? 71348 : nil }, started: { $0 == 71348 ? started : nil })
+        model.claudeConfigs = { [config] }
+        let tab = TerminalTabSnapshot(windowID: 1, windowTitle: "app", index: 1, tty: "/dev/ttys942", customTitle: "", processes: ["claude"], busy: false, selected: true,
+                                      text: "⏺ hola")
+        let session = TerminalSession(tab: tab, backend: .bundled, bridge: model.terminalBridge)
+        model.sessions = [session]
+        session.noteClaudeHook("Stop", sessionID: old)
+        model.followTranscript(session)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        XCTAssertEqual(session.transcript?.url.lastPathComponent, old + ".jsonl")
+
+        try file(new, modified: Date())
+        session.noteClaudeHook("SessionEnd", sessionID: old)
+        XCTAssertNil(session.claudeSessionID, "The ended session is no claim on the tab.")
+        model.followTranscript(session)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        XCTAssertEqual(session.transcript?.url.lastPathComponent, new + ".jsonl", "Claude's file names the session after the /clear.")
+        XCTAssertEqual(session.displayText, "> prompt de b184ca27\n\n")
+
+        session.noteClaudeHook("UserPromptSubmit", sessionID: new)
+        session.noteClaudeHook("SessionEnd", sessionID: old)
+        XCTAssertEqual(session.claudeSessionID, new, "A SessionEnd of another session leaves the claim alone.")
+        session.noteClaudeHook("Stop", sessionID: "")
+        XCTAssertEqual(session.claudeSessionID, new, "A hook without a session id says nothing.")
+    }
+
+    /// A session moved to the background (Claude Code 2.1.299): the window's file keeps the old session, whose record ends with a
+    /// `continued-in`, and the job's file names the one that goes on. The tab moves there, and the hooks of the job's process, which
+    /// runs on a terminal no tab has, reach it.
+    func testASessionMovedToTheBackgroundKeepsItsTab() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("nook-parked-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let config = home.appendingPathComponent(".claude-work")
+        let project = config.appendingPathComponent("projects/-Users-me-app")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: config.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        let old = "a49d7f48-f642-4180-8a34-667ec425b8e9", moved = "782bea23-9342-428f-93bf-de9035211c7c"
+        let continued = TranscriptFixtures.json(["type": "continued-in", "timestamp": "2026-10-14T16:34:00.448Z", "sessionId": old, "continuedInSessionId": moved])
+        try ([TranscriptFixtures.prompt("prompt de a49d7f48"), continued].joined(separator: "\n") + "\n")
+            .write(to: project.appendingPathComponent(old + ".jsonl"), atomically: true, encoding: .utf8)
+        try ([TranscriptFixtures.prompt("prompt de a49d7f48"), TranscriptFixtures.prompt("revisa")].joined(separator: "\n") + "\n")
+            .write(to: project.appendingPathComponent(moved + ".jsonl"), atomically: true, encoding: .utf8)
+        let started = ClaudeSessionFile.date(procStart: "Tue Oct  6 13:42:38 2026")!.addingTimeInterval(0.3)
+        func write(_ object: [String: Any], pid: Int, modified: Date) throws {
+            let url = config.appendingPathComponent("sessions/\(pid).json")
+            try TranscriptFixtures.json(object).write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        }
+        var window: [String: Any] = ["pid": 52437, "sessionId": old, "procStart": "Tue Oct  6 13:42:38 2026", "kind": "interactive", "status": "idle",
+                                     "updatedAt": Date().timeIntervalSince1970 * 1000]
+        try write(window, pid: 52437, modified: Date(timeIntervalSinceNow: -30))
+
+        let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-parked-" + UUID().uuidString)!)
+        model.claudeProcesses = ClaudeProcessLookup(pid: { $0 == "/dev/ttys008" ? 52437 : nil }, started: { $0 == 52437 ? started : nil })
+        model.claudeConfigs = { [config] }
+        let tab = TerminalTabSnapshot(windowID: 1, windowTitle: "VIBE", index: 1, tty: "/dev/ttys008", customTitle: "", processes: ["claude"], busy: false, selected: true,
+                                      text: "⏺ hola")
+        let session = TerminalSession(tab: tab, backend: .bundled, bridge: model.terminalBridge)
+        model.sessions = [session]
+        session.noteClaudeHook("Stop", sessionID: old)
+        model.followTranscript(session)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        XCTAssertEqual(session.transcript?.url.lastPathComponent, old + ".jsonl")
+
+        // Moved to the background: the job's process starts, and the window's file names the job.
+        try write(["pid": 18421, "sessionId": moved, "procStart": "Wed Oct 14 16:34:00 2026", "kind": "bg", "jobId": "782bea23", "status": "idle",
+                   "updatedAt": Date().timeIntervalSince1970 * 1000], pid: 18421, modified: Date())
+        window["parkedJobId"] = "782bea23"
+        try write(window, pid: 52437, modified: Date())
+        model.followTranscript(session)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        XCTAssertEqual(session.transcript?.url.lastPathComponent, moved + ".jsonl", "The conversation goes on in the job's record.")
+        XCTAssertEqual(session.displayText, "> prompt de a49d7f48\n\n> revisa\n\n")
+
+        func hook(_ event: String, tty: String, session id: String) {
+            model.receiveClaude(ClaudeSignal(event: event, tty: tty, sessionID: id, message: "", notificationType: "", tmuxSocket: nil, tmuxPane: nil))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        }
+        hook("UserPromptSubmit", tty: "/dev/ttys012", session: "11111111-aaaa-4bbb-8ccc-000000000001")
+        XCTAssertEqual(session.taskState, .idle, "Another session's hooks, from a terminal no tab has, reach no tab.")
+        XCTAssertEqual(session.claudeSessionID, old)
+        hook("UserPromptSubmit", tty: "/dev/ttys007", session: moved)
+        XCTAssertEqual(session.taskState, .working, "The job's own hooks reach the tab that shows its session.")
+        XCTAssertEqual(session.claudeSessionID, moved)
     }
 }
