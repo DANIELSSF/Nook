@@ -440,22 +440,29 @@ final class TerminalAppBridge: ObservableObject {
             set screenText to history of t
             if (length of screenText) > 80000 then set screenText to text -80000 thru -1 of screenText
             """
+        // Terminal can list a window that answers nothing (no id, no name, no tabs: "Can't get every tab of item 5 of every
+        // window"). One such window must not fail the whole snapshot, so it is skipped; what is not about that window (no
+        // permission, a timeout, Terminal gone or the request cancelled) still fails it.
         return """
         with timeout of \(includeText ? 4 : 30) seconds
             if application id "com.apple.Terminal" is not running then return {}
             tell application id "com.apple.Terminal"
                 set rows to {}
                 repeat with w in windows
-                    if \(filter) then
-                        set tabIndex to 0
-                        repeat with t in tabs of w
-                            set tabIndex to tabIndex + 1
-                            if \(tabFilter) then
-                                \(text)
-                                set end of rows to {id of w, name of w, tabIndex, tty of t, custom title of t, processes of t, busy of t, selected of t, screenText}
-                            end if
-                        end repeat
-                    end if
+                    set windowTabs to {}
+                    try
+                        if \(filter) then set windowTabs to tabs of w
+                    on error errText number errNumber
+                        if errNumber is in {-128, -600, -609, -1712, -1743} then error errText number errNumber
+                    end try
+                    set tabIndex to 0
+                    repeat with t in windowTabs
+                        set tabIndex to tabIndex + 1
+                        if \(tabFilter) then
+                            \(text)
+                            set end of rows to {id of w, name of w, tabIndex, tty of t, custom title of t, processes of t, busy of t, selected of t, screenText}
+                        end if
+                    end repeat
                 end repeat
                 return rows
             end tell

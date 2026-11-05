@@ -28,6 +28,17 @@ final class TerminalBridgeTests: XCTestCase {
         }
     }
 
+    /// A window Terminal lists but can't describe ("Can't get every tab of item 5 of every window") is skipped, not fatal;
+    /// a missing permission or a timeout still fails the snapshot.
+    func testSnapshotSkipsAWindowWithoutTabsButNotAMissingPermission() {
+        for source in [TerminalAppBridge.snapshotScript(includeText: false),
+                       TerminalAppBridge.snapshotScript(windowIDs: [42], ttys: ["/dev/ttys003"], includeText: true, screenOnly: true)] {
+            XCTAssertFalse(source.contains("repeat with t in tabs of w"), "Tabs are read inside the guard, once per window.")
+            XCTAssertTrue(source.contains("then set windowTabs to tabs of w\n"))
+            XCTAssertTrue(source.contains("if errNumber is in {-128, -600, -609, -1712, -1743} then error errText number errNumber"))
+        }
+    }
+
     func testSnapshotsPreserveUnicodeAndBoundariesWithoutTextDelimiters() throws {
         let row = NSAppleEventDescriptor.list()
         let processes = NSAppleEventDescriptor.list()
