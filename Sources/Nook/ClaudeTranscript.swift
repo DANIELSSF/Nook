@@ -136,7 +136,7 @@ struct TranscriptRenderer {
         if let text = message["content"] as? String {
             // A meta message is Claude Code's own (a reminder, another session's idle notice): never the user's words, but one that
             // waited in the queue was delivered all the same.
-            if meta { delivered(text) } else { prompt(text) }
+            if meta { delivered(text) } else { prompt(text, at: TranscriptAgents.date(entry)) }
             return
         }
         for block in message["content"] as? [[String: Any]] ?? [] {
@@ -176,7 +176,7 @@ struct TranscriptRenderer {
     }
 
     /// A real prompt; messages Claude Code injects (task notifications, reminders, command records) are not the user's.
-    private mutating func prompt(_ text: String) {
+    private mutating func prompt(_ text: String, at date: Date? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // Taken, however Claude's queue let it go: a turn of its own or the middle of another.
@@ -184,8 +184,8 @@ struct TranscriptRenderer {
         if let tag = trimmed.range(of: #"^<([a-zA-Z_-]+)"#, options: .regularExpression) {
             let name = trimmed[tag].dropFirst()
             // Claude's shell mode ("! git status"): the command, then what it printed.
-            if name == "bash-input" { return shellInput(trimmed) }
-            if name == "bash-stdout" || name == "bash-stderr" { return shellOutput(trimmed) }
+            if name == "bash-input" { return shellInput(trimmed, at: date) }
+            if name == "bash-stdout" || name == "bash-stderr" { return shellOutput(trimmed, at: date) }
             // A slash command is recorded as tags; it shows the way it was typed.
             if name == "command-name" || name == "command-message",
                let command = trimmed.range(of: #"(?<=<command-name>)[^<]+"#, options: .regularExpression) {
@@ -238,19 +238,26 @@ struct TranscriptRenderer {
 
     /// A "!" command the user ran through Claude, until its output arrives: drawn after the committed text, as running.
     private var shellCommand: String? { didSet { version &+= 1 } }
+    /// That command as typed, and when it started: one Claude moves to the background goes on as a shell (`TranscriptShells`).
+    private var shellTyped: (command: String, at: Date?)?
 
     /// `<bash-input> git status</bash-input>`: the command shows as the user typed it, "> ! git status".
-    private mutating func shellInput(_ record: String) {
+    private mutating func shellInput(_ record: String, at date: Date?) {
         flushShell()
         let command = Self.tagged("bash-input", in: record) ?? ""
         shellCommand = Self.indented("> ", "! " + command.trimmingCharacters(in: .whitespacesAndNewlines))
+        shellTyped = (command, date)
     }
 
     /// `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`: what the command printed, under it, like a tool's result. What
     /// went to stderr is marked as an error; colour codes and redraws go as in a shell's output.
-    private mutating func shellOutput(_ record: String) {
+    private mutating func shellOutput(_ record: String, at date: Date?) {
+        if let typed = shellTyped, let stdout = Self.tagged("bash-stdout", in: record) {
+            shells.shellMode(command: typed.command, output: stdout.trimmingCharacters(in: .whitespacesAndNewlines), at: typed.at ?? date)
+        }
+        shellTyped = nil
         func lines(_ tag: String) -> [String] {
-            (Self.tagged(tag, in: record) ?? "").components(separatedBy: "\n")
+            Self.unescaped(Self.tagged(tag, in: record) ?? "").components(separatedBy: "\n")
                 .map { ShellOutputText.clean($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
         let output = lines("bash-stdout"), errors = lines("bash-stderr")
@@ -264,8 +271,16 @@ struct TranscriptRenderer {
     /// A command whose output never came shows alone.
     private mutating func flushShell() {
         guard let command = shellCommand else { return }
-        shellCommand = nil
+        shellCommand = nil; shellTyped = nil
         append(command)
+    }
+
+    /// What a "!" command printed, as Claude records it: with "<", ">", "&" and quotes as entities ("-&gt; FETCH_HEAD"); the
+    /// command itself is recorded as typed.
+    static func unescaped(_ text: String) -> String {
+        guard text.contains("&") else { return text }
+        return text.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'").replacingOccurrences(of: "&apos;", with: "'").replacingOccurrences(of: "&amp;", with: "&")
     }
 
     /// The text between `<tag>` and `</tag>`, nil without the tag.

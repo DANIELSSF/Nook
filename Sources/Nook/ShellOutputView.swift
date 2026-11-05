@@ -29,7 +29,7 @@ enum ShellOutputWords {
         var lines = [shell.name]
         if let command = ShellWords.tooltipCommand(shell.command) { lines.append("$ " + command) }
         lines.append(shell.standing)
-        if shell.movedToBackground { lines.append("Empezó en primer plano; Claude lo pasó a segundo plano al pasar su tiempo límite.") }
+        if shell.movedToBackground { lines.append("Empezó en primer plano y pasó a segundo plano.") }
         return lines.joined(separator: "\n")
     }
 
@@ -247,7 +247,7 @@ struct ShellOutputPane: View {
                 Text(ShellOutputWords.clippedNotice).font(.system(size: 9.5)).foregroundStyle(Color.nookSecondary).lineLimit(1).truncationMode(.tail)
                     .padding(.horizontal, inset + 7).frame(maxWidth: .infinity, alignment: .leading).padding(.top, -2)
             }
-            LiveTerminalSurface(text: ShellOutputWords.mirrorText(output), transcript: false, fontSize: fontSize, contentID: "shell:" + id) { onCopy() }
+            LiveTerminalSurface(text: ShellOutputWords.mirrorText(output), transcript: false, fontSize: fontSize, contentID: "shell:" + id, end: .latestOutput) { onCopy() }
                 .padding(.horizontal, inset)
                 .overlay { ShellOutputPlaceholder(state: state).id(id + "/" + state.key) }
         }

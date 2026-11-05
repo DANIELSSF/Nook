@@ -67,8 +67,9 @@ extension EnvironmentValues {
     }
 }
 
-/// The conditions under which glass may be used, read from the environment.
-private struct NookGlassGate: DynamicProperty {
+/// The conditions under which glass may be used, read from the environment. A view whose look changes with them besides its surface (the jump
+/// button drops its shadow under glass) asks it too.
+struct NookGlassGate: DynamicProperty {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.nookDarkBackdrop) private var darkBackdrop

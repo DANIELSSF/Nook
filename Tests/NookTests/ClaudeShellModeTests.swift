@@ -49,6 +49,11 @@ final class ClaudeShellModeTests: XCTestCase {
         XCTAssertEqual(renderer.text, "> ! swift build\n  ⎿  Building 100%\n     Build complete!\n     Error: warning: unused\n\n",
                        "Colour codes and redraws go; what went to stderr says so.")
 
+        renderer = render([user("<bash-input>git pull && git log -1</bash-input>"),
+                           user("<bash-stdout>* branch                develop    -&gt; FETCH_HEAD\nMerge &quot;fix&quot; &amp;&amp; &#39;ok&#39; &amp;lt;3</bash-stdout><bash-stderr></bash-stderr>")])
+        XCTAssertEqual(renderer.text, "> ! git pull && git log -1\n  ⎿  * branch                develop    -> FETCH_HEAD\n     Merge \"fix\" && 'ok' &lt;3\n\n",
+                       "Claude records the output with entities, the command as typed.")
+
         renderer = render([user("<bash-input>for i in 1 2; do\n  echo $i\ndone</bash-input>"), user("<bash-stdout>1\n2</bash-stdout><bash-stderr></bash-stderr>")])
         XCTAssertEqual(renderer.text, "> ! for i in 1 2; do\n    echo $i\n  done\n  ⎿  1\n     2\n\n", "A command of several lines, indented like any prompt.")
     }
@@ -64,6 +69,70 @@ final class ClaudeShellModeTests: XCTestCase {
         try ([user("arregla el login"), reply, user("<bash-input>git status</bash-input>"), user("<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>")]
             .joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
         XCTAssertEqual(TranscriptLocator.lastPrompt(in: url), "arregla el login", "Claude's screen shows \"! git status\", never as a prompt.")
+    }
+
+    // MARK: Running in the foreground
+
+    /// The end of Claude's conversation while a "!" command runs (from a real screen of Claude Code 2.1.299): the record has
+    /// nothing of it yet.
+    static let runningScreen = """
+      ! infra/gcp/deploy.sh dev
+
+      Después lo reviso en dev con tu sesión de INNOVASHOP, que sigue abierta en la pestaña.
+
+    * Sautéed for 30s · done 12:48 p.m.
+
+    !  infra/gcp/deploy.sh dev
+      ⎿  default gcloudignore file used (see `$ gcloud topic gcloudignore` to learn
+         more).
+         Uploading tarball of [/var/folders/7x/gp00fb053ndb1l16l8wc4bl40000gn/T/tmp.aPS460pi5X] to
+         [gs://estrellas-dev_cloudbuild/source/1792000208.053388-6271fbc19868450f98b815e45fa7267d.tgz]
+         +23 lines (56s)
+         (ctrl+b to run in background)
+
+    """
+
+    func testACommandRunningInTheForegroundIsReadFromTheScreen() throws {
+        let running = try XCTUnwrap(RunningShellCommand.parse(Self.runningScreen))
+        XCTAssertEqual(running.command, "infra/gcp/deploy.sh dev")
+        XCTAssertEqual(running.folded, 23)
+        XCTAssertEqual(running.elapsed, "56s")
+        XCTAssertEqual(running.output.count, 4)
+        XCTAssertEqual(running.text, """
+        > ! infra/gcp/deploy.sh dev
+          ⎿  default gcloudignore file used (see `$ gcloud topic gcloudignore` to learn
+             more).
+             Uploading tarball of [/var/folders/7x/gp00fb053ndb1l16l8wc4bl40000gn/T/tmp.aPS460pi5X] to
+             [gs://estrellas-dev_cloudbuild/source/1792000208.053388-6271fbc19868450f98b815e45fa7267d.tgz]
+             … +23 líneas · 56s
+
+
+        """)
+
+        let fresh = try XCTUnwrap(RunningShellCommand.parse("❯ hola\n\n!  sleep 30\n  ⎿  (3s)\n     (ctrl+b ctrl+b (twice) to run in background)\n"))
+        XCTAssertEqual(fresh.text, "> ! sleep 30\n  ⎿  … 3s\n\n", "Nothing printed yet; the hint as Claude writes it under tmux.")
+
+        XCTAssertNil(RunningShellCommand.parse("⏺ Bash(swift test)\n  ⎿  Building…\n     (ctrl+b to run in background)\n"), "Claude's own Bash call is in its record.")
+        XCTAssertNil(RunningShellCommand.parse(Self.runningScreen.replacingOccurrences(of: "     (ctrl+b to run in background)\n", with: "")),
+                     "Without the hint it is not running.")
+        XCTAssertNil(RunningShellCommand.parse(Self.runningScreen + "⏺ Listo.\n"), "Something came after it.")
+    }
+
+    func testTheMirrorShowsItAfterTheRecordUntilTheRecordHasIt() {
+        let session = session()
+        let reply = TranscriptFixtures.reply("Después lo reviso en dev con tu sesión de INNOVASHOP.")
+        var renderer = render([user("despliega"), reply])
+        session.applyPane(tty: "/dev/ttys005", processes: ["claude"], text: Self.idle)
+        session.applyTranscript(renderer.text, recap: nil, queued: [])
+        session.applyPane(tty: "/dev/ttys005", processes: ["claude"], text: Self.runningScreen + String(repeating: "─", count: 73) + "\n❯ \n" + String(repeating: "─", count: 73))
+        XCTAssertEqual(session.displayText, renderer.text + RunningShellCommand.parse(Self.runningScreen)!.text)
+
+        // Past its timeout: Claude writes it down, a moment before the screen is redrawn.
+        renderer.consume(user("<bash-input> infra/gcp/deploy.sh dev</bash-input>"))
+        renderer.consume(user("<bash-stdout>Command did not complete within its 120s timeout and was moved to the background (ID: b6bukezvs). Output is being written to: /private/tmp/claude-501/x/tasks/b6bukezvs.output.</bash-stdout><bash-stderr></bash-stderr>"))
+        session.applyTranscript(renderer.text, recap: nil, queued: [], shells: renderer.shells.shown())
+        XCTAssertEqual(session.displayText, renderer.text, "Shown once, from the record.")
+        XCTAssertEqual(session.shells.map(\.id), ["b6bukezvs"])
     }
 
     // MARK: The message on its way
@@ -181,6 +250,7 @@ final class ClaudeShellModeTests: XCTestCase {
         print("queued:", follower.renderer.queued.map { String($0.prefix(80)) })
         let shell = follower.renderer.text.components(separatedBy: "\n\n").filter { $0.hasPrefix("> ! ") }
         print("shell commands:", shell.count)
+        print("background shells:", follower.renderer.shells.launches.map { "\($0.id) \($0.state.rawValue) «\($0.name.prefix(60))»" })
         shell.suffix(2).forEach { print($0.prefix(600)); print("---") }
     }
 }

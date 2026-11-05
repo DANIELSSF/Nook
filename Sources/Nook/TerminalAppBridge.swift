@@ -907,7 +907,9 @@ final class TerminalAppBridge: ObservableObject {
                 }
                 if wait(timing.settle, poll: timing.poll, until: { !untouched() }) { return try settle() }
                 // Claude suggests only when idle: while it works, the box holds a real message and typing would double it.
-                let working = [before, screen].contains { $0.flatMap { ClaudeComposer.split($0).status?.working } == true }
+                // Waiting for background agents is idle for this: its own turn is over and it suggests (16/10 9:22, "Waiting
+                // for 1 background agent to finish": its suggestion took three Enters and the message came back to the field).
+                let working = [before, screen].contains { $0.flatMap { ClaudeComposer.split($0).status }.map { $0.working && $0.background == nil } == true }
                 if working { return try settle() }
                 trace("era la sugerencia gris de Claude: se escribe")
                 before = screen

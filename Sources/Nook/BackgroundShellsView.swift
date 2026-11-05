@@ -166,7 +166,7 @@ enum ShellWords {
         var lines = [shell.name]
         if let command = tooltipCommand(shell.command) { lines.append("$ " + command) }
         lines.append(shell.standing)
-        if shell.movedToBackground { lines.append("Empezó en primer plano; Claude lo pasó a segundo plano al pasar su tiempo límite.") }
+        if shell.movedToBackground { lines.append("Empezó en primer plano y pasó a segundo plano.") }
         if opens { lines.append("Clic para ver su salida") }
         return lines.joined(separator: "\n")
     }

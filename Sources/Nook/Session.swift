@@ -238,13 +238,18 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         return locator
     }
     private(set) var transcriptText: String?
+    /// A "!" command running in the foreground, drawn after the record's conversation: the record says nothing of it until it
+    /// ends or goes to the background, so it comes from the screen (`RunningShellCommand`).
+    private var runningShell: RunningShellCommand?
+    /// The record's conversation as the mirror shows it; nil without a record.
+    private var recordShown: String? { transcriptText.map { record in record + (runningShell?.shown(after: record) ?? "") } }
 
     func applyTranscript(_ text: String?, recap: String?, skills: [String: String] = [:], usedCommands: Set<String> = [], agents: [SubagentActivity]? = nil,
                          queued: [String]? = nil, shells: [ShellActivity]? = nil) {
         if let text {
             if transcriptText != text { recordBegun = ClaudeExchange.begun(text) }
             transcriptText = text
-            if viewedAgent == nil, displayText != text { displayText = text }
+            if viewedAgent == nil, let shown = recordShown, displayText != shown { displayText = shown }
         }
         // Task notifications and other sessions' messages share Claude's queue; they start with their tag.
         if let queued = queued?.filter({ !$0.hasPrefix("<") }), queued != claudeQueue { claudeQueue = queued }
@@ -278,7 +283,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         guard viewedAgent != call else { return }
         viewedAgent = call
         // An agent's text arrives with the next reading of its record; until then the mirror is empty.
-        let shown = call == nil ? (transcriptText ?? screenConversation) : ""
+        let shown = call == nil ? (recordShown ?? screenConversation) : ""
         if displayText != shown { displayText = shown }
     }
 
@@ -439,8 +444,10 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         let split = fromRecord ? Self.screen(text, agent: foreground, earlier: archive) : Self.screen(archive + text, agent: foreground)
         menu = split.menu
         screenConversation = fromRecord ? "" : split.conversation
+        runningShell = fromRecord ? RunningShellCommand.parse(split.conversation) : nil
         // Published only when it changed: every assignment redraws the island, also with the same 240,000 characters.
-        if viewedAgent == nil, displayText != (transcriptText ?? split.conversation) { displayText = transcriptText ?? split.conversation }
+        let shown = recordShown ?? split.conversation
+        if viewedAgent == nil, displayText != shown { displayText = shown }
         readPrompt(in: split.conversation, agent: foreground)
         showPanel(split.panel, agent: foreground)
         watchTurn(status: split.status, conversation: split.conversation)
@@ -799,7 +806,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     func showPending(_ message: String) {
         // /effort and /model never show in the chat (`ClaudeSettingsEcho`): a bubble for them would wait there for nothing.
         if agent == .claude, ClaudeSettingsEcho.isCommand(message) { return }
-        pendingBaseline = screenConversation; pendingRecordBaseline = transcriptText
+        pendingBaseline = screenConversation; pendingRecordBaseline = recordShown
         pendingSince = Date(); pendingMessage = message
     }
     /// The placeholder stays until the message is in the conversation the mirror shows. With Claude's record that is the record:
@@ -809,7 +816,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private func settlePending(screen: String, now: Date = Date()) {
         guard let pending = pendingMessage else { return }
         let taken: Bool
-        if let record = transcriptText {
+        if let record = recordShown {
             taken = MessageEcho.appears(pending, in: Self.fresh(record, since: pendingRecordBaseline ?? ""))
             if !taken, pendingQueued || liveStatus?.working == true { pendingSince = now; return }
         } else {

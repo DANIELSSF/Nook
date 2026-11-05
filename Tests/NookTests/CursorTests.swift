@@ -596,6 +596,21 @@ final class CursorTests: XCTestCase {
         }
     }
 
+    func testTheWayBackToTheEndOverTheMirrorHasTheArrowAndTheTextAroundItTheIBeam() throws {
+        let text = (1...60).map { "una línea \($0) del espejo, bastante larga para llenar el ancho" }.joined(separator: "\n")
+        let (window, host) = mount(LiveTerminalSurface(text: text).frame(width: 560, height: 220).environment(\.colorScheme, .dark), size: NSSize(width: 560, height: 220))
+        let scroll = try XCTUnwrap(descendants(of: host, as: LiveTerminalScrollView.self).first)
+        XCTAssertTrue(PointerHoles.frames(in: window).isEmpty, "At the end of the text there is no button.")
+        // The reader scrolls ten lines up: the button comes over the bottom of the text.
+        let end = scroll.textView.frame.height - scroll.contentSize.height
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: end - 10 * LiveTerminalScrollView.lineHeight(of: scroll.font)))
+        settle(host)
+        XCTAssertEqual(PointerHoles.frames(in: window).count, 1, "It marked itself.")
+        let mirror = try iBeamFollowsClicks(over: LiveTerminalScrollView.self, in: host, window: window, label: "jump button")
+        XCTAssertGreaterThan(mirror.chrome, 0, "It stands over the mirror.")
+        XCTAssertGreaterThan(mirror.text, 0, "And the text around it keeps its I-beam.")
+    }
+
     func testTheMirrorTextBesideTheMenuStaysSelectableWithTheMouse() throws {
         try requireKeyCapableSession()
         // As the island's own window gets mouse events: a panel that can be key, away from the screen. The same drag without a menu is the control.

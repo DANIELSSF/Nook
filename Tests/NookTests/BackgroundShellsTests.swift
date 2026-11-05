@@ -102,6 +102,55 @@ final class BackgroundShellsTests: XCTestCase {
         XCTAssertEqual(shell?.outputPath, "\(output)/b27fe3r52.output")
     }
 
+    /// A "!" command the user ran through Claude, past its timeout (real lines of Claude Code 2.1.299, trimmed): Claude writes it
+    /// only then, its caveat first, the command dated when it started, and what it "printed" is a background launch's words.
+    private func typed(_ command: String, printed: String, at seconds: TimeInterval, ended: TimeInterval) -> [String] {
+        [TranscriptFixtures.json(["type": "user", "isMeta": true, "timestamp": stamp(ended), "message": ["role": "user", "content":
+            "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output is shown here for reference.</local-command-caveat>"]]),
+         TranscriptFixtures.json(["type": "user", "timestamp": stamp(seconds), "message": ["role": "user", "content": "<bash-input>\(command)</bash-input>"]]),
+         TranscriptFixtures.json(["type": "user", "timestamp": stamp(ended), "message": ["role": "user", "content": "<bash-stdout>\(printed)</bash-stdout><bash-stderr></bash-stderr>"]])]
+    }
+
+    func testAShellModeCommandMovedToTheBackgroundIsAShellFromItsStart() {
+        var lines = typed(" infra/gcp/deploy.sh dev", printed: "Command did not complete within its 120s timeout and was moved to the background (ID: b6bukezvs). Output is being written to: \(output)/b6bukezvs.output. You will be notified when it completes. To check interim output, use Read on that file path.",
+                          at: 0, ended: 120)
+        var shell = renderer(lines).shells.shown(now: start.addingTimeInterval(130)).first
+        XCTAssertEqual(shell?.id, "b6bukezvs")
+        XCTAssertEqual(shell?.name, "infra/gcp/deploy.sh dev")
+        XCTAssertEqual(shell?.command, " infra/gcp/deploy.sh dev")
+        XCTAssertEqual(shell?.started, start, "Running since it was typed, not since Claude wrote it down.")
+        XCTAssertEqual(shell?.movedToBackground, true)
+        XCTAssertEqual(shell?.outputPath, "\(output)/b6bukezvs.output")
+        XCTAssertEqual(shell?.state, .running)
+
+        lines += delivered(notification("b6bukezvs", status: "completed", summary: #"Background command " infra/gcp/deploy.sh dev" completed (exit code 0)"#,
+                                        call: "640c14e7-3f85-47bf-8ee1-e84d4a3c4937:inner"), at: 520)
+        shell = renderer(lines).shells.shown(now: start.addingTimeInterval(530)).first
+        XCTAssertEqual(shell?.state, .completed)
+        XCTAssertEqual(shell?.detail(at: start.addingTimeInterval(530)), "terminó · 8m 40s")
+
+        let manual = typed("npm run dev", printed: "Command was manually backgrounded by user with ID: bq2x7k1m0. Output is being written to: \(output)/bq2x7k1m0.output", at: 0, ended: 9)
+        XCTAssertEqual(renderer(manual).shells.shown(now: start).first?.id, "bq2x7k1m0", "Sent there with ctrl+b.")
+        let plain = typed("echo '(ID: b1234567)'", printed: "(ID: b1234567)", at: 0, ended: 1)
+        XCTAssertTrue(renderer(plain).shells.shown(now: start).isEmpty, "A command's own output is no launch.")
+    }
+
+    /// Seen in a real session that read another session's record: a command in the foreground printed Claude's launch words, and
+    /// Nook listed four shells running that never were.
+    func testLaunchWordsACommandPrintedAreNoShell() {
+        let printed = [
+            bash("c1", ["command": "python3 tail.py record.jsonl 40", "description": "Show the latest prompts and replies in the new record"]),
+            result("c1", "16:39:39 782bea23 user {'isSidechain': False} <bash-stdout>Command did not complete within its 120s timeout and was moved to the background (ID: bctdbig65). Output is being written to: \(output)/bctdbig65.output.",
+                   details: ["stdout": "…", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false]),
+            bash("c2", ["command": "grep -n 'with ID' BackgroundShells.swift"]),
+            result("c2", "134:        // \"Command running in background with ID: bjoijjfvn. Output is being written to: /private/tmp/…/bjoijjfvn.output. …\", or"),
+            bash("c3", ["command": "echo done"]),
+            result("c3", "  launched by: ('Bash', 'pnpm dev', True) (ID: b27fe3r52)"),
+        ]
+        XCTAssertTrue(renderer(printed).shells.shown(now: start).isEmpty)
+        XCTAssertTrue(TranscriptShells.launchWords("\nCommand was manually backgrounded by user with ID: bq2x7k1m0. Output is being written to: \(output)/bq2x7k1m0.output"))
+    }
+
     func testTheIdIsReadFromTheTextWhenTheDetailsLackIt() {
         let lines = [bash("c1", ["command": "sleep 100", "run_in_background": "true"]),
                      result("c1", "Command running in background with ID: bash_1. Output is being written to: \(output)/bash_1.output.")]

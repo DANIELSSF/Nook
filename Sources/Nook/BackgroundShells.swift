@@ -130,10 +130,21 @@ struct TranscriptShells {
         finish(known, state: .stopped, at: date)
     }
 
-    private mutating func launch(_ call: Call, id: String, text: String, details: [String: Any]?, at date: Date?) {
+    /// A "!" command the user ran through Claude, once Claude moved it to the background (past its timeout, with ctrl+b, or for a
+    /// message to reach Claude): what it "printed" is a background launch's words, "Command did not complete within its 120s timeout
+    /// and was moved to the background (ID: b6bukezvs). Output is being written to: …". Any other output is the command's own.
+    mutating func shellMode(command: String, output: String, at date: Date?) {
+        guard Self.launchWords(output) else { return }
+        launch(Call(tool: "Bash", command: Self.capped(command, 2_000), date: date), id: nil, text: output, details: nil, at: date)
+    }
+
+    private mutating func launch(_ call: Call, id: String?, text: String, details: [String: Any]?, at date: Date?) {
         // "Command running in background with ID: bjoijjfvn. Output is being written to: /private/tmp/…/bjoijjfvn.output. …", or
         // "Command did not complete within its 120s timeout and was moved to the background (ID: bj74spjc4). Output is being…".
-        let named = (details?["backgroundTaskId"] as? String) ?? Self.first(#"(?<=with ID: |\(ID: )[A-Za-z0-9_-]+"#, in: text)
+        // Only Claude's own words, or a call made for the background: a command in the foreground may print them too (a log, a
+        // record being read).
+        let words = call.background || Self.launchWords(text)
+        let named = (details?["backgroundTaskId"] as? String) ?? (words ? Self.first(#"(?<=with ID: |\(ID: )[A-Za-z0-9_-]+"#, in: text) : nil)
         guard let task = named, Self.isTaskID(task), !launches.contains(where: { $0.id == task }) else { return }
         let firstLine = call.command.components(separatedBy: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
         var launch = Launch(id: task, call: id, name: call.description ?? firstLine.map { Self.capped($0, 200) } ?? "Shell", command: call.command)
@@ -214,6 +225,14 @@ struct TranscriptShells {
     }
 
     // MARK: Words
+
+    /// Whether a result is Claude's own word that a command went to the background: it opens with one of Claude's sentences for it
+    /// (launched there, past its timeout, with ctrl+b, for a message to reach Claude). Anywhere else, those words are something
+    /// the command printed.
+    static func launchWords(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).range(of: launchSentence, options: .regularExpression) != nil
+    }
+    private static let launchSentence = #"^Command (running in background with ID|did not complete within its \S+ timeout and was moved to the background \(ID|was manually backgrounded by user with ID|was moved to the background \(ID): "#
 
     /// `Background command "Build and push…" completed (exit code 0)`, "… failed with exit code 1", "… was stopped": its description.
     private static let backgroundCommand = try! NSRegularExpression(pattern: #"^Background command "(.*)" (?:completed|failed|was |killed|stopped)"#)

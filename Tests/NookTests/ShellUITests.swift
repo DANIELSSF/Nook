@@ -315,7 +315,7 @@ final class ShellUITests: XCTestCase {
         XCTAssertEqual(ShellWords.rowHelp(ended, opens: false).components(separatedBy: "\n"), ["Build", "$ pnpm build", "falló (código 1) · 1m 14s"], "How long a finished one took does not change.")
         XCTAssertEqual(ShellOutputWords.barHelp(ended), "Build\n$ pnpm build\nfalló (código 1) · 1m 14s")
         XCTAssertFalse(ShellWords.rowHelp(shell(), opens: false).contains("Clic para ver su salida"), "A plain row does not promise a click.")
-        XCTAssertTrue(ShellWords.rowHelp(shell(moved: true), opens: false).contains("Claude lo pasó a segundo plano"))
+        XCTAssertTrue(ShellWords.rowHelp(shell(moved: true), opens: false).contains("Empezó en primer plano y pasó a segundo plano."))
         XCTAssertEqual(ShellWords.rowHelp(shell(command: ""), opens: false).components(separatedBy: "\n").count, 2, "No command, no line for it.")
         let many = (1...12).map { "paso \($0)" }.joined(separator: "\n")
         XCTAssertEqual(ShellWords.tooltipCommand(many)?.components(separatedBy: "\n").count, 8, "Eight lines, and the ellipsis on the last.")

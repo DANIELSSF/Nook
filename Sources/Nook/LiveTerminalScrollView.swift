@@ -100,6 +100,9 @@ final class LiveTerminalScrollView: NSScrollView {
         textView.textContainer?.heightTracksTextView = false
         textView.textContainer?.lineBreakMode = .byWordWrapping
         documentView = textView
+        // Every scroll, the reader's or the mirror's own, may take the reader away from the end of the text or back to it (`noteDistanceToEnd`).
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipViewScrolled), name: NSView.boundsDidChangeNotification, object: contentView)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -158,6 +161,7 @@ final class LiveTerminalScrollView: NSScrollView {
     func setFontSize(_ size: Double) {
         guard abs(Double(font.pointSize) - size) > 0.01 else { return }
         font = DisplaySettings.chatFont(size: size)
+        lineHeight = Self.lineHeight(of: font)
         textView.font = font
         guard let theme, let storage = textView.textStorage, storage.length > 0 else { return }
         let followOutput = pendingFollowOutput ?? isFollowingOutput
@@ -184,7 +188,9 @@ final class LiveTerminalScrollView: NSScrollView {
     /// (at its end, or at an offset), and the next `setText` opens the second where the reader last left it, or at its end.
     func setContent(_ id: String) {
         guard id != contentID else { return }
-        savedPositions[contentID] = isFollowingOutput ? .end : .offset(contentView.bounds.origin.y)
+        // A reader on the way to the end (`jumpToEnd`) asked for the end, and finds it there on coming back.
+        savedPositions[contentID] = isFollowingOutput || glide != nil ? .end : .offset(contentView.bounds.origin.y)
+        stopGlide()
         contentID = id
         pendingPosition = savedPositions[id] ?? .end
     }
@@ -311,7 +317,8 @@ final class LiveTerminalScrollView: NSScrollView {
     }
 
     private var isFollowingOutput: Bool {
-        documentVisibleRect.maxY >= textView.bounds.maxY - 24
+        // A glide to the end (`jumpToEnd`) holds the reader where it last put them and takes them to the end itself, where the text has grown to by then.
+        glide == nil && documentVisibleRect.maxY >= textView.bounds.maxY - 24
     }
 
     private func fitText(followOutput: Bool) {
@@ -333,5 +340,141 @@ final class LiveTerminalScrollView: NSScrollView {
         let bottom = max(0, height - viewport.height)
         contentView.scroll(to: NSPoint(x: 0, y: followOutput ? bottom : min(max(0, position.y), bottom)))
         reflectScrolledClipView(contentView)
+        // Text that arrived below a reader who stays where they are takes the end further away from them, with no scroll to say so.
+        noteDistanceToEnd()
+    }
+
+    // MARK: The way back to the end
+
+    /// How the mirror gets to the end of its text when the reader asks for it (`jumpToEnd`): it glides there; it cross-fades to it where Reduce
+    /// Motion asks for less movement; it is there at once with the app's animations off.
+    enum JumpMotion { case glide, fade, cut }
+
+    /// The reader is far enough up from the end of the text for the way back to it to show (`JumpToLatest`). `onAwayFromEndChange` hears each change.
+    private(set) var awayFromEnd = false
+    var onAwayFromEndChange: ((Bool) -> Void)?
+    /// The glide `jumpToEnd` started, while it plays; the display link that plays it; and where the glide last left the reader, which tells a scroll
+    /// of the reader's own (it moves them from there) from the glide's.
+    private(set) var glide: MirrorGlide?
+    private var glideLink: CADisplayLink?
+    private var glideOffset: CGFloat = 0
+    /// One line of the mirror's font, which the button's thresholds are counted in.
+    private var lineHeight = LiveTerminalScrollView.lineHeight(of: LiveTerminalScrollView.baseFont)
+    static let jumpFadeDuration: CFTimeInterval = 0.2
+    /// The key the cross-fade is found under: Core Animation keeps a transition under its own key, whatever it is added with.
+    static let jumpFadeKey = kCATransition
+
+    static func lineHeight(of font: NSFont) -> CGFloat { ceil(NSLayoutManager().defaultLineHeight(for: font)) }
+
+    /// How far the end of the text is below what shows: in points, and in lines of the mirror's font.
+    var distanceToEnd: CGFloat { max(0, textView.bounds.maxY - documentVisibleRect.maxY) }
+    var linesToEnd: CGFloat { distanceToEnd / max(1, lineHeight) }
+
+    /// The offset that shows the end of the text.
+    private var endOffset: CGFloat { max(0, textView.frame.height - contentSize.height) }
+
+    @objc private func clipViewScrolled(_ note: Notification) { noteDistanceToEnd() }
+
+    /// Says again whether the reader is away from the end. A reader a glide is taking there is on the way back, not away.
+    private func noteDistanceToEnd() {
+        let away = glide == nil && JumpToLatest.shows(linesAway: linesToEnd, showing: awayFromEnd)
+        guard away != awayFromEnd else { return }
+        awayFromEnd = away
+        onAwayFromEndChange?(away)
+    }
+
+    /// Takes the reader to the end of the text, the latest message sent or received, from where the mirror follows the output again. The button
+    /// goes at once (the reader is on the way back). A glide reads where the end is on every frame, so text that arrives while it plays is
+    /// reached too; a scroll of the reader's own stops it where it is.
+    func jumpToEnd(_ motion: JumpMotion, now: CFTimeInterval = CACurrentMediaTime()) {
+        stopGlide()
+        let start = contentView.bounds.origin.y, end = endOffset
+        guard end - start > 0.5 else { noteDistanceToEnd(); return }
+        switch motion {
+        case .cut:
+            scroll(toOffset: end)
+        case .fade:
+            // The text does not travel: what shows now fades into its end.
+            if let layer {
+                let fade = CATransition()
+                fade.type = .fade
+                fade.duration = Self.jumpFadeDuration
+                fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.add(fade, forKey: Self.jumpFadeKey)
+            }
+            scroll(toOffset: end)
+        case .glide:
+            let planned = MirrorGlide.plan(from: start, end: end, viewport: contentSize.height, at: now)
+            glide = planned
+            glideOffset = start
+            noteDistanceToEnd()
+            // A reader far up starts a few screens above the end (`MirrorGlide.maxScreens`); the first frame of the glide is as quick as that.
+            if planned.from > start { moveGlide(to: planned.from) }
+            startGlideLink()
+            // The display link plays it while the island is on screen. Should it not tick (the window went away meanwhile), the glide still
+            // ends where it was going.
+            DispatchQueue.main.asyncAfter(deadline: .now() + planned.duration + 0.25) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.glide == planned else { return }
+                    self.stepGlide(at: planned.start + planned.duration + 1)
+                }
+            }
+        }
+    }
+
+    /// One frame of the glide, at `now`: true while it goes on. A reader who scrolled meanwhile has taken over, and it stops where they are.
+    @discardableResult func stepGlide(at now: CFTimeInterval) -> Bool {
+        guard let glide else { return false }
+        guard abs(contentView.bounds.origin.y - glideOffset) < 1 else {
+            stopGlide()
+            noteDistanceToEnd()
+            return false
+        }
+        let (y, done) = glide.offset(at: now, end: endOffset)
+        if done { stopGlide() }
+        moveGlide(to: y)
+        return !done
+    }
+
+    private func moveGlide(to y: CGFloat) {
+        scroll(toOffset: y)
+        glideOffset = contentView.bounds.origin.y
+    }
+
+    private func startGlideLink() {
+        guard glideLink == nil else { return }
+        let link = displayLink(target: GlideLinkTarget(self), selector: #selector(GlideLinkTarget.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        glideLink = link
+    }
+
+    private func stopGlide() {
+        glide = nil
+        glideLink?.invalidate()
+        glideLink = nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Taken out of its window mid-glide: the reader is at the end when it is back.
+        if window == nil, glide != nil {
+            stopGlide()
+            scroll(toOffset: endOffset)
+        }
+    }
+
+    /// The display link retains its target; a weak hop keeps it from keeping the mirror alive. Each frame is computed for the moment it will
+    /// be seen.
+    private final class GlideLinkTarget: NSObject {
+        weak var mirror: LiveTerminalScrollView?
+        init(_ mirror: LiveTerminalScrollView) { self.mirror = mirror }
+        @objc func tick(_ link: CADisplayLink) {
+            MainActor.assumeIsolated {
+                // The run loop keeps the link: one whose mirror has gone would tick for nothing.
+                guard let mirror else { return link.invalidate() }
+                let now = CACurrentMediaTime()
+                mirror.stepGlide(at: now + max(0, min(0.1, link.targetTimestamp - now)))
+            }
+        }
     }
 }

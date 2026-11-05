@@ -161,6 +161,31 @@ final class ClaudeDeliveryTests: XCTestCase {
         XCTAssertEqual(steps, ["caja antes: «\(deploy)»", "ya estaba en la caja: Enter", "era la sugerencia gris de Claude: se escribe", "escrito con su Enter", "Claude lo tomó: enviado"])
     }
 
+    /// deliveries.log 16/10 9:22, 9:23, 9:25: Claude's turn was over while a background agent ran, and it suggested the very
+    /// answer in grey. The wait read as working, so the suggestion passed for a typed message: three Enters, nothing sent, and
+    /// the message back in Nook's field each time (Claude's record has it as "suggestion_accepted" once sent from Terminal).
+    func testAGreySuggestionWhileABackgroundAgentRunsIsTypedOver() throws {
+        let answer = "recomendadas, pero en la 7 usa «Miembro»"
+        let asked = ["⏺ Puedes contestar «recomendadas» o elegir pregunta por pregunta.", "", "✻ Waiting for 1 background agent to finish"]
+        let ghost = screen(asked, box: answer)
+        let taken = screen(Array(asked.dropLast()) + ["❯ " + answer, "", "✻ Churning… (1s · esc to interrupt)"], box: "")
+        var actions: [String] = [], steps: [String] = []
+        try TerminalAppBridge.deliver(answer, agent: .claude, timing: fast, run: { actions.append($0) },
+                                      read: { actions.contains(TerminalAppBridge.typeAction(answer)) ? taken : ghost }, trace: { steps.append($0) })
+        XCTAssertEqual(actions, [TerminalAppBridge.returnAction, TerminalAppBridge.typeAction(answer)], "One Enter that did nothing, then typed once.")
+        XCTAssertEqual(steps, ["caja antes: «\(answer)»", "ya estaba en la caja: Enter", "era la sugerencia gris de Claude: se escribe", "escrito con su Enter", "Claude lo tomó: enviado"])
+    }
+
+    /// While Claude works it suggests nothing: the same text in its box is a real message, and it is never typed a second time.
+    func testTheSameTextInTheBoxWhileClaudeWorksIsNeverTypedAgain() {
+        let held = screen(["⏺ Reviso los tests.", "", "✻ Churning… (12s · esc to interrupt)"], box: "hola gato")
+        var actions: [String] = []
+        XCTAssertThrowsError(try TerminalAppBridge.deliver("hola gato", agent: .claude, timing: fast, run: { actions.append($0) }, read: { held })) { error in
+            guard case DeliveryError.stuck = error else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(actions, Array(repeating: TerminalAppBridge.returnAction, count: 3))
+    }
+
     func testTheSameTextReallyTypedInTheBoxGoesWithItsEnterAndIsNotTypedAgain() throws {
         var actions: [String] = []
         // Typed in the terminal by hand: Enter runs it, its echo shows and the box empties.

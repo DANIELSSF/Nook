@@ -288,6 +288,49 @@ final class PanelRenderTests: XCTestCase {
         try write(host, size: size, to: URL(fileURLWithPath: directory).appendingPathComponent("island-tmux.png").path)
     }
 
+    /// The way back to the end of the conversation (`JumpToLatestButton`), over a long conversation the reader has scrolled up in: dark and light, in the
+    /// default mint and in another tab colour, and with Increase Contrast. Glass cannot be drawn offscreen, so the island takes its flat look (the button's
+    /// neutral bubble, with the arrow in the tab's colour), which is also what Reduce Transparency and Increase Contrast show.
+    func testRenderJumpToLatest() throws {
+        let directory = try renderDirectory()
+        let conversation = (1...10).flatMap { n in
+            ["> Pregunta \(n): ¿puedes revisar cómo se ve el espejo cuando subo a leer algo de antes?", "",
+             "⏺ Respuesta \(n). El espejo deja de seguir la salida mientras lees más arriba, y el botón te devuelve al último mensaje.", "",
+             "⏺ Read(Sources/Nook/LiveTerminalScrollView.swift)", "  ⎿  Read 337 lines", ""]
+        }.joined(separator: "\n") + "\n" + ["✻ Churned for 2m 10s", "", rule, "❯ ", rule, "  ⏵⏵ auto mode on"].joined(separator: "\n")
+        let scenarios: [(String, ColorScheme, TabTint, Bool)] = [("dark", .dark, .mint, false), ("dark-rose", .dark, .rose, false), ("light", .light, .mint, false),
+                                                                ("light-blue", .light, .blue, false), ("dark-contrast", .dark, .violet, true), ("light-contrast", .light, .violet, true)]
+        for (name, scheme, tint, contrast) in scenarios {
+            NookContrast.force(contrast)
+            defer { NookContrast.force(nil) }
+            let model = AppModel(receivesSignals: false)
+            model.animations = false
+            let session = claudeSession(model, text: conversation)
+            session.tint = tint
+            let size = NSSize(width: NotchGeometry.expandedWidth, height: NotchGeometry.expandedHeight(topInset: 28))
+            let host = NSHostingView(rootView: NookPanel(model: model).environment(\.colorScheme, scheme).environment(\.nookTintedGlass, false).environment(\.nookFlatGlass, true))
+            host.frame = NSRect(origin: .zero, size: size)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            // The reader scrolls a dozen lines up from the end.
+            let mirror = try XCTUnwrap(Self.find(LiveTerminalScrollView.self, in: host))
+            let end = mirror.textView.frame.height - mirror.contentSize.height
+            mirror.contentView.scroll(to: NSPoint(x: 0, y: max(0, end - 12 * LiveTerminalScrollView.lineHeight(of: mirror.font))))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            XCTAssertTrue(mirror.awayFromEnd, name)
+            XCTAssertFalse(PointerHoles.frames(in: window).isEmpty, "\(name): the button is up.")
+            try write(host, size: size, to: URL(fileURLWithPath: directory).appendingPathComponent("jump-\(name).png").path)
+        }
+    }
+
+    private static func find<V: NSView>(_ type: V.Type, in view: NSView) -> V? {
+        if let match = view as? V { return match }
+        for child in view.subviews { if let found = find(type, in: child) { return found } }
+        return nil
+    }
+
     /// The agents' list open above its capsule, placed where the capsule sits in the composer (top right of the text row).
     func testRenderSubagentListOpen() throws {
         let directory = try renderDirectory()

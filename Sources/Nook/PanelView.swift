@@ -2149,7 +2149,8 @@ struct HistoryCursor {
     }
 }
 
-struct LiveTerminalSurface: NSViewRepresentable {
+/// The text mirror, and over its bottom edge the way back to the end of its text while the reader is scrolled up (`JumpToLatestButton`).
+struct LiveTerminalSurface: View {
     var text: String
     /// Claude's transcript gets per-voice styling; any other output stays as it is.
     var transcript = false
@@ -2164,14 +2165,69 @@ struct LiveTerminalSurface: NSViewRepresentable {
     var voice = TabVoice.mint
     /// Messages that stand after the conversation until Claude's record has them (Claude's transcript only; see `MirrorMessages`).
     var messages: [MirrorMessage] = []
+    /// What the end of the text is (a conversation's last message, a shell's latest output), which names the way back to it.
+    var end = MirrorEnd.latestMessage
     var onCopy: () -> Void = {}
+    /// The reader is far enough up for the way back to show (`LiveTerminalScrollView.awayFromEnd`).
+    @State private var away = false
+    /// Goes up by one each time the way back is taken.
+    @State private var jumpRequest = 0
+    /// Under a card the button goes: faded out with the text it would still stand where the card's own controls are, and claim the pointer there.
+    @Environment(\.nookCovered) private var covered
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.nookMotion) private var animations
+
+    var body: some View {
+        let shows = away && !covered
+        let presence = JumpPresence.transition(moves: animations && !reduceMotion, fades: animations)
+        LiveTerminalMirror(text: text, transcript: transcript, fontSize: fontSize, contentID: contentID, taskLabel: taskLabel, voice: voice, messages: messages,
+                           away: away, jumpRequest: jumpRequest, jumpMotion: jumpMotion, onAway: { away = $0 }, onCopy: onCopy)
+            .overlay(alignment: .bottom) {
+                ZStack {
+                    if shows {
+                        JumpToLatestButton(end: end) { jumpRequest += 1 }.transition(presence.transition)
+                    }
+                }
+                .padding(.bottom, JumpToLatestButton.margin)
+                .animation(presence.animation, value: shows)
+            }
+    }
+
+    /// The text glides to its end; with Reduce Motion it cross-fades there, and with the app's animations off it is there at once.
+    private var jumpMotion: LiveTerminalScrollView.JumpMotion {
+        guard animations else { return .cut }
+        return reduceMotion ? .fade : .glide
+    }
+}
+
+/// The mirror itself: the AppKit scroll view, kept up to date with what SwiftUI has for it.
+private struct LiveTerminalMirror: NSViewRepresentable {
+    var text: String
+    var transcript: Bool
+    var fontSize: Double
+    var contentID: String
+    var taskLabel: String?
+    var voice: TabVoice
+    var messages: [MirrorMessage]
+    /// What SwiftUI believes of the reader's place, and where it hears it.
+    var away: Bool
+    var jumpRequest: Int
+    var jumpMotion: LiveTerminalScrollView.JumpMotion
+    var onAway: (Bool) -> Void
+    var onCopy: () -> Void
     /// A card has taken the place of the conversation and faded it out (`\.nookCovered`): the mirror gives up the pointer, whose I-beam would
     /// otherwise show over the card. It stays where it is, and its text goes on updating.
     @Environment(\.nookCovered) private var covered
     /// The island's theme: the mirror is drawn for the paper or for the black.
     @Environment(\.colorScheme) private var scheme
+
+    /// The last request to go to the end that the scroll view has had.
+    final class Coordinator { var jumpRequest = 0 }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> LiveTerminalScrollView {
-        LiveTerminalScrollView()
+        context.coordinator.jumpRequest = jumpRequest
+        return LiveTerminalScrollView()
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: LiveTerminalScrollView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 410, height: proposal.height ?? 92)
@@ -2187,6 +2243,16 @@ struct LiveTerminalSurface: NSViewRepresentable {
         scroll.update(text: text, messages: messages)
         // After the text: when the content changes, only the text that stays on show has to be restyled for the label.
         scroll.setTaskLabel(taskLabel)
+        // The reader's place changes in AppKit (a scroll, new text), often in the middle of this very pass: SwiftUI hears it after the pass, as
+        // state is not to be changed while views are being updated.
+        let report = onAway
+        scroll.onAwayFromEndChange = { away in DispatchQueue.main.async { report(away) } }
+        if scroll.awayFromEnd != away { DispatchQueue.main.async { report(scroll.awayFromEnd) } }
+        // Last, so the end it goes to is the text just given.
+        if jumpRequest != context.coordinator.jumpRequest {
+            context.coordinator.jumpRequest = jumpRequest
+            scroll.jumpToEnd(jumpMotion)
+        }
     }
 }
 
