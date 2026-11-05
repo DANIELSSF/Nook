@@ -110,6 +110,10 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
     private var trackingWatch: NSObjectProtocol?
     private var mirrors: [String: (NSWindow, ActivityTerminalView)] = [:]
     private var statusItem: NSStatusItem?
+    /// ⌃⌥N from any app opens the island or puts it away (`toggleFromShortcut`). Nil for a quiet controller, which takes no keys.
+    private var islandShortcut: GlobalHotKey?
+    /// The app that had the keyboard when the island last took it (`expand(focus: true)`): the shortcut gives the keyboard back to it.
+    private var appBeforeIsland: NSRunningApplication?
     private var capturePrivacyWatch: AnyCancellable?
     private var screenObserver: NSObjectProtocol?
     /// Where the Space, wake and unlock notifications come from (`watchSpaces`): the workspace's, or a test's own.
@@ -245,6 +249,7 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
             for window in [petPanel, panel] { window.alphaValue = restingAlpha; window.ignoresMouseEvents = true }
         } else {
             petPanel.orderFrontRegardless(); petOut = true
+            islandShortcut = GlobalHotKey(.toggleIsland) { [weak self] in self?.toggleFromShortcut() }
             setupMenu()
         }
         alertPeek = AlertPeekController(notch: self)
@@ -430,9 +435,11 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
                 // The island is on show: a card that was open before it closed (or opened meanwhile) is asked about now.
                 self.roomKeeper.reconsider()
             }
+            checkSeenSoon("al abrir")
         }
         alertPeek.cancel()
         if focus {
+            if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != getpid() { appBeforeIsland = front }
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             if model.islandContentVisible { focusTerminal() }
@@ -515,6 +522,23 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
             self.stopTracking()
             self.panel.orderOut(nil)
             self.positionPet(); self.petPanel.orderFrontRegardless(); self.petOut = true
+        }
+        checkSeenSoon("al cerrar")
+    }
+    /// The island has been seen to vanish on hover: the cat goes and no open island shows, and pointing at or clicking the notch brings neither back.
+    /// A moment after each opening and closing, the window the user should see by now (open: the island's, collapsed: the cat's) is looked at, and
+    /// when it is not seen, both windows' state is written to the Spaces log (`SpacesJournal`), so the next time it happens there is something to read.
+    private func checkSeenSoon(_ reason: String) {
+        guard restingAlpha >= 1 else { return }
+        let transition = transitionID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.transitionID == transition, !self.draggingPet, !PetPowerMonitor.shared.screensDark else { return }
+            let window = self.model.expanded ? self.panel : self.petPanel
+            guard !window.isVisible || !window.isOnActiveSpace || !window.occlusionState.contains(.visible) else { return }
+            let membership = SpaceMembership.shared
+            let displays = membership.backend.isAvailable ? membership.backend.displaySpaces() : []
+            let state = [self.petPanel, self.panel].map { membership.describe($0, displays: displays) }.joined(separator: " · ")
+            membership.journal?("\(reason), no se ve · \(state) · contenido \(self.model.islandContentVisible ? "visible" : "oculto"), gato fuera \(self.petOut)")
         }
     }
     /// Pointer tracking only matters while the island is open; collapsed, the cat's own tracking
@@ -783,12 +807,28 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
         for (title, action, key) in [("Abrir Nook", #selector(openPanel), ""), ("Nueva terminal", #selector(newTerminal), ""), ("Conectar una terminal…", #selector(connect), ""), ("Ajustes…", #selector(showSettingsFromMenu), ""), ("Permisos…", #selector(showPermissionsFromMenu), ""), ("Animaciones de la mascota", #selector(toggleAnimations), ""), ("Salir de Nook", #selector(quit), "q")] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key); item.target = self
             if action == #selector(toggleAnimations) { item.state = model.animations ? .on : .off }
+            // The menu shows the system-wide shortcut where it opens the island, only when macOS gave it to Nook.
+            if action == #selector(openPanel), islandShortcut?.registered == true {
+                item.keyEquivalent = HotKeyCombo.toggleIsland.menuKey
+                item.keyEquivalentModifierMask = HotKeyCombo.toggleIsland.menuModifiers
+            }
             menu.addItem(item)
         }
         return menu
     }
     func showMenu(event: NSEvent, in view: NSView) { NSMenu.popUpContextMenu(menu(), with: event, for: view) }
     @objc private func openPanel() { expand(focus: true) }
+    /// ⌃⌥N from any app (`GlobalHotKey`): opens the island with the keyboard, or puts it away as the chevron does and gives the keyboard back
+    /// to the app that had it. `focus` is false only in tests, which must never take the keyboard from the app in front.
+    func toggleFromShortcut(focus: Bool = true) {
+        if model.expanded {
+            collapse(force: true)
+            if focus, NSApp.isActive, let app = appBeforeIsland, !app.isTerminated { app.activate(options: []) }
+            appBeforeIsland = nil
+        } else {
+            expand(focus: focus)
+        }
+    }
     @objc private func showSettingsFromMenu() { openSettings(tab: .island) }
     @objc private func showPermissionsFromMenu() { openSettings(tab: .permissions) }
     @objc private func newTerminal() { model.create(.shell) }
