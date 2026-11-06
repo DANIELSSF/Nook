@@ -1911,37 +1911,32 @@ struct SessionPane: View {
         speech.stop()
         // The field empties and the message shows in the mirror at once; delivery can take a moment
         // (Nook waits for the agent to show it before pressing Enter). A failure gives it back.
-        // Line breaks the user left at either end are not part of the message. The attached images go after the words, as their paths.
+        // Line breaks the user left at either end are not part of the message. The attached images go after the words, as their paths,
+        // and screen vision's screenshot after them (`AppModel.sendMessage`, the same way the phone's messages go).
         let sentText = draft.trimmingCharacters(in: .newlines)
         let sentFiles = attachments
-        // Screen vision's toggle: a screenshot of the screen as it is now (Nook's windows left out) goes after the attached images.
-        let withScreen = model.screenVision.attaches(text: sentText, agent: session.agent)
         draft = ""; attachments = []; beforeDictation = ""; history.reset(); followUpHint = nil
-        model.screenVision.prepareMessage(files: sentFiles, withScreen: withScreen) { files in
-            let sentDraft = MessageAttachments.message(text: sentText, files: files)
-            // The history keeps what the user wrote and attached, not the screenshot: sending it again takes a new one.
-            model.remember(MessageAttachments.message(text: sentText, files: sentFiles), for: session)
-            // A shell shows the live terminal itself; the agent's mirror needs a placeholder until the agent's own record has the message.
-            if session.mirrorsAgent { session.showPending(sentDraft) }
-            session.send(sentDraft) { success in
-                guard !success else { return }
-                session.pendingMessage = nil
+        model.sendMessage(sentText, files: sentFiles, to: session) { outcome in
+            switch outcome {
+            case .delivered:
+                break
+            case .notDelivered:
                 // This pane may be gone by now (the user went to another tab while the message was on its way), and what it holds with it: the message goes back
                 // to the tab's own stores, which are what the pane the user comes back to reads, and to this pane's if it is still there.
                 let gave = Self.giveBack(sentText, files: sentFiles, to: session)
                 if gave.draft { draft = sentText }
                 if gave.attachments { attachments = sentFiles }
+            case .screenFailed(let notice):
+                // Without the screenshot Claude would not see the screen: nothing went, and the message comes back to the field (before
+                // anything typed meanwhile). The tab's own stores get it too, in case the user moved to another tab while it was captured.
+                let typed = session.draft
+                let restored = typed.isEmpty ? sentText : sentText + "\n" + typed
+                draft = restored; session.draft = restored
+                if MessageAttachments.shared.paths(for: session.id).isEmpty {
+                    attachments = sentFiles; MessageAttachments.shared.set(sentFiles, for: session.id)
+                }
+                model.notice = notice
             }
-        } failed: { notice in
-            // Without the screenshot Claude would not see the screen: nothing went, and the message comes back to the field (before
-            // anything typed meanwhile). The tab's own stores get it too, in case the user moved to another tab while it was captured.
-            let typed = session.draft
-            let restored = typed.isEmpty ? sentText : sentText + "\n" + typed
-            draft = restored; session.draft = restored
-            if MessageAttachments.shared.paths(for: session.id).isEmpty {
-                attachments = sentFiles; MessageAttachments.shared.set(sentFiles, for: session.id)
-            }
-            model.notice = notice
         }
     }
 

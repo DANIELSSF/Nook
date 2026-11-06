@@ -1127,6 +1127,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     }
 }
 
+/// Who asked for an action on a tab: the island on this Mac, or Nook Remote (a phone on the home network). A key that needs
+/// Accessibility Nook lacks opens the dialog that asks for it only when the island asked; for the phone nobody may be at the Mac,
+/// so the model's notice says it and the phone is told why (`AppModel.remoteKeysNotice`).
+enum ActionOrigin { case island, remote }
+
 final class AppModel: ObservableObject {
     @Published var sessions: [TerminalSession] = []
     @Published var selectedID: String? {
@@ -1242,7 +1247,23 @@ final class AppModel: ObservableObject {
     /// reach Claude's configuration or the running app's socket.
     let screenVision: ScreenVision
     private let defaults: UserDefaults
-    @Published var notice: String?
+    @Published var notice: String? { didSet { noticeSerial &+= 1 } }
+    /// Grows with every notice set, also one with the same words as the last: an action that failed can tell whether it said why
+    /// (Nook Remote answers the phone with those words).
+    private(set) var noticeSerial = 0
+    /// Nook Remote: the page a phone on the home network opens to do what the island's conversation view does (RemoteAccess.swift).
+    /// Always off when Nook starts; the user turns it on in its settings tab. Made when first asked for, and inert until started.
+    lazy var remote = RemoteAccess(model: self, defaults: defaults)
+    /// A phone has Nook Remote's page open (`remote` says so): Terminal tabs are read as fully as with the island open, and a Nook
+    /// session's conversation is pushed as it would be to the open island, so the phone never shows a staler conversation than the
+    /// island would.
+    var remoteWatching = false {
+        didSet {
+            guard remoteWatching != oldValue else { return }
+            updateReadDetail()
+            if remoteWatching, let session = selected, !session.isExternal { followTranscript(session) }
+        }
+    }
     /// Files being dragged over the island; the composer's drop feedback reads it. Its own object, so a drag redraws the
     /// feedback and not the panel.
     let fileDrop = FileDropState()
@@ -1440,8 +1461,9 @@ final class AppModel: ObservableObject {
             self.connectTerminalTab(tab)
         }
     }
-    /// `login`: the tab's, when the caller already knows it; otherwise it is read now.
-    func connectTerminalTab(_ tab: TerminalTabSnapshot, login: String? = nil) {
+    /// `login`: the tab's, when the caller already knows it; otherwise it is read now. `expand`: the island opens on it with the
+    /// keyboard; a tab opened from the phone (Nook Remote) leaves the Mac's island as it was.
+    func connectTerminalTab(_ tab: TerminalTabSnapshot, login: String? = nil, expand: Bool = true) {
         let login = login ?? terminalBridge.loginStampsReader()[tab.tty]
         // The tab Nook knew on this TTY closed, and Terminal gave its TTY to this one: nothing of the old one carries over.
         if let stale = sessions.first(where: { $0.externalTTY == tab.tty }), TerminalTabIdentity.replaced(Self.login(of: stale), by: login) {
@@ -1456,7 +1478,7 @@ final class AppModel: ObservableObject {
         }
         terminalBridge.connect(tab: tab, login: login)
         connectionSheet = false; notice = nil; save()
-        controller?.expand(focus: true)
+        if expand { controller?.expand(focus: true) }
     }
     /// When the user last picked a tab in Nook; readings that started earlier can't override it.
     private var selectedAt = Date.distantPast
@@ -1577,9 +1599,10 @@ final class AppModel: ObservableObject {
     }
     /// Terminal tabs are read whole and twice a second while the island is open, and also while one of them shows a panel of
     /// Claude's, collapsed island or not: the usage panel is kept as read (`ClaudeUsageReader`), so it is read from the moment it
-    /// opens, and a scroll in Terminal is seen a screen at a time. Otherwise every two seconds, the visible screen only.
+    /// opens, and a scroll in Terminal is seen a screen at a time. Also while a phone has Nook Remote's page open
+    /// (`remoteWatching`): it shows what the open island would. Otherwise every two seconds, the visible screen only.
     private func updateReadDetail() {
-        let wanted = expanded || sessions.contains { $0.isExternal && $0.panel != nil }
+        let wanted = expanded || remoteWatching || sessions.contains { $0.isExternal && $0.panel != nil }
         if terminalBridge.detailed != wanted { terminalBridge.detailed = wanted }
     }
     func disconnectTerminalTab(_ tty: String) {
@@ -1677,7 +1700,9 @@ final class AppModel: ObservableObject {
     /// A new terminal is always a tab of Terminal: a new tab of its front window, or a new window when it has none (or when
     /// Nook can't press ⌘T). Nook then follows it like a tab connected by hand; it never hosts a terminal of its own. The tab
     /// opens asynchronously, so nothing is returned; it is selected and named ("Claude Code", "Claude Code 2"…) once open.
-    @discardableResult func create(_ kind: SessionKind, directory: String? = nil) -> TerminalSession? {
+    /// `expandIsland`: the island opens on the new tab with the keyboard, as when the user asked on the Mac; a tab asked for from
+    /// the phone (Nook Remote) leaves the island as it was.
+    @discardableResult func create(_ kind: SessionKind, directory: String? = nil, expandIsland: Bool = true) -> TerminalSession? {
         let command = NewTerminalCommand.command(kind, directory: directory ?? NSHomeDirectory())
         // Terminal comes forward to take ⌘T; the island stays meanwhile.
         controller?.keepIslandWithTerminal(appPID: TerminalAppBridge.terminalPID)
@@ -1686,7 +1711,7 @@ final class AppModel: ObservableObject {
             switch result {
             case .success(let (opened, tab)):
                 tabLog.notice("opened \(kind.rawValue, privacy: .public) in \(tab.tty, privacy: .public) (\(String(describing: opened.placement), privacy: .public))")
-                self.connectTerminalTab(tab, login: opened.login)
+                self.connectTerminalTab(tab, login: opened.login, expand: expandIsland)
                 if let session = self.sessions.first(where: { $0.externalTTY == tab.tty }) {
                     self.customize(session, title: NewTerminalCommand.name(kind, taken: self.sessions.filter { $0 !== session }.map(\.displayTitle)), tint: session.tint)
                 }
@@ -1755,7 +1780,7 @@ final class AppModel: ObservableObject {
     /// The models a tab can switch to: Claude Code's own list on disk, else the picker rows Nook has seen; the button reads them.
     lazy var models = ClaudeModelStore(defaults: defaults)
     /// A model asked for on the button that needs Claude's picker, until that tab's picker comes up.
-    private var pendingModel: [String: (choice: ClaudeModelChoice, scope: ClaudeModelScope, until: Date)] = [:]
+    private var pendingModel: [String: (choice: ClaudeModelChoice, scope: ClaudeModelScope, until: Date, origin: ActionOrigin)] = [:]
 
     /// What the model button offers for a tab, in the order of Claude's picker, with the tab's current model marked.
     func availableModels(for session: TerminalSession) -> [ClaudeModelChoice] {
@@ -1782,13 +1807,14 @@ final class AppModel: ObservableObject {
     /// argument goes as `/model <id or alias>`, a message like any other: no keys, no Accessibility. For this session only ("s"
     /// in the picker), or a row without an argument, Nook opens Claude's picker (or uses the open one), moves to the row with
     /// the arrows and presses "s" or Enter, which in a Terminal tab needs Accessibility like any key. The banner's model follows
-    /// Claude's answer ("Set model to …"), and the answer stays out of the chat (`ClaudeSettingsEcho`).
-    func setModel(_ choice: ClaudeModelChoice, on session: TerminalSession, scope: ClaudeModelScope = .default) {
+    /// Claude's answer ("Set model to …"), and the answer stays out of the chat (`ClaudeSettingsEcho`). `origin`: who asked, for a
+    /// key that needs Accessibility (`ActionOrigin`).
+    func setModel(_ choice: ClaudeModelChoice, on session: TerminalSession, scope: ClaudeModelScope = .default, from origin: ActionOrigin = .island) {
         guard modelSwitchBlocked(on: session) == nil, !session.answering else { return }
-        if let live = session.prompt, ClaudeModelStore.isModelPicker(live) { return pick(choice, in: live, on: session, scope: scope) }
+        if let live = session.prompt, ClaudeModelStore.isModelPicker(live) { return pick(choice, in: live, on: session, scope: scope, from: origin) }
         // Only an argument that is one plain word is typed; any other goes through the picker, by its row.
         if scope == .default, let argument = choice.argument, ClaudeModelStore.isSafeArgument(argument) { command("/model " + argument, on: session); return }
-        pendingModel[session.id] = (choice, scope, Date().addingTimeInterval(8))
+        pendingModel[session.id] = (choice, scope, Date().addingTimeInterval(8), origin)
         command("/model", on: session)
     }
     /// Opens Claude's own picker; its rows fill in the list when Claude Code's own isn't on disk.
@@ -1810,7 +1836,7 @@ final class AppModel: ObservableObject {
         let moves = Array(repeating: target > from ? TerminalKey.down : .up, count: abs(target - from))
         return moves + [scope == .sessionOnly ? .keyS : .enter]
     }
-    private func pick(_ choice: ClaudeModelChoice, in picker: AgentPrompt, on session: TerminalSession, scope: ClaudeModelScope) {
+    private func pick(_ choice: ClaudeModelChoice, in picker: AgentPrompt, on session: TerminalSession, scope: ClaudeModelScope, from origin: ActionOrigin = .island) {
         // A picker whose hint names its keys and has no "s" can't apply a model to this session only.
         if scope == .sessionOnly, !picker.actions.isEmpty, !picker.actions.contains(where: { $0.key == "s" }) {
             notice = "Este Claude no permite usar un modelo solo en esta sesión; elígelo como predeterminado."
@@ -1820,10 +1846,10 @@ final class AppModel: ObservableObject {
             notice = "El selector de Claude no muestra «\(choice.label)»; elígelo en él."
             return
         }
-        pressInPicker(keys, on: session)
+        pressInPicker(keys, on: session, from: origin)
     }
     /// One key after the other while the tab still shows the picker; anything else on screen stops them.
-    private func pressInPicker(_ keys: [TerminalKey], on session: TerminalSession) {
+    private func pressInPicker(_ keys: [TerminalKey], on session: TerminalSession, from origin: ActionOrigin = .island) {
         guard let key = keys.first else { return }
         guard session.prompt.map(ClaudeModelStore.isModelPicker) == true else {
             notice = "El selector de modelos de Claude se cerró antes de terminar; no envié el resto de las teclas."
@@ -1831,8 +1857,8 @@ final class AppModel: ObservableObject {
         }
         session.press(key) { [weak self, weak session] result in
             guard let self, let session else { return }
-            self.handle(result, for: session, key: key)
-            if result == .sent { self.pressInPicker(Array(keys.dropFirst()), on: session) }
+            self.handle(result, for: session, key: key, from: origin)
+            if result == .sent { self.pressInPicker(Array(keys.dropFirst()), on: session, from: origin) }
         }
     }
     /// A tab's screen shows Claude's /model picker (`TerminalSession.onModelPicker`): its rows are learned, and a model the
@@ -1840,7 +1866,7 @@ final class AppModel: ObservableObject {
     func modelPickerShown(_ picker: AgentPrompt, on session: TerminalSession) {
         models.learn(picker, version: session.banner?.version, folder: session.claudeFolder)
         guard let pending = pendingModel.removeValue(forKey: session.id), pending.until > Date() else { return }
-        pick(pending.choice, in: picker, on: session, scope: pending.scope)
+        pick(pending.choice, in: picker, on: session, scope: pending.scope, from: pending.origin)
     }
     /// Claude's usage panel (/usage), which Nook then shows as it shows any of Claude's panels.
     /// The usage button. With Claude's status line on, Nook has the limits itself: its own card opens, nothing is typed in the
@@ -1861,6 +1887,76 @@ final class AppModel: ObservableObject {
         session.usageCardOpen = false
         session.send("/usage")
     }
+    // MARK: Sending
+
+    /// How a message from one of Nook's composers went (`sendMessage`).
+    enum MessageOutcome: Equatable {
+        /// The agent has it.
+        case delivered
+        /// It did not reach the agent: the terminal refused it, or it landed behind text already in Claude's box (`joinedBox`). Its
+        /// placeholder in the conversation is gone; the composer that sent it gives it back to whoever wrote it.
+        case notDelivered
+        /// The picture of the screen it was to carry could not be taken: nothing went, and the words say why (a whole notice).
+        case screenFailed(String)
+    }
+
+    /// Where messages from Nook's composers go instead of the tab; only tests set it, so a message never reaches a real terminal.
+    var messageSender: ((String, TerminalSession, @escaping (Bool) -> Void) -> Void)?
+
+    /// A message from one of Nook's composers to a tab's agent: the island's (`SessionPane.send`) and the phone's (Nook Remote) go
+    /// the same way from here. Screen vision's toggle adds a picture of the screen as it is now, after the attached images (never to
+    /// one of the agent's own commands, `ScreenVision.attaches`); a capture that fails sends nothing. Then the message joins the tab's
+    /// history (what was written and attached, not the screenshot: sending it again takes a new one), shows in the conversation at
+    /// once until the agent's own record has it, and goes. The screenshots of a message that went are remembered with its words
+    /// (`sentShots`): Claude's record only says "[Image]" where they were. `rememberingFiles`: the attached files are remembered so
+    /// too, before the screenshot (the phone's images, which the phone shows again); the island's pasted images are not. What the
+    /// composer does with a message that didn't go (the island puts it back in its field; the phone keeps it) is its own.
+    func sendMessage(_ text: String, files: [String] = [], to session: TerminalSession, rememberingFiles: Bool = false,
+                     completion: @escaping (MessageOutcome) -> Void = { _ in }) {
+        let withScreen = screenVision.attaches(text: text, agent: session.agent)
+        screenVision.prepareMessage(files: files, withScreen: withScreen) { sent in
+            let message = MessageAttachments.message(text: text, files: sent)
+            let shots = rememberingFiles ? sent : Array(sent.dropFirst(files.count))
+            // A message that is only the screenshot (the phone's, nothing written) leaves the history as it was.
+            let written = MessageAttachments.message(text: text, files: files)
+            if !written.isEmpty { self.remember(written, for: session) }
+            // A shell shows the live terminal itself; the agent's mirror needs a placeholder until the agent's own record has the message.
+            if session.mirrorsAgent { session.showPending(message) }
+            let deliver = self.messageSender ?? { message, session, done in session.send(message, completion: done) }
+            deliver(message, session) { success in
+                if success { self.noteSentShots(shots, text: text, for: session) } else { session.pendingMessage = nil }
+                completion(success ? .delivered : .notDelivered)
+            }
+        } failed: { notice in
+            completion(.screenFailed(notice))
+        }
+    }
+
+    /// The screenshots that went with messages from Nook's composers, by tab id, oldest first (`SentShot`). Nook Remote shows them
+    /// beside the conversation and serves their files by name; nothing else is ever served. Kept for as long as their files are.
+    private(set) var sentShots: [String: [SentShot]] = [:]
+
+    /// A tab's screenshots that went with its messages in the last day (`ScreenShotFile.keep`, after which their files go).
+    func sentShots(for session: TerminalSession, now: Date = Date()) -> [SentShot] {
+        (sentShots[session.id] ?? []).filter { now.timeIntervalSince($0.noted) < ScreenShotFile.keep }
+    }
+
+    /// The screenshot of that exact name that went with a message, in any tab; nil for any other name.
+    func sentShot(named name: String, now: Date = Date()) -> SentShot? {
+        for shots in sentShots.values { if let shot = shots.last(where: { $0.name == name }), now.timeIntervalSince(shot.noted) < ScreenShotFile.keep { return shot } }
+        return nil
+    }
+
+    /// Remembers the screenshots at `paths` as having gone with `text` in `session` (`sendMessage`, once the message went).
+    func noteSentShots(_ paths: [String], text: String, for session: TerminalSession) {
+        guard !paths.isEmpty else { return }
+        // The capture's own time when it is the one that made them (it is, nearly always).
+        let date = screenVision.lastCapture.flatMap { capture in capture.shots.contains { paths.contains($0.path) } ? capture.date : nil } ?? Date()
+        let shots = paths.map { SentShot(name: ($0 as NSString).lastPathComponent, path: $0, date: date, text: text) }
+        sentShots[session.id] = Array(((sentShots[session.id] ?? []) + shots).suffix(SentShot.perTab))
+        if sentShots.count > 30 { sentShots = sentShots.filter { id, _ in sessions.contains { $0.id == id } } }
+    }
+
     /// Like a shell's history: kept per tab across launches, without repeats in a row, capped.
     func remember(_ message: String, for session: TerminalSession) {
         guard session.sentHistory.last != message else { return }
@@ -1887,8 +1983,9 @@ final class AppModel: ObservableObject {
         session.onPaneRead = { [weak self, weak session] in
             guard let self, let session, let agent = session.agent else { return }
             if !session.menu.isEmpty { self.commands.learn(session.menu, agent: agent) }
-            // Like a Terminal tab: a collapsed island follows the record for the notch's agents; the hidden chat waits.
-            self.followTranscript(session, showingText: self.islandContentVisible)
+            // Like a Terminal tab: a collapsed island follows the record for the notch's agents; the hidden chat waits, unless a phone
+            // shows it (Nook Remote).
+            self.followTranscript(session, showingText: self.islandContentVisible || self.remoteWatching)
         }
     }
     func updateActivity() {
@@ -1957,7 +2054,9 @@ final class AppModel: ObservableObject {
     /// (`AgentPrompt.notesFocused`): the arrows would move its cursor and Enter would answer the option Claude has highlighted. Notes
     /// held with the field closed don't stop it: Enter answers the option and Claude sends them with it. The check is made on a
     /// reading taken right before the keys: a Nook session's pane, and a Terminal tab's screen for that question (`answerPreview`).
-    func answer(_ prompt: AgentPrompt, option index: Int, on session: TerminalSession, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
+    /// `origin`: who asked, for keys that need Accessibility (`ActionOrigin`).
+    func answer(_ prompt: AgentPrompt, option index: Int, on session: TerminalSession, from origin: ActionOrigin = .island,
+                completion: @escaping (KeyDelivery) -> Void = { _ in }) {
         guard session.isRunning, let live = session.prompt, live.signature == prompt.signature else { completion(.failed); return }
         if refusesNotesField(live, on: session) { completion(.failed); return }
         // A field Nook already wrote into, still on screen (`TerminalSession.filledField`), is an option like any other: Enter on
@@ -1972,7 +2071,7 @@ final class AppModel: ObservableObject {
         // keys in a Terminal tab on its own, and reading its screen takes a script: there the last reading stands, except in Claude's
         // question with a preview, whose notes field the user may have opened at the terminal since (`answerPreview`).
         if session.isExternal, live.takesNotes { return answerPreview(live, option: index, on: session, completion: completion) }
-        guard !session.isExternal else { return deliverAnswer(live, option: index, on: session, completion: completion) }
+        guard !session.isExternal else { return deliverAnswer(live, option: index, on: session, from: origin, completion: completion) }
         // Quiet while the pane is read: a second click must not send the keys twice.
         guard session.beginAnswer() else { completion(.failed); return }
         session.promptOnScreen { [weak self, weak session] current in
@@ -1983,7 +2082,7 @@ final class AppModel: ObservableObject {
                 completion(.failed)
                 return
             }
-            self.deliverAnswer(current, option: index, on: session, completion: completion)
+            self.deliverAnswer(current, option: index, on: session, from: origin, completion: completion)
         }
     }
 
@@ -2194,7 +2293,8 @@ final class AppModel: ObservableObject {
     }
 
     /// The keys from `live`'s highlight to option `index`, delivered as `answer` describes.
-    private func deliverAnswer(_ live: AgentPrompt, option index: Int, on session: TerminalSession, completion: @escaping (KeyDelivery) -> Void) {
+    private func deliverAnswer(_ live: AgentPrompt, option index: Int, on session: TerminalSession, from origin: ActionOrigin = .island,
+                               completion: @escaping (KeyDelivery) -> Void) {
         // The reading the keys are counted from (a Nook session's is fresh from its pane) is checked too.
         if refusesNotesField(live, on: session) { completion(.failed); return }
         // A text field comes here only once Nook filled it: then Enter toggles its box. Never Enter on an empty one, which cancels
@@ -2217,25 +2317,28 @@ final class AppModel: ObservableObject {
                 : "La pregunta cambió antes de que respondiera; no envié ninguna tecla. Revisa la terminal."
         }
         if session.choose(keys, refused: refused, completion: finished) { return }
-        pressSequence(keys, on: session, whileShowing: live.signature, completion: finished)
+        pressSequence(keys, on: session, whileShowing: live.signature, from: origin, completion: finished)
     }
 
-    /// Esc, which every dialog reads as "cancel".
-    func cancelPrompt(on session: TerminalSession) {
-        guard session.isRunning, session.beginAnswer() else { return }
-        pressSequence([.escape], on: session) { [weak session] result in
+    /// Esc, which every dialog reads as "cancel". `.failed` at once, with nothing pressed, while an answer is on its way or the tab
+    /// is gone.
+    func cancelPrompt(on session: TerminalSession, from origin: ActionOrigin = .island, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
+        guard session.isRunning, session.beginAnswer() else { completion(.failed); return }
+        pressSequence([.escape], on: session, from: origin) { [weak session] result in
             session?.finishAnswer(delivered: result == .sent)
+            completion(result)
         }
     }
 
     /// Presses `keys` one after another. With `signature`, each key after the first waits for the screen (read in the
     /// meantime) to still show that prompt: if the dialog is gone, the rest of the keys would land in whatever came
     /// next, so they are not sent.
-    private func pressSequence(_ keys: [TerminalKey], on session: TerminalSession, whileShowing signature: String? = nil, completion: @escaping (KeyDelivery) -> Void) {
+    private func pressSequence(_ keys: [TerminalKey], on session: TerminalSession, whileShowing signature: String? = nil, from origin: ActionOrigin = .island,
+                               completion: @escaping (KeyDelivery) -> Void) {
         guard let key = keys.first else { completion(.sent); return }
         session.press(key) { [weak self] result in
             guard let self else { return }
-            self.handle(result, for: session, key: key)
+            self.handle(result, for: session, key: key, from: origin)
             guard result == .sent else { completion(result); return }
             let rest = Array(keys.dropFirst())
             if let signature, !rest.isEmpty, session.prompt?.signature != signature {
@@ -2243,7 +2346,7 @@ final class AppModel: ObservableObject {
                 completion(.failed)
                 return
             }
-            self.pressSequence(rest, on: session, whileShowing: signature, completion: completion)
+            self.pressSequence(rest, on: session, whileShowing: signature, from: origin, completion: completion)
         }
     }
     /// A hook and the screen telling the same finish count once.
@@ -2278,12 +2381,16 @@ final class AppModel: ObservableObject {
     }
     /// Where the keys pressed on a tab's behalf go instead of the terminal; only tests set it, so a key never reaches a real one.
     var keySender: ((TerminalKey, TerminalSession) -> Void)?
-    func press(_ key: TerminalKey, on session: TerminalSession) {
+    /// A key on the user's behalf. `origin`: who asked (`ActionOrigin`); `completion` hears how it went, after the model handled it.
+    func press(_ key: TerminalKey, on session: TerminalSession, from origin: ActionOrigin = .island, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
         if key == .escape, session.panel != nil { session.panelEscapedAt = Date() }
         // A walk of Claude's usage panel stops before the user's key goes (`ClaudeUsageWalk.cancel`).
         if session.panel != nil { session.usageReader.userPressed(key) }
-        if let keySender { keySender(key, session); return }
-        session.press(key) { [weak self] result in self?.handle(result, for: session, key: key) }
+        if let keySender { keySender(key, session); completion(.sent); return }
+        session.press(key) { [weak self] result in
+            self?.handle(result, for: session, key: key, from: origin)
+            completion(result)
+        }
     }
     /// "más" on Claude's panel: Claude's usage panel scrolls about a screen (`ClaudeUsageReader.scrollStep`) in one burst of ↓ or ↑,
     /// any other panel one key. A Terminal tab gets the burst through Accessibility with Terminal brought forward once and the
@@ -2306,26 +2413,33 @@ final class AppModel: ObservableObject {
         press(.escape, on: session)
         return true
     }
-    func interrupt(_ session: TerminalSession) {
-        session.interrupt { [weak self] result in self?.handle(result, for: session, key: .escape) }
+    func interrupt(_ session: TerminalSession, from origin: ActionOrigin = .island, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
+        session.interrupt { [weak self] result in
+            self?.handle(result, for: session, key: .escape, from: origin)
+            completion(result)
+        }
     }
     /// ⇧⇥ in a tab running Claude: Claude moves to its next permission mode (default → accept edits → plan → auto…), and
     /// `agentMode` follows from the reading that comes right after the key. Like any key but Enter, a Terminal tab needs
-    /// Accessibility for it.
-    func cycleMode(on session: TerminalSession) {
-        guard session.agent == .claude, session.isRunning else { return }
-        press(.backtab, on: session)
+    /// Accessibility for it. `.failed` at once, with nothing pressed, where Claude isn't running.
+    func cycleMode(on session: TerminalSession, from origin: ActionOrigin = .island, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
+        guard session.agent == .claude, session.isRunning else { completion(.failed); return }
+        press(.backtab, on: session, from: origin, completion: completion)
     }
-    private func handle(_ result: KeyDelivery, for session: TerminalSession, key: TerminalKey) {
+    private func handle(_ result: KeyDelivery, for session: TerminalSession, key: TerminalKey, from origin: ActionOrigin = .island) {
         switch result {
         case .sent:
             // The original tab may have come forward to receive the key; the island stays with it until the keyboard goes back
             // (`TerminalAppBridge.press`). A key that went with Terminal left behind changes nothing here.
             if session.isExternal && key.needsDirectKeys { controller?.keepIslandWithTerminal(appPID: TerminalAppBridge.terminalPID) }
-        case .needsPermission: requestDirectKeys()
+        case .needsPermission:
+            // Nobody may be at the Mac when the phone asked: no dialog there. The notice says why, and so does the phone's answer.
+            if origin == .island { requestDirectKeys() } else { notice = Self.remoteKeysNotice }
         case .failed: break
         }
     }
+    /// Why a key the phone asked for (Nook Remote) did not go: it needs Accessibility, which Nook lacks, and only the Mac can grant it.
+    static let remoteKeysNotice = "Para pulsar esa tecla en la pestaña de Terminal, Nook necesita el permiso de Accesibilidad de macOS, y no lo tiene. Actívalo en el Mac: Ajustes del Sistema → Privacidad y seguridad → Accesibilidad."
     /// Pastes the clipboard's image into the agent. Wherever Nook shows the agent's conversation (a Terminal tab, or a Nook
     /// session with an agent in it) the image goes with Nook's own message: it is saved as a file and attached, and the agent
     /// opens it when the message arrives. ⌃V would put it in the agent's own box instead, out of sight (and a Terminal tab
@@ -2697,7 +2811,8 @@ final class AppModel: ObservableObject {
     /// of Terminal's window and Claude's record as read so far (read again from its file at the next look). The script helper starts
     /// afresh, and the memory freed goes back to the system at once. Nothing on screen changes.
     func trimMemory(_ reason: MemoryWatch.Reason) {
-        let hidden = sessions.filter { !(expanded && $0.id == selectedID) }
+        // The phone (Nook Remote) looks at the selected tab as the open island does.
+        let hidden = sessions.filter { !((expanded || remoteWatching) && $0.id == selectedID) }
         hidden.forEach { $0.releaseHiddenMemory() }
         ScriptHelper.shared.recycle()
         MemoryFootprint.relieve()

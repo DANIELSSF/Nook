@@ -15,6 +15,10 @@ mv -f "$app_directory/Contents/MacOS/Nook.new" "$app_directory/Contents/MacOS/No
 cp Resources/Info.plist "$app_directory/Contents/Info.plist"
 cp Resources/tmux.conf "$app_directory/Contents/Resources/tmux.conf"
 cp Resources/claude-commands.json Resources/codex-commands.json "$app_directory/Contents/Resources/"
+# Nook Remote's page (RemoteAccess.swift serves it from Contents/Resources/remote/), replaced whole so a file removed from it goes too.
+rm -rf "$app_directory/Contents/Resources/remote"
+mkdir -p "$app_directory/Contents/Resources/remote"
+if [ -d Resources/remote ]; then cp -R Resources/remote/. "$app_directory/Contents/Resources/remote/"; fi
 cp Vendor/bin/tmux "$app_directory/Contents/Resources/tmux"
 cp Vendor/TMUX-LICENSE "$app_directory/Contents/Resources/Licenses/tmux.txt"
 cp -f .build/checkouts/SwiftTerm/LICENSE "$app_directory/Contents/Resources/Licenses/SwiftTerm.txt"

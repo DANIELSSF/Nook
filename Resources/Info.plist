@@ -14,5 +14,6 @@
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Usa tu voz para preparar un mensaje para la terminal. Tú eliges cuándo enviarlo.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Transcribe tu voz para escribir en tu sesión de IA.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Nook Remoto sirve una página en tu red Wi-Fi de casa para que uses Nook desde tu iPhone. Solo responde a los dispositivos que emparejas con el código QR.</string>
 <key>NSAppleEventsUsageDescription</key><string>Lee la salida de tus ventanas y pestañas de Terminal en tiempo real, envía tus mensajes a la pestaña elegida y muestra su ventana original.</string>
 </dict></plist>
