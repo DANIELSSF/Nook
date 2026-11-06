@@ -584,8 +584,9 @@ final class SettingsWindowTests: XCTestCase {
         let window = SettingsWindow(model: model, screen: screen.size, topInset: 32, level: .normal) {}
         XCTAssertEqual(window.cardSize.width, SettingsCard.width)
         XCTAssertGreaterThan(window.cardSize.height, 250)
-        // 460 before «Apariencia» (the three pictures of the island and their names) joined the card, which takes about 115 pt.
-        XCTAssertLessThan(window.cardSize.height, 580, "The card is compact: a screen's worth of controls would not be a card.")
+        // 460 before «Apariencia» (the three pictures of the island and their names) joined the card, which takes about 115 pt, and about
+        // 51 more since «Acerca de» (the version, whose five taps unlock Nook Remoto) closes the Isla tab: 602, still under a 14" screen's room.
+        XCTAssertLessThan(window.cardSize.height, 640, "The card is compact: a screen's worth of controls would not be a card.")
         let small = CGRect(x: screen.midX - 286, y: screen.maxY - 266, width: 572, height: 266)
         window.place(under: small, on: screen)
         XCTAssertFalse(window.isVisible, "Placing it does not show it.")

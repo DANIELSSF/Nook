@@ -1,8 +1,9 @@
 import SwiftUI
 import AppKit
 
-// Nook's settings, as a small card in its own look: display, capture privacy, and the permissions Nook
-// needs from macOS (`PermissionsPane`). It lives in a window of its own that hangs under the open island (`SettingsWindow`),
+// Nook's settings, as a small card in its own look: display, capture privacy, the permissions Nook
+// needs from macOS (`PermissionsPane`) and, once five taps on the version have unlocked it, Nook Remoto
+// (`RemoteSettingsPane`). It lives in a window of its own that hangs under the open island (`SettingsWindow`),
 // centred on the notch, so the island stays fully visible while a slider moves: the text changes size, the island grows or
 // shrinks, and the card (whose position does not depend on the island's width) never moves sideways under the pointer. The
 // window follows the card's height as the tab changes and a guide opens.
@@ -17,11 +18,17 @@ protocol SettingsTabItem: Hashable, Identifiable {
     var attentionNote: String { get }
 }
 
-/// Display, the cat, the alerts' sound, permissions, experimental capture privacy, and screen vision.
+/// Display, the cat, the alerts' sound, permissions, experimental capture privacy, screen vision, and Nook Remoto, which is in the bar only once it has been unlocked.
 enum SettingsTab: String, CaseIterable, Identifiable, SettingsTabItem {
-    case island, pet, sound, permissions, privacy, screen
+    case island, pet, sound, permissions, privacy, screen, remote
     var id: String { rawValue }
-    var attentionNote: String { self == .screen ? "Falta el permiso de grabación de pantalla" : "Falta un permiso necesario" }
+    var attentionNote: String {
+        switch self {
+        case .screen: return "Falta el permiso de grabación de pantalla"
+        case .remote: return "Nook Remoto no está funcionando"
+        default: return "Falta un permiso necesario"
+        }
+    }
     var title: String {
         switch self {
         case .island: return "Isla"
@@ -30,6 +37,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, SettingsTabItem {
         case .permissions: return "Permisos"
         case .privacy: return "Privacidad"
         case .screen: return "Pantalla"
+        case .remote: return "Remoto"
         }
     }
     var symbol: String {
@@ -40,8 +48,13 @@ enum SettingsTab: String, CaseIterable, Identifiable, SettingsTabItem {
         case .permissions: return "lock.shield"
         case .privacy: return "eye.slash"
         case .screen: return "display"
+        case .remote: return "iphone.radiowaves.left.and.right"
         }
     }
+
+    /// The tabs in the card's bar. Remoto is not one of them until it has been unlocked (`RemoteAccess.unlocked`: five taps on the version, in «Acerca de»); it comes last, after the tabs that
+    /// were always there, which keep their places.
+    static func shown(remoteUnlocked: Bool) -> [SettingsTab] { remoteUnlocked ? allCases : allCases.filter { $0 != .remote } }
 }
 
 struct SettingsCard: View {
@@ -55,25 +68,34 @@ struct SettingsCard: View {
     @ObservedObject var permissions: PermissionsModel
     /// Screen vision has its own tab; it is observed here for the dot on it.
     @ObservedObject private var vision: ScreenVision
+    /// Nook Remoto has its own tab once it is unlocked; it is observed here for that, and for the dot on it.
+    @ObservedObject private var remote: RemoteAccess
+    /// The line «Acerca de» shows.
+    private let version: NookVersion
 
     /// The card's own width; its height follows its content.
     static let width: CGFloat = 352
 
-    /// `permissions` is for previews and tests, which pass one that reads and asks nothing; the app's card uses the model's own.
-    init(model: AppModel, screen: CGSize, topInset: CGFloat, permissions: PermissionsModel? = nil, onClose: @escaping () -> Void = {}, onContentChange: @escaping () -> Void = {}) {
+    /// `permissions` is for previews and tests, which pass one that reads and asks nothing; the app's card uses the model's own. `version` is for them too: under a test the bundle is the runner's.
+    init(model: AppModel, screen: CGSize, topInset: CGFloat, permissions: PermissionsModel? = nil, version: NookVersion = .current, onClose: @escaping () -> Void = {}, onContentChange: @escaping () -> Void = {}) {
         self.model = model; self.screen = screen; self.topInset = topInset; self.onClose = onClose; self.onContentChange = onContentChange
         self.permissions = permissions ?? model.permissions
         self.vision = model.screenVision
+        self.remote = model.remote
+        self.version = version
     }
 
     private var settings: DisplaySettings { model.display }
 
+    /// The tab on show. Remoto only while it is unlocked: a card left on it when it was hidden goes back to the island's.
+    private var tab: SettingsTab { SettingsTab.shown(remoteUnlocked: remote.unlocked).contains(model.settingsTab) ? model.settingsTab : .island }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            SettingsTabBar(tabs: SettingsTab.allCases, selection: Binding(get: { model.settingsTab }, set: { model.settingsTab = $0 }), attention: attention)
+            SettingsTabBar(tabs: SettingsTab.shown(remoteUnlocked: remote.unlocked), selection: Binding(get: { tab }, set: { model.settingsTab = $0 }), attention: attention)
                 .padding(.horizontal, 16).padding(.bottom, 12)
-            switch model.settingsTab {
+            switch tab {
             case .island:
                 VStack(alignment: .leading, spacing: 15) {
                     themeSection
@@ -81,6 +103,7 @@ struct SettingsCard: View {
                     textSection
                     welcomeSection
                     footer
+                    SettingsAboutSection(version: version, remote: remote, onUnlocked: revealRemote)
                 }.padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 15)
             case .pet:
                 PetSettingsPane(model: model, maxHeight: maxCardHeight - Self.chromeHeight)
@@ -93,6 +116,8 @@ struct SettingsCard: View {
                     .padding(.horizontal, 16).padding(.bottom, 15)
             case .screen:
                 ScreenVisionPane(vision: vision, permissions: permissions, maxHeight: maxCardHeight - Self.chromeHeight, onContentChange: onContentChange)
+            case .remote:
+                RemoteSettingsPane(remote: remote, maxHeight: maxCardHeight - Self.chromeHeight, onContentChange: onContentChange, onHide: hideRemote)
             }
         }
         .frame(width: Self.width)
@@ -110,13 +135,35 @@ struct SettingsCard: View {
         .onAppear { permissions.setActive(model.settingsOpen) }
         .onChange(of: model.settingsOpen) { _, open in permissions.setActive(open) }
         .onChange(of: model.settingsTab) { _, tab in if tab == .permissions || tab == .screen, model.settingsOpen { permissions.refresh() } }
+        // Hidden while the card is on it (from the tab's own button, or whoever else locks it): the card goes back to the island's tab for good, not only on show.
+        .onChange(of: remote.unlocked) { _, unlocked in if !unlocked, model.settingsTab == .remote { model.settingsTab = .island } }
     }
 
-    /// The tabs that ask for a look: "Permisos" while a needed permission is off, "Pantalla" while screen vision is on and macOS has not let Nook record the screen.
+    /// The five taps worked: after a beat, to read «Nook Remoto desbloqueado» and see the tab come into the bar, the card goes to it, unless the user has gone somewhere else meanwhile.
+    private func revealRemote() {
+        let from = model.settingsTab
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealDelay) { [weak model] in
+            guard let model, model.settingsTab == from else { return }
+            model.settingsTab = .remote
+        }
+    }
+
+    /// How long the card waits, once Nook Remoto is unlocked, before it takes the user to its tab.
+    static let revealDelay: TimeInterval = 1.2
+
+    /// «Ocultar Nook Remoto»: the card goes to the island's tab, and the remote is turned off and locked again (its tab leaves the bar).
+    private func hideRemote() {
+        model.settingsTab = .island
+        remote.lock()
+    }
+
+    /// The tabs that ask for a look: "Permisos" while a needed permission is off, "Pantalla" while screen vision is on and macOS has not let Nook record the screen, and "Remoto" once
+    /// Nook Remoto has stopped by itself (the network changed, say) and the user is looking elsewhere.
     private var attention: Set<SettingsTab> {
         var tabs = Set<SettingsTab>()
         if permissions.needsAttention { tabs.insert(.permissions) }
         if vision.enabled, [.notAsked, .denied].contains(permissions.states[.screenRecording]) { tabs.insert(.screen) }
+        if remote.unlocked, case .failed = remote.status { tabs.insert(.remote) }
         return tabs
     }
 
@@ -129,15 +176,15 @@ struct SettingsCard: View {
         /// The "Límites en vivo" row's folders: what it says, and so how tall it is, follows them.
         var limits: [NookStatusLine.Folder]?
         var signals: Bool
-        /// How tall the permissions' list and the screen tab may be; only those tabs care, so a slider on the other one costs nothing.
+        /// How tall the lists and the tabs that scroll (the cat, sound, permissions, screen and Remoto) may be; only those tabs care, so a slider on the other one costs nothing.
         var cap: CGFloat
         /// The sound tab lists the tabs, so it is as tall as they are many.
         var tabs: Int
     }
     private var layout: Layout {
-        Layout(tab: model.settingsTab, guides: permissions.openGuides, states: permissions.states, folders: permissions.claudeFolders, limits: permissions.statusLineFolders,
-               signals: model.claudeSignalsEnabled, cap: [.pet, .sound, .permissions, .screen].contains(model.settingsTab) ? maxCardHeight : 0,
-               tabs: model.settingsTab == .sound ? model.sessions.count : 0)
+        Layout(tab: tab, guides: permissions.openGuides, states: permissions.states, folders: permissions.claudeFolders, limits: permissions.statusLineFolders,
+               signals: model.claudeSignalsEnabled, cap: [.pet, .sound, .permissions, .screen, .remote].contains(tab) ? maxCardHeight : 0,
+               tabs: tab == .sound ? model.sessions.count : 0)
     }
 
     /// The height of the header and the tabs, which the permissions' list has to leave room for.
@@ -154,7 +201,7 @@ struct SettingsCard: View {
             Image(systemName: "gearshape").font(.system(size: 11, weight: .semibold)).foregroundStyle(mint)
             Text("Ajustes de Nook").font(.system(size: 12.5, weight: .semibold))
             Spacer(minLength: 8)
-            switch model.settingsTab {
+            switch tab {
             case .island:
                 // The theme stays: «Restablecer» puts the island's size and texts back, and how the user likes it to look is not one of them.
                 Button { model.display = settings.resetKeepingTheme() } label: {
@@ -188,7 +235,7 @@ struct SettingsCard: View {
                         .background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .contentShape(Rectangle())
                 }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).foregroundStyle(Color.primary.opacity(0.85)).help("Volver a comprobar los permisos")
-            case .privacy, .screen:
+            case .privacy, .screen, .remote:
                 EmptyView()
             }
             Button(action: onClose) {

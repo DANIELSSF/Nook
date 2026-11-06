@@ -33,9 +33,10 @@ final class SettingsTabBarRenderTests: XCTestCase {
     private let missing: [NookPermission: NookPermission.State] = [.automation: .notAsked, .accessibility: .notAsked, .screenRecording: .notAsked]
     private let granted: [NookPermission: NookPermission.State] = [.automation: .granted, .accessibility: .granted, .microphone: .granted, .speech: .granted, .screenRecording: .granted]
 
-    /// The card on `tab`: with both dots out, or none. Screen vision is on, which is what puts the dot on "Pantalla".
-    private func card(_ tab: SettingsTab, dots: Bool, look: NSAppearance.Name = .darkAqua) throws -> (NSHostingView<AnyView>, NSAppearance.Name) {
+    /// The card on `tab`: with both dots out, or none. Screen vision is on, which is what puts the dot on "Pantalla". `remote`: Nook Remoto is unlocked, so the bar has its seventh tab.
+    private func card(_ tab: SettingsTab, dots: Bool, remote: Bool = true, look: NSAppearance.Name = .darkAqua) throws -> (NSHostingView<AnyView>, NSAppearance.Name) {
         let model = ScreenVisionUIFixture.model(try ScreenVisionUIFixture.vision(enabled: true))
+        if remote { model.remote.unlock() }
         model.settingsTab = tab
         let permissions = ScreenVisionUIFixture.permissions(dots ? missing : granted)
         permissions.refresh()
@@ -50,8 +51,8 @@ final class SettingsTabBarRenderTests: XCTestCase {
             let (host, look) = try card(tab, dots: true)
             try write(host, size: host.fittingSize, appearance: look, to: directory.appendingPathComponent("card-\(tab.rawValue)-dots.png"))
         }
-        // No dot at all: the quiet day.
-        let (clean, look) = try card(.island, dots: false)
+        // No dot at all: the quiet day, with Nook Remoto still locked (six tabs, the bar as it is by default).
+        let (clean, look) = try card(.island, dots: false, remote: false)
         try write(clean, size: clean.fittingSize, appearance: look, to: directory.appendingPathComponent("card-island-clean.png"))
         // The same card in a light window.
         for tab in [SettingsTab.island, .permissions] {
@@ -77,16 +78,20 @@ final class SettingsTabBarRenderTests: XCTestCase {
     func testRenderTheBarAtEachWidthWithFiveTabsAndWithSix() throws {
         let directory = try renderDirectory()
         for width in [300, 352, 420] as [CGFloat] {
-            let five = sheet(SettingsTab.allCases, width: width, attention: [.permissions, .screen], caption: "\(Int(width)) pt · 5 tabs · dots on Permisos and Pantalla")
+            let five = sheet(SettingsTab.allCases, width: width, attention: [.permissions, .screen], caption: "\(Int(width)) pt · \(SettingsTab.allCases.count) tabs · dots on Permisos and Pantalla")
             let fiveHost = NSHostingView(rootView: five)
-            try write(fiveHost, size: fiveHost.fittingSize, to: directory.appendingPathComponent("bar-\(Int(width))-5tabs.png"))
+            try write(fiveHost, size: fiveHost.fittingSize, to: directory.appendingPathComponent("bar-\(Int(width))-\(SettingsTab.allCases.count)tabs.png"))
             let six = sheet(Array(SixTabs.allCases), width: width, attention: [.permissions, .screen, .notifications], caption: "\(Int(width)) pt · 6 tabs · dots on Permisos, Pantalla and Notificaciones")
             let sixHost = NSHostingView(rootView: six)
             try write(sixHost, size: sixHost.fittingSize, to: directory.appendingPathComponent("bar-\(Int(width))-6tabs.png"))
         }
-        let quiet = sheet(SettingsTab.allCases, width: 352, attention: [], caption: "352 pt · 5 tabs · no dots")
+        let quiet = sheet(SettingsTab.allCases, width: 352, attention: [], caption: "352 pt · \(SettingsTab.allCases.count) tabs · no dots")
         let quietHost = NSHostingView(rootView: quiet)
-        try write(quietHost, size: quietHost.fittingSize, to: directory.appendingPathComponent("bar-352-5tabs-quiet.png"))
+        try write(quietHost, size: quietHost.fittingSize, to: directory.appendingPathComponent("bar-352-\(SettingsTab.allCases.count)tabs-quiet.png"))
+        // The six tabs the card has by default, before Nook Remoto is unlocked.
+        let locked = sheet(SettingsTab.shown(remoteUnlocked: false), width: 352, attention: [.permissions, .screen], caption: "352 pt · 6 tabs (Remoto locked) · dots on Permisos and Pantalla")
+        let lockedHost = NSHostingView(rootView: locked)
+        try write(lockedHost, size: lockedHost.fittingSize, to: directory.appendingPathComponent("bar-352-6tabs-locked.png"))
     }
 
     /// The switch from one tab to another, a frame every 20 ms or so, as the window draws it: each frame is a PNG named by its time.

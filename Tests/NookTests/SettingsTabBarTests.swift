@@ -5,7 +5,8 @@ import XCTest
 
 /// The settings card's tab bar: how wide each tab is, that every tab is in the bar whole and can be reached, what each says to the pointer and to VoiceOver, and that the
 /// dot stays on its tab. The windows are offscreen and borderless (they cannot take the keyboard) and nothing is clicked: a tab is pressed the way VoiceOver presses it.
-/// Five tabs (the card's today) and six (one more, with the longest name a tab is likely to get) are tried at the card's width and a little under and over it.
+/// The card's six tabs, and its seven once Nook Remoto is unlocked (`RemoteSettingsTests` has the unlocking), are tried whole; six tabs of the bar's own (one more, with the longest name a
+/// tab is likely to get) are tried at the card's width and a little under and over it.
 @MainActor
 final class SettingsTabBarTests: XCTestCase {
     private typealias Probe = SettingsTabBarProbe
@@ -71,8 +72,10 @@ final class SettingsTabBarTests: XCTestCase {
 
     // MARK: In the card
 
-    private func card(selected: SettingsTab, dots: Bool = true) throws -> (NSWindow, AppModel) {
+    /// The card on `selected`. `remote`: Nook Remoto is unlocked, so its tab is in the bar (the bar has seven tabs instead of six).
+    private func card(selected: SettingsTab, dots: Bool = true, remote: Bool = false) throws -> (NSWindow, AppModel) {
         let model = ScreenVisionUIFixture.model(try ScreenVisionUIFixture.vision(enabled: true))
+        if remote { model.remote.unlock() }
         model.settingsTab = selected
         let states: [NookPermission: NookPermission.State] = dots ? [.automation: .notAsked, .accessibility: .notAsked, .screenRecording: .notAsked]
             : [.automation: .granted, .accessibility: .granted, .microphone: .granted, .speech: .granted, .screenRecording: .granted]
@@ -82,42 +85,47 @@ final class SettingsTabBarTests: XCTestCase {
         return (window, model)
     }
 
-    /// Whichever tab is selected, all six are in the bar, whole and in order, none over another and none cut, and the bar itself does not change: the same place, the same
-    /// size. The tabs trade width among themselves, the selected one taking what its name needs.
+    /// Whichever tab is selected, all of them are in the bar (six, or seven once Remoto is unlocked), whole and in order, none over another and none cut, and the bar itself does not
+    /// change: the same place, the same size. The tabs trade width among themselves, the selected one taking what its name needs.
     func testEveryTabIsWholeAndInItsPlaceWhicheverIsSelected() throws {
-        var bars: [NSRect] = []
-        for selected in SettingsTab.allCases {
-            let (window, _) = try card(selected: selected)
-            defer { window.close() }
-            let bar = try XCTUnwrap(Probe.frame("Pestañas de los ajustes", in: window))
-            bars.append(bar)
-            let frames = try SettingsTab.allCases.map { try XCTUnwrap(Probe.frame($0.title, in: window), "\($0.title) is in the bar (\(selected.title) selected)") }
-            XCTAssertEqual(bar.height, SettingsTabMetrics.barHeight, accuracy: 0.6, "The bar is as tall as the card counts it.")
-            XCTAssertEqual(bar.minX, 16, accuracy: 1); XCTAssertEqual(bar.maxX, SettingsCard.width - 16, accuracy: 1, "The bar takes the card's width, less its 16 pt.")
-            for (tab, frame) in zip(SettingsTab.allCases, frames) {
-                XCTAssertEqual(frame.height, SettingsTabMetrics.chip, accuracy: 0.6, "\(tab.title) (\(selected.title) selected)")
-                if tab == selected {
-                    XCTAssertGreaterThanOrEqual(frame.width, Probe.selectedNeed(tab.title) - 0.5, "The selected tab holds its symbol and its whole name: \(frame.width) pt")
-                    let content = SettingsTabMetrics.symbol + SettingsTabMetrics.gap + Probe.titleWidth(tab.title)
-                    XCTAssertGreaterThanOrEqual((frame.width - content) / 2, 12, "The pill has room around its content, which is what cramped it before: \((frame.width - content) / 2) pt a side")
-                } else {
-                    // Six tabs share the bar's 314 pt, and the selected one takes what its name needs: the others still have a symbol and a good margin to point at.
-                    XCTAssertGreaterThanOrEqual(frame.width, 38, "\(tab.title) is a comfortable target, not a symbol and its edges: \(frame.width) pt")
+        for unlocked in [false, true] {
+            let tabs = SettingsTab.shown(remoteUnlocked: unlocked)
+            // The bar's 314 pt are shared by the tabs: with a seventh, a symbol's tab and the pill's margin are a little smaller than they were with six (34 pt and 9 pt a side, at the least,
+            // against 39 and 12), and still a comfortable target with room around what is in it.
+            let target: CGFloat = unlocked ? 32 : 38, margin: CGFloat = unlocked ? 8 : 12
+            var bars: [NSRect] = []
+            for selected in tabs {
+                let (window, _) = try card(selected: selected, remote: unlocked)
+                defer { window.close() }
+                let bar = try XCTUnwrap(Probe.frame("Pestañas de los ajustes", in: window))
+                bars.append(bar)
+                let frames = try tabs.map { try XCTUnwrap(Probe.frame($0.title, in: window), "\($0.title) is in the bar (\(selected.title) selected, \(tabs.count) tabs)") }
+                XCTAssertEqual(bar.height, SettingsTabMetrics.barHeight, accuracy: 0.6, "The bar is as tall as the card counts it.")
+                XCTAssertEqual(bar.minX, 16, accuracy: 1); XCTAssertEqual(bar.maxX, SettingsCard.width - 16, accuracy: 1, "The bar takes the card's width, less its 16 pt.")
+                for (tab, frame) in zip(tabs, frames) {
+                    XCTAssertEqual(frame.height, SettingsTabMetrics.chip, accuracy: 0.6, "\(tab.title) (\(selected.title) selected)")
+                    if tab == selected {
+                        XCTAssertGreaterThanOrEqual(frame.width, Probe.selectedNeed(tab.title) - 0.5, "The selected tab holds its symbol and its whole name: \(frame.width) pt")
+                        let content = SettingsTabMetrics.symbol + SettingsTabMetrics.gap + Probe.titleWidth(tab.title)
+                        XCTAssertGreaterThanOrEqual((frame.width - content) / 2, margin, "The pill has room around its content, which is what cramped it before: \((frame.width - content) / 2) pt a side (\(tabs.count) tabs)")
+                    } else {
+                        XCTAssertGreaterThanOrEqual(frame.width, target, "\(tab.title) is a comfortable target, not a symbol and its edges: \(frame.width) pt (\(tabs.count) tabs, \(selected.title) selected)")
+                    }
                 }
+                for (left, right) in zip(frames, frames.dropFirst()) {
+                    XCTAssertEqual(right.minX - left.maxX, SettingsTabMetrics.spacing, accuracy: 0.6, "The tabs are \(SettingsTabMetrics.spacing) pt apart, none over another (\(selected.title) selected)")
+                }
+                XCTAssertEqual(try XCTUnwrap(frames.first).minX, 16 + inner, accuracy: 1)
+                XCTAssertEqual(try XCTUnwrap(frames.last).maxX, SettingsCard.width - 16 - inner, accuracy: 1, "The row fills the bar")
             }
-            for (left, right) in zip(frames, frames.dropFirst()) {
-                XCTAssertEqual(right.minX - left.maxX, SettingsTabMetrics.spacing, accuracy: 0.6, "The tabs are \(SettingsTabMetrics.spacing) pt apart, none over another (\(selected.title) selected)")
-            }
-            XCTAssertEqual(try XCTUnwrap(frames.first).minX, 16 + inner, accuracy: 1)
-            XCTAssertEqual(try XCTUnwrap(frames.last).maxX, SettingsCard.width - 16 - inner, accuracy: 1, "The row fills the bar")
+            for bar in bars { XCTAssertEqual(bar, bars[0], "The bar does not move or change size when another tab is selected (\(tabs.count) tabs).") }
         }
-        for bar in bars { XCTAssertEqual(bar, bars[0], "The bar does not move or change size when another tab is selected.") }
     }
 
     /// Each tab carries its tooltip: its name when it does not write it, and its dot's note when the dot is out.
     func testEveryTabCarriesItsTooltip() throws {
-        for selected in [SettingsTab.island, .screen] {
-            let (window, _) = try card(selected: selected)
+        for selected in [SettingsTab.island, .screen, .remote] {
+            let (window, _) = try card(selected: selected, remote: true)
             defer { window.close() }
             for tab in SettingsTab.allCases {
                 let note = [SettingsTab.permissions, .screen].contains(tab) ? tab.attentionNote : nil
@@ -128,7 +136,7 @@ final class SettingsTabBarTests: XCTestCase {
 
     /// Every tab can be reached the way VoiceOver, Voice Control and Space on a focused tab reach it, and it selects itself (and only itself).
     func testEveryTabCanBePressedAndSelectsItself() throws {
-        let (window, model) = try card(selected: .island)
+        let (window, model) = try card(selected: .island, remote: true)
         defer { window.close() }
         for tab in SettingsTab.allCases.reversed() + SettingsTab.allCases {
             XCTAssertTrue(Probe.press(tab.title, in: window), "\(tab.title) takes a press")
@@ -143,14 +151,14 @@ final class SettingsTabBarTests: XCTestCase {
     /// The dot is on its tab whichever tab is selected, and says what it says to VoiceOver; with no permission in question, nothing.
     func testTheDotsStayOnTheirTabsWhicheverIsSelected() throws {
         for selected in SettingsTab.allCases {
-            let (window, _) = try card(selected: selected)
+            let (window, _) = try card(selected: selected, remote: true)
             for tab in SettingsTab.allCases {
                 let expected = [SettingsTab.permissions, .screen].contains(tab) ? tab.attentionNote : ""
                 XCTAssertEqual(Probe.value(tab.title, in: window) ?? "", expected, "\(tab.title) (\(selected.title) selected)")
             }
             window.close()
         }
-        let (quiet, _) = try card(selected: .island, dots: false)
+        let (quiet, _) = try card(selected: .island, dots: false, remote: true)
         defer { quiet.close() }
         for tab in SettingsTab.allCases { XCTAssertEqual(Probe.value(tab.title, in: quiet) ?? "", "", "\(tab.title): nothing is missing.") }
     }
@@ -180,7 +188,7 @@ final class SettingsTabBarTests: XCTestCase {
     /// nothing (a name fading out, one fading in) is drawn outside the bar on the way. With Reduce Motion on, the bar changes at once, with nothing in between.
     func testThePillGlidesToTheNewTabInsteadOfJumping() throws {
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        for (from, to) in [(SettingsTab.island, SettingsTab.privacy), (.screen, .pet), (.pet, .permissions)] {
+        for (from, to) in [(SettingsTab.island, SettingsTab.privacy), (.screen, .pet), (.pet, .permissions), (.privacy, .remote)] {
             var run = try glide(SettingsTab.allCases, from: from, to: to, attention: [.permissions, .screen])
             func between(_ pills: [ClosedRange<CGFloat>]) -> [CGFloat] {
                 guard let first = pills.first, let last = pills.last else { return [] }

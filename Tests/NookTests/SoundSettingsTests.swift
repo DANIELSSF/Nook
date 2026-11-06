@@ -61,7 +61,8 @@ final class SoundSettingsTests: XCTestCase {
         XCTAssertEqual(SettingsTab.sound.title, "Sonido")
         XCTAssertEqual(SettingsTab.sound.symbol, "speaker.wave.2")
         XCTAssertEqual(SettingsTab.allCases.firstIndex(of: .sound), 2, "after Isla and Gato")
-        XCTAssertEqual(SettingsTab.allCases.last, .screen, "the last one is where it was")
+        // Remoto joined after them, and is in the bar only once it is unlocked: the last tab anyone sees by default is where it was.
+        XCTAssertEqual(SettingsTab.shown(remoteUnlocked: false).last, .screen, "the last one is where it was")
         XCTAssertEqual(Set(SettingsTab.allCases.map(\.symbol)).count, SettingsTab.allCases.count, "every tab has a symbol of its own")
     }
 

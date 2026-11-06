@@ -148,8 +148,10 @@ final class PermissionsPaneTests: XCTestCase {
 
     func testTheTabsIncludeCapturePrivacy() {
         // The sound tab sits after the cat's: the tabs that were there keep their order.
-        XCTAssertEqual(SettingsTab.allCases, [.island, .pet, .sound, .permissions, .privacy, .screen])
-        XCTAssertEqual(SettingsTab.allCases.map(\.title), ["Isla", "Gato", "Sonido", "Permisos", "Privacidad", "Pantalla"])
+        // Remoto is the seventh and is in the bar only once it is unlocked (`RemoteSettingsTests`): the six that were there are the card's by default, in their order.
+        XCTAssertEqual(SettingsTab.shown(remoteUnlocked: false), [.island, .pet, .sound, .permissions, .privacy, .screen])
+        XCTAssertEqual(SettingsTab.shown(remoteUnlocked: false).map(\.title), ["Isla", "Gato", "Sonido", "Permisos", "Privacidad", "Pantalla"])
+        XCTAssertEqual(SettingsTab.allCases, SettingsTab.shown(remoteUnlocked: false) + [.remote])
         let model = AppModel(receivesSignals: false, defaults: UserDefaults(suiteName: "nook-perms-tab-" + UUID().uuidString)!)
         XCTAssertEqual(model.settingsTab, .island, "The card opens on the island's settings.")
         model.showPermissions()   // no window in a test: nothing to open, nothing breaks
@@ -455,7 +457,8 @@ final class PermissionsPaneTests: XCTestCase {
 
         model.settingsTab = .permissions
         settle()
-        XCTAssertGreaterThan(window.cardSize.height, islandHeight + 100, "Five permissions are taller than the island's sliders; the window followed.")
+        // 100 pt taller before «Acerca de» added its 51 pt to the island's tab: the list stops at the room under the island (694 pt on this screen), so it is the margin that moved, not the list.
+        XCTAssertGreaterThan(window.cardSize.height, islandHeight + 50, "Five permissions are taller than the island's sliders; the window followed.")
         XCTAssertLessThanOrEqual(window.cardSize.height, screen.height - island.height - SettingsPlacement.gap - SettingsPlacement.margin + 1, "It never runs off the screen.")
         XCTAssertEqual(window.cardFrame.maxY, top, accuracy: 0.5, "The card's top edge stays under the island while its height changes.")
         XCTAssertEqual(window.cardFrame.height, window.cardSize.height, accuracy: 0.5)
@@ -486,7 +489,8 @@ final class PermissionsPaneTests: XCTestCase {
     func testTheIslandsTabIsStillCompact() {
         let (window, _) = makeWindow(CGSize(width: 1512, height: 982), tab: .island)
         XCTAssertGreaterThan(window.cardSize.height, 250)
-        // 460 before «Apariencia» (the three pictures of the island and their names) joined the tab, which takes about 115 pt.
-        XCTAssertLessThan(window.cardSize.height, 580, "The tabs add a row and the theme its pictures; the sliders' card is still a card.")
+        // 460 before «Apariencia» (the three pictures of the island and their names) joined the tab, which takes about 115 pt; 580 before «Acerca de» (the version and the way to Nook
+        // Remoto, which takes about 51 pt) joined it at the bottom: the card is 602 pt now, and still under the 694 pt the room under the island leaves on a 14" MacBook.
+        XCTAssertLessThan(window.cardSize.height, 640, "The tabs add a row and the theme its pictures; the sliders' card is still a card.")
     }
 }

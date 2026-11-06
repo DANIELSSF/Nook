@@ -90,7 +90,9 @@ final class ScreenVisionPaneTests: XCTestCase {
 
     func testTheTabIsTheFourthAndHasAnImage() {
         XCTAssertEqual(SettingsTab.screen.title, "Pantalla")
-        XCTAssertEqual(SettingsTab.allCases.last, .screen, "The tabs that were there keep their places.")
+        // Remoto joined after them, and is in the bar only once it is unlocked: the bar anyone sees by default still ends where it always did.
+        XCTAssertEqual(SettingsTab.shown(remoteUnlocked: false).last, .screen, "The tabs that were there keep their places.")
+        XCTAssertEqual(SettingsTab.allCases.last, .remote, "Remoto comes after all of them.")
         XCTAssertNotNil(NSImage(systemSymbolName: SettingsTab.screen.symbol, accessibilityDescription: nil))
         XCTAssertEqual(SettingsTab(rawValue: "screen"), .screen)
     }
