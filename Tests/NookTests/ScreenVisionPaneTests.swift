@@ -88,6 +88,18 @@ final class ScreenVisionPaneTests: XCTestCase {
         XCTAssertEqual(Copy.switchTitle, "Dejar que Claude vea mi pantalla")
     }
 
+    /// The area's switch says that messages (from the island and from the phone) carry only that part, that the rest is never captured, and that Claude's
+    /// own tool is not changed; the area itself reads as its size on its display, or as a display that is not there.
+    func testTheAreaSaysWhatGoesAndWhere() throws {
+        XCTAssertEqual(Copy.areaTitle, "Enviar solo un área de la pantalla")
+        for word in ["ojo", "Nook Remoto", "no se captura", "pantalla completa"] { XCTAssertTrue(Copy.areaNote.contains(word), "«\(word)»: \(Copy.areaNote)") }
+        XCTAssertTrue(Copy.facts.map(\.text).joined().contains("solo el área"), "What it sees mentions the area.")
+        let area = try XCTUnwrap(ScreenArea(display: 1, displayName: "Pantalla integrada Retina", rect: CGRect(x: 100, y: 60, width: 820, height: 540), in: CGSize(width: 1512, height: 982)))
+        XCTAssertEqual(Copy.areaSummary(area, displaySize: CGSize(width: 1512, height: 982)), "820 × 540 pt · Pantalla integrada Retina")
+        XCTAssertEqual(Copy.areaSummary(area, displaySize: nil), "En «Pantalla integrada Retina», que no está conectada")
+        XCTAssertNotNil(NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: nil))
+    }
+
     func testTheTabIsTheFourthAndHasAnImage() {
         XCTAssertEqual(SettingsTab.screen.title, "Pantalla")
         // Remoto joined after them, and is in the bar only once it is unlocked: the bar anyone sees by default still ends where it always did.

@@ -263,6 +263,11 @@ A page may ignore any of it.
   `400` «Escribe tu respuesta antes de enviarla.» (nothing is written into it, and nothing goes to the agent's box instead).
   With `screen.attach` on, a message that would carry the screen while macOS doesn't let Nook record it (`screen.available` false)
   is refused with `409` before anything happens: no capture, and no permission dialog on the Mac. The page keeps the text.
+  The screenshot is the area chosen on the Mac when its "Enviar solo un área de la pantalla" is on (`ScreenVision.messageArea`):
+  only that rect is captured (ScreenCaptureKit's `sourceRect`), never the whole display. If the area's display is not connected
+  nothing goes and the answer is `500` with the notice; there is no fallback to the whole screen. The phone neither sees nor sets
+  the area. While the island is collapsed (`AppModel.expanded` false) the capture is quiet (`ScreenVisionCapture.quiet`): no cue
+  under the notch and no flash of the composer's eye on the Mac.
 - `/api/prompt/choose`: `notes` counts only when it has text; it then needs a question with a preview (`takesNotes`).
 - `/api/screen`: `{attach: true}` answers `409` while `screen.available` is false: screen vision is off on the Mac, or macOS doesn't
   let Nook record the screen (read with the system's preflight, which never asks). `{attach: false}` always works.

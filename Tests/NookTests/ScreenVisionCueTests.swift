@@ -189,6 +189,27 @@ final class ScreenVisionCueTests: XCTestCase {
         XCTAssertEqual(cue.style?.hold, ScreenVisionCueStyle.composerHold)
     }
 
+    func testAQuietCaptureSaysNothingOnTheMac() async throws {
+        let (cue, _, vision, _) = try make(holdScale: 0.25)
+        defer { cue.cancel() }
+        _ = try await vision.captureForMessage(quiet: true)
+        XCTAssertEqual(vision.lastCapture?.quiet, true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(cue.isShowing, "The phone's message while the island is collapsed: no pill pops up under the notch.")
+        XCTAssertNil(cue.window, "Not even a window is made for it.")
+        XCTAssertEqual(cue.count, 0)
+        // The next one that is not quiet is told as always.
+        _ = try await vision.captureForMessage()
+        await ScreenVisionUIFixture.eventually { cue.isShowing }
+        XCTAssertEqual(cue.style?.title, "Pantalla adjunta al mensaje")
+    }
+
+    func testAnAreasCueSaysItWasTheArea() {
+        var capture = capture(.composer)
+        capture.area = true
+        XCTAssertEqual(ScreenVisionCueStyle(capture).title, "Área adjunta al mensaje")
+    }
+
     func testANewCaptureReplacesTheCueAndTheOldOnesTimeDoesNotTakeItAway() async throws {
         let (cue, _, vision, _) = try make(holdScale: 0.5)
         defer { cue.cancel() }

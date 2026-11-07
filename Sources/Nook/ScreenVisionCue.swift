@@ -171,7 +171,8 @@ final class ScreenVisionCue {
         self.host = host
         self.holdScale = holdScale
         let model = host.cueModel
-        watches.append(model.screenVision.$lastCapture.compactMap { $0 }.receive(on: DispatchQueue.main).sink { [weak self] in self?.present($0) })
+        // A quiet capture (the phone's message while the island is collapsed) says nothing on the Mac.
+        watches.append(model.screenVision.$lastCapture.compactMap { $0 }.filter { !$0.quiet }.receive(on: DispatchQueue.main).sink { [weak self] in self?.present($0) })
         // The island opening or closing under the pill, or an alert's peek growing from the collapsed one, moves where it hangs.
         watches.append(model.$expanded.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.reposition() })
         watches.append(model.$alert.map { $0?.id }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.reposition() })

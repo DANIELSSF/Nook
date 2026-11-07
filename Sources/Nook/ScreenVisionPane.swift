@@ -58,8 +58,21 @@ enum ScreenVisionPanePresentation {
     static let switchTitle = "Dejar que Claude vea mi pantalla"
     static let attachTitle = "Adjuntar mi pantalla a cada mensaje"
     static let attachNote = "Igual que el botón del ojo junto al campo de mensaje."
+    static let areaTitle = "Enviar solo un área de la pantalla"
+    static let areaNote = "Tus mensajes con el ojo, desde aquí o desde Nook Remoto, llevan solo esa parte: el resto de la pantalla no se captura. La herramienta de Claude sigue viendo la pantalla completa."
+    /// Under the switch while no area is chosen.
+    static let areaShortNote = "Sin área: tus mensajes llevan la pantalla completa."
+    static let chooseArea = "Elegir área…"
+    static let changeArea = "Cambiar área…"
+
+    /// The chosen area in a line: its size on its display now ("820 × 540 pt · Pantalla integrada Retina"), or that the display is not connected.
+    static func areaSummary(_ area: ScreenArea, displaySize: CGSize?) -> String {
+        guard let size = displaySize else { return "En «\(area.displayName)», que no está conectada" }
+        return "\(area.describe(in: size)) pt · \(area.displayName)"
+    }
+
     static let facts: [(symbol: String, lead: String, text: String)] = [
-        ("display", "Qué ve.", "La pantalla donde está el puntero, sin las ventanas de Nook. Claude también puede pedir la principal o todas."),
+        ("display", "Qué ve.", "La pantalla donde está el puntero, sin las ventanas de Nook, o solo el área que elijas para tus mensajes. Claude también puede pedir la principal o todas."),
         ("clock", "Cuándo.", "Con cada mensaje, si activas el botón del ojo junto al campo de mensaje; y cuando Claude usa su herramienta capture_screen."),
         ("puzzlepiece.extension", "En Claude Code.", "Al activarla, Nook añade la herramienta capture_screen; al desactivarla, la quita."),
         ("folder", "Dónde queda.", "En /tmp, legible solo por tu usuario. Nook borra las de más de 24 horas al guardar otra."),
@@ -88,9 +101,12 @@ struct ScreenVisionPane: View {
         var registration: ScreenVision.Registration
         var restart: Bool
         var permission: NookPermission.State?
+        var area: ScreenArea?
+        var useArea: Bool
     }
     private var layout: Layout {
-        Layout(enabled: vision.enabled, registration: vision.registration, restart: vision.needsClaudeRestart, permission: permissions.states[.screenRecording])
+        Layout(enabled: vision.enabled, registration: vision.registration, restart: vision.needsClaudeRestart, permission: permissions.states[.screenRecording],
+               area: vision.area, useArea: vision.useArea)
     }
 
     var body: some View {
@@ -137,11 +153,54 @@ struct ScreenVisionPane: View {
                     .font(.system(size: 12, weight: .medium)).accessibilityLabel(Copy.attachTitle)
                 Text(Copy.attachNote).font(.system(size: 10)).foregroundStyle(Color.nookSecondary).fixedSize(horizontal: false, vertical: true)
             }
+            // Until macOS lets Nook record the screen nothing can be captured, area or not: the row that fixes that comes first, and the area waits
+            // for it (which also keeps the first setup within a 14-inch screen).
+            if permissions.states[.screenRecording] == .granted { areaSection }
             VStack(alignment: .leading, spacing: 6) {
                 permissionRow
                 toolRow
                 if vision.needsClaudeRestart { restartNote }
             }
+        }
+    }
+
+    /// "Solo un área": its switch, and under it in one line the area (or what it is for) with the button that draws it. Turned on with no area yet,
+    /// it asks for one first; drawing one turns it on.
+    private var areaSection: some View {
+        let useArea = Binding(get: { vision.useArea }, set: { on in
+            if on, vision.area == nil { pickArea() } else { vision.useArea = on }
+        })
+        let summary = vision.area.map { Copy.areaSummary($0, displaySize: Self.displaySize($0.display)) }
+        return VStack(alignment: .leading, spacing: 3) {
+            Toggle(Copy.areaTitle, isOn: useArea)
+                .toggleStyle(.switch).controlSize(.small).tint(PermissionPalette.mint)
+                .font(.system(size: 12, weight: .medium)).accessibilityLabel(Copy.areaTitle).accessibilityHint(Copy.areaNote)
+                .help(Copy.areaNote)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "rectangle.dashed").font(.system(size: 9.5, weight: .semibold)).accessibilityHidden(true)
+                Text(summary ?? Copy.areaShortNote).font(.system(size: 10).monospacedDigit()).lineLimit(1).truncationMode(.middle)
+                    .accessibilityLabel(summary.map { "Área elegida: \($0)" } ?? Copy.areaShortNote)
+                Spacer(minLength: 6)
+                Button(vision.area == nil ? Copy.chooseArea : Copy.changeArea) { pickArea() }
+                    .buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(PermissionPalette.mint)
+                    .fixedSize().help("Arrastra sobre la pantalla para elegir la parte que llevarán tus mensajes")
+            }
+            .foregroundStyle(vision.useArea ? Color.primary.opacity(0.78) : Color.nookSecondary)
+        }
+    }
+
+    /// The display's size in points, while it is connected.
+    private static func displaySize(_ id: UInt32) -> CGSize? {
+        NSScreen.screens.first { ScreenAreaGeometry.displayID(of: $0) == id }?.frame.size
+    }
+
+    /// Draws the area over the screen; one drawn becomes the messages' and turns "solo un área" on. Esc leaves everything as it was.
+    private func pickArea() {
+        let vision = vision
+        ScreenAreaPicker.pick(current: vision.area) { area in
+            guard let area else { return }
+            vision.area = area
+            vision.useArea = true
         }
     }
 

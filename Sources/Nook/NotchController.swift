@@ -275,8 +275,10 @@ final class NotchController: NSObject, NSWindowDelegate, QuitPromptHost {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.clickedOutside() }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
-            // The tab editor's popover and Nook's alerts belong to the island; other Nook windows don't.
-            if event.window !== self.panel, event.window !== self.petPanel, !self.alertPeek.owns(event.window), self.model.editingSessionID == nil, NSApp.modalWindow == nil { self.clickedOutside() }
+            // The tab editor's popover and Nook's alerts belong to the island; other Nook windows don't. Drawing a screen area (Ajustes →
+            // Pantalla) is not a click away from the island either: the settings card stays to show the area drawn.
+            if event.window !== self.panel, event.window !== self.petPanel, !self.alertPeek.owns(event.window), self.model.editingSessionID == nil, NSApp.modalWindow == nil,
+               !ScreenAreaPicker.isPicking { self.clickedOutside() }
             return event
         }
     }

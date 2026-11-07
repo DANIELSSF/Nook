@@ -45,8 +45,60 @@ struct ScreenVisionCapture: Equatable {
     var date: Date
     var origin: ScreenVisionOrigin
     var shots: [ScreenShot]
+    /// The picture is the area chosen in the settings, not a whole display.
+    var area = false
+    /// Nothing on the Mac tells of it (no cue under the island, no flash of the composer's eye): a message from Nook Remote while the island
+    /// is collapsed, sent by someone who is at the phone and not looking at the Mac.
+    var quiet = false
     /// The cue's words.
-    var cue: String { origin == .claude ? "Claude miró tu pantalla" : "Pantalla adjunta al mensaje" }
+    var cue: String { origin == .claude ? "Claude miró tu pantalla" : area ? "Área adjunta al mensaje" : "Pantalla adjunta al mensaje" }
+}
+
+/// A part of one display, chosen in Ajustes → Pantalla: what a message carries instead of the whole screen. The capture takes only this
+/// part (ScreenCaptureKit's `sourceRect`): nothing else of the screen is ever in a picture, not even for a moment.
+struct ScreenArea: Codable, Equatable {
+    /// The display it was drawn on (`CGDirectDisplayID`).
+    var display: UInt32
+    /// The display's name when it was drawn ("Pantalla integrada Retina"), for the settings and for the notice when it is not connected.
+    var displayName: String
+    /// The part, as fractions of the display's width and height from its top left corner: it stays the same part of the screen if the
+    /// display's resolution changes.
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    /// The smallest area worth sending, in points on each side: anything less is a click, not a drag.
+    static let minSide: CGFloat = 24
+
+    /// The area of `rect` (points, top left origin) on a display `size` points large, kept inside it; nil when what is left is smaller
+    /// than `minSide` on either side.
+    init?(display: UInt32, displayName: String, rect: CGRect, in size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let kept = rect.standardized.intersection(CGRect(origin: .zero, size: size))
+        guard !kept.isNull, kept.width >= Self.minSide, kept.height >= Self.minSide else { return nil }
+        self.display = display
+        self.displayName = displayName
+        x = Double(kept.minX / size.width)
+        y = Double(kept.minY / size.height)
+        width = Double(kept.width / size.width)
+        height = Double(kept.height / size.height)
+    }
+
+    /// The part on a display `size` points large, in whole points (top left origin), never past its edges and never empty.
+    func rect(in size: CGSize) -> CGRect {
+        let minX = (CGFloat(x) * size.width).rounded(), minY = (CGFloat(y) * size.height).rounded()
+        let maxX = (CGFloat(x + width) * size.width).rounded(), maxY = (CGFloat(y + height) * size.height).rounded()
+        let left = min(max(0, minX), max(0, size.width - 1)), top = min(max(0, minY), max(0, size.height - 1))
+        let right = min(max(left + 1, maxX), size.width), bottom = min(max(top + 1, maxY), size.height)
+        return CGRect(x: left, y: top, width: max(1, right - left), height: max(1, bottom - top))
+    }
+
+    /// Its size in points on a display `size` points large, for the settings ("820 × 540").
+    func describe(in size: CGSize) -> String {
+        let rect = rect(in: size)
+        return "\(Int(rect.width)) × \(Int(rect.height))"
+    }
 }
 
 /// Why a capture did not happen. Every description is a whole sentence in the user's words: it is shown as a notice in the island
@@ -55,6 +107,8 @@ enum ScreenVisionError: LocalizedError, Equatable {
     case disabled
     case noPermission
     case noDisplay
+    /// The display the chosen area was drawn on is not connected: nothing is taken (the whole screen would show more than the user chose).
+    case areaDisplayMissing(String)
     case timedOut
     case failed(String)
 
@@ -64,6 +118,8 @@ enum ScreenVisionError: LocalizedError, Equatable {
         // "Privacidad y seguridad" makes the island's notice offer the Permisos tab (`PermissionHelp`).
         case .noPermission: "Nook no tiene permiso para grabar la pantalla. Actívalo en Ajustes del Sistema → Privacidad y seguridad → \(NookPermission.screenRecordingPane)."
         case .noDisplay: "No se encontró ninguna pantalla que capturar."
+        case .areaDisplayMissing(let name):
+            "La pantalla del área elegida («\(name)») no está conectada. Conéctala, elige otra área o vuelve a la pantalla completa en Ajustes de Nook → Pantalla."
         case .timedOut: "La captura de pantalla tardó demasiado."
         case .failed(let reason): "No se pudo capturar la pantalla: \(reason)"
         }
@@ -84,6 +140,9 @@ protocol ScreenCapturing {
     /// The chosen displays without any window of the process `pid`, each no larger than `maxLongEdge` pixels on its long side.
     /// Throws `ScreenVisionError`.
     func capture(_ choice: ScreenDisplayChoice, excluding pid: pid_t, maxLongEdge: Int) async throws -> [CapturedDisplay]
+    /// Only `area` of its display, without any window of the process `pid`, no larger than `maxLongEdge` pixels on its long side: the
+    /// rest of the screen is never captured. Throws `ScreenVisionError` (`.areaDisplayMissing` when that display is not connected).
+    func capture(_ area: ScreenArea, excluding pid: pid_t, maxLongEdge: Int) async throws -> CapturedDisplay
 }
 
 /// ScreenCaptureKit's screenshot of whole displays, with Nook's application filtered out: its windows are left out of the picture
@@ -117,6 +176,30 @@ struct SystemScreenCapturer: ScreenCapturing {
             } catch { throw Self.reason(error) }
         }
         return pictures
+    }
+
+    func capture(_ area: ScreenArea, excluding pid: pid_t, maxLongEdge: Int) async throws -> CapturedDisplay {
+        let content: SCShareableContent
+        do { content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) } catch { throw Self.reason(error) }
+        guard let display = content.displays.first(where: { $0.displayID == area.display }) else { throw ScreenVisionError.areaDisplayMissing(area.displayName) }
+        let nook = content.applications.filter { $0.processID == pid }
+        let names = await MainActor.run { Self.screenNames() }
+        let filter = SCContentFilter(display: display, excludingApplications: nook, exceptingWindows: [])
+        let configuration = SCStreamConfiguration()
+        // Only the area is captured: `sourceRect` is in the display's points, from its top left corner.
+        let rect = area.rect(in: CGSize(width: display.width, height: display.height))
+        configuration.sourceRect = rect
+        // An area is a small part of the screen: it keeps the display's own pixels (Retina), up to `maxLongEdge`, so its text stays sharp.
+        let scale = min(3, max(1, CGFloat(filter.pointPixelScale)))
+        let size = ScreenShotFile.outputSize(points: CGSize(width: rect.width * scale, height: rect.height * scale), maxLongEdge: maxLongEdge)
+        configuration.width = size.width
+        configuration.height = size.height
+        configuration.captureResolution = .best
+        configuration.showsCursor = false
+        do {
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            return CapturedDisplay(image: image, name: names[display.displayID] ?? area.displayName)
+        } catch { throw Self.reason(error) }
     }
 
     /// The user's refusal (or a permission macOS no longer honours) reads as the missing permission; anything else as itself.
@@ -285,6 +368,8 @@ enum ScreenShotFile {
 final class ScreenVision: ObservableObject {
     static let enabledKey = "nook.screenVision.enabled"
     static let attachKey = "nook.screenVision.attach"
+    static let areaKey = "nook.screenVision.area"
+    static let useAreaKey = "nook.screenVision.useArea"
     /// The long side of a saved screenshot, at most.
     static let maxLongEdge = 1920
     /// How long a capture may take before it counts as failed.
@@ -316,6 +401,23 @@ final class ScreenVision: ObservableObject {
     /// The composer's toggle: each message sent from Nook carries a fresh screenshot. Only counts while `enabled`.
     @Published var attachToMessages: Bool {
         didSet { if attachToMessages != oldValue { defaults.set(attachToMessages, forKey: Self.attachKey) } }
+    }
+    /// The part of the screen drawn in Ajustes → Pantalla, kept while `useArea` is off so it can be turned on again without drawing it
+    /// anew. Gone, `useArea` goes off too: a message never waits for an area there is none of.
+    @Published var area: ScreenArea? {
+        didSet {
+            guard area != oldValue else { return }
+            if let area, let data = try? JSONEncoder().encode(area) { defaults.set(data, forKey: Self.areaKey) } else { defaults.removeObject(forKey: Self.areaKey) }
+            if area == nil { useArea = false }
+        }
+    }
+    /// A message's screenshot is only `area`, never the whole screen (from the island's composer or from Nook Remote). Claude's
+    /// `capture_screen` tool is not changed by it. Only on while there is an area.
+    @Published var useArea: Bool {
+        didSet {
+            if useArea, area == nil { useArea = false; return }
+            if useArea != oldValue { defaults.set(useArea, forKey: Self.useAreaKey) }
+        }
     }
     @Published private(set) var registration: Registration = .idle
     /// The tool was just added to some folder: Claude sessions already open there only see it after being restarted.
@@ -354,6 +456,9 @@ final class ScreenVision: ObservableObject {
         self.now = now
         enabled = defaults.bool(forKey: Self.enabledKey)
         attachToMessages = defaults.bool(forKey: Self.attachKey)
+        let area = defaults.data(forKey: Self.areaKey).flatMap { try? JSONDecoder().decode(ScreenArea.self, from: $0) }
+        self.area = area
+        useArea = area != nil && defaults.bool(forKey: Self.useAreaKey)
     }
 
     deinit { server?.stop() }
@@ -387,7 +492,7 @@ final class ScreenVision: ObservableObject {
 
     /// Screenshots of the chosen displays without Nook's windows, saved in Nook's private folder. Throws `ScreenVisionError`
     /// (`.disabled` while the setting is off).
-    @MainActor func capture(_ choice: ScreenDisplayChoice = .pointer, origin: ScreenVisionOrigin) async throws -> [ScreenShot] {
+    @MainActor func capture(_ choice: ScreenDisplayChoice = .pointer, origin: ScreenVisionOrigin, quiet: Bool = false) async throws -> [ScreenShot] {
         guard enabled else { throw ScreenVisionError.disabled }
         let capturer = capturer, pid = ownPID
         let pictures = try await Self.within(timeout) {
@@ -399,7 +504,27 @@ final class ScreenVision: ObservableObject {
         let folder = folder, date = now()
         // Encoding and writing a large picture takes a moment: off the main thread.
         let shots = try await Task.detached(priority: .userInitiated) { try ScreenShotFile.save(pictures, in: folder, date: date) }.value
-        lastCapture = ScreenVisionCapture(date: date, origin: origin, shots: shots)
+        lastCapture = ScreenVisionCapture(date: date, origin: origin, shots: shots, quiet: quiet)
+        return shots
+    }
+
+    /// The area a message's screenshot is, when "solo un área" is on.
+    var messageArea: ScreenArea? { useArea ? area : nil }
+
+    /// A message's screenshot: only the chosen area when `useArea` is on (the rest of the screen is never captured), otherwise the
+    /// display under the pointer. Throws `ScreenVisionError` (`.disabled` while the setting is off).
+    @MainActor func captureForMessage(quiet: Bool = false) async throws -> [ScreenShot] {
+        guard let area = messageArea else { return try await capture(.pointer, origin: .composer, quiet: quiet) }
+        guard enabled else { throw ScreenVisionError.disabled }
+        let capturer = capturer, pid = ownPID
+        let picture = try await Self.within(timeout) {
+            do { return try await capturer.capture(area, excluding: pid, maxLongEdge: Self.maxLongEdge) }
+            catch let error as ScreenVisionError { throw error }
+            catch { throw ScreenVisionError.failed(error.localizedDescription) }
+        }
+        let folder = folder, date = now()
+        let shots = try await Task.detached(priority: .userInitiated) { try ScreenShotFile.save([picture], in: folder, date: date) }.value
+        lastCapture = ScreenVisionCapture(date: date, origin: .composer, shots: shots, area: true, quiet: quiet)
         return shots
     }
 
@@ -415,16 +540,17 @@ final class ScreenVision: ObservableObject {
         return first != "/" && first != "!"
     }
 
-    /// The composer's send. Without the screen, `deliver` gets `files` at once (nothing changes). With it, the screen is captured
-    /// first and `deliver` gets `files` and then the screenshot's path. A capture that fails sends nothing: `failed` gets the
-    /// notice to show, and the composer gives the message back to the field, since Claude would not have seen the screen.
-    func prepareMessage(files: [String], withScreen: Bool, deliver: @escaping ([String]) -> Void, failed: @escaping (String) -> Void) {
+    /// The composer's send. Without the screen, `deliver` gets `files` at once (nothing changes). With it, the screen (or only the chosen
+    /// area, `captureForMessage`) is captured first and `deliver` gets `files` and then the screenshot's path. A capture that fails sends
+    /// nothing: `failed` gets the notice to show, and the composer gives the message back to the field, since Claude would not have seen
+    /// the screen. `quiet`: the capture is not told on the Mac (`ScreenVisionCapture.quiet`).
+    func prepareMessage(files: [String], withScreen: Bool, quiet: Bool = false, deliver: @escaping ([String]) -> Void, failed: @escaping (String) -> Void) {
         guard withScreen else { return deliver(files) }
         capturing = true
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let shots = try await self.capture(.pointer, origin: .composer)
+                let shots = try await self.captureForMessage(quiet: quiet)
                 self.capturing = false
                 deliver(files + shots.map(\.path))
             } catch {

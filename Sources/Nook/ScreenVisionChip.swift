@@ -111,7 +111,7 @@ struct ScreenVisionChip: View {
                 if !Task.isCancelled { busy = true }
             }
             // A picture taken for a message from this composer: the shutter.
-            .onChange(of: vision.lastCapture) { _, capture in if capture?.origin == .composer { fired += 1 } }
+            .onChange(of: vision.lastCapture) { _, capture in if let capture, capture.origin == .composer, !capture.quiet { fired += 1 } }
             .task(id: fired) {
                 guard fired > 0 else { return }
                 if motion {

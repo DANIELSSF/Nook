@@ -70,6 +70,17 @@ final class FakeScreenCapturer: ScreenCapturing, @unchecked Sendable {
         if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
         return try result.get()
     }
+
+    /// What an area's capture hands back: only the area's picture, as ScreenCaptureKit's `sourceRect` gives it.
+    var areaResult: Result<CapturedDisplay, Error> = .success(CapturedDisplay(image: ScreenVisionFixture.image(width: 820, height: 540), name: "Pantalla integrada"))
+    private var _areaCalls: [(area: ScreenArea, pid: pid_t, maxLongEdge: Int)] = []
+    var areaCalls: [(area: ScreenArea, pid: pid_t, maxLongEdge: Int)] { lock.lock(); defer { lock.unlock() }; return _areaCalls }
+
+    func capture(_ area: ScreenArea, excluding pid: pid_t, maxLongEdge: Int) async throws -> CapturedDisplay {
+        lock.lock(); _areaCalls.append((area, pid, maxLongEdge)); lock.unlock()
+        if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+        return try areaResult.get()
+    }
 }
 
 /// A registrar that answers as told and remembers the order of the jobs.
@@ -293,6 +304,124 @@ final class ScreenVisionTests: XCTestCase {
         vision.enabled = false
         waitUntil { notice != nil }
         XCTAssertTrue(notice?.contains("desactivada") == true, notice ?? "")
+    }
+
+    // MARK: Only an area
+
+    /// 820 × 540 points from (100, 60) on a 1512 × 982 display.
+    private func area(display: UInt32 = 1) -> ScreenArea {
+        ScreenArea(display: display, displayName: "Pantalla integrada", rect: CGRect(x: 100, y: 60, width: 820, height: 540), in: CGSize(width: 1512, height: 982))!
+    }
+
+    func testAnAreaIsTheSamePartOfTheScreenAtAnyResolution() throws {
+        let area = area()
+        XCTAssertEqual(area.rect(in: CGSize(width: 1512, height: 982)), CGRect(x: 100, y: 60, width: 820, height: 540), "Drawn and read on the same display, it is what was drawn.")
+        let larger = area.rect(in: CGSize(width: 3024, height: 1964))
+        XCTAssertEqual(larger, CGRect(x: 200, y: 120, width: 1640, height: 1080), "At another resolution it is the same part of the screen.")
+        XCTAssertEqual(area.describe(in: CGSize(width: 1512, height: 982)), "820 × 540")
+        let data = try JSONEncoder().encode(area)
+        XCTAssertEqual(try JSONDecoder().decode(ScreenArea.self, from: data), area)
+    }
+
+    func testAnAreaStaysInsideItsDisplayAndAClickIsNoArea() {
+        let size = CGSize(width: 1512, height: 982)
+        let spilling = ScreenArea(display: 1, displayName: "P", rect: CGRect(x: 1400, y: 900, width: 400, height: 300), in: size)
+        XCTAssertEqual(spilling?.rect(in: size), CGRect(x: 1400, y: 900, width: 112, height: 82), "What spills past the edge is not part of it.")
+        XCTAssertNil(ScreenArea(display: 1, displayName: "P", rect: CGRect(x: 10, y: 10, width: 4, height: 300), in: size), "Too thin to read anything in.")
+        XCTAssertNil(ScreenArea(display: 1, displayName: "P", rect: CGRect(x: 2000, y: 10, width: 300, height: 300), in: size), "Off the display entirely.")
+        XCTAssertNil(ScreenArea(display: 1, displayName: "P", rect: CGRect(x: 0, y: 0, width: 300, height: 300), in: .zero))
+    }
+
+    func testADragIsReadFromTheDisplaysTopLeftCorner() {
+        let bounds = CGSize(width: 1512, height: 982)
+        // AppKit's views count from the bottom; ScreenCaptureKit's `sourceRect` from the top.
+        let rect = ScreenAreaGeometry.displayRect(from: CGPoint(x: 920, y: 922), to: CGPoint(x: 100, y: 382), bounds: bounds)
+        XCTAssertEqual(rect, CGRect(x: 100, y: 60, width: 820, height: 540), "Dragged either way, it is the same rect.")
+        XCTAssertEqual(ScreenAreaGeometry.viewRect(area(), bounds: bounds), CGRect(x: 100, y: 382, width: 820, height: 540), "And back, to show it again.")
+        XCTAssertEqual(ScreenAreaGeometry.displayRect(from: CGPoint(x: -50, y: 2000), to: CGPoint(x: 30, y: 900), bounds: bounds),
+                       CGRect(x: 0, y: 0, width: 30, height: 82), "A drag past the display's edge stops at it.")
+    }
+
+    func testTheAreaAndItsSwitchAreRememberedAndTheSwitchNeedsAnArea() throws {
+        let defaults = ScreenVisionFixture.defaults()
+        let vision = try vision(defaults: defaults)
+        XCTAssertNil(vision.area)
+        XCTAssertFalse(vision.useArea, "The whole screen, until an area is chosen.")
+        vision.useArea = true
+        XCTAssertFalse(vision.useArea, "Without an area there is nothing to take only a part of.")
+        vision.area = area()
+        vision.useArea = true
+        XCTAssertEqual(vision.messageArea, area())
+        let again = try self.vision(defaults: defaults)
+        XCTAssertEqual(again.area, area(), "Nook remembers the area across launches.")
+        XCTAssertTrue(again.useArea)
+        again.useArea = false
+        XCTAssertNil(again.messageArea, "Off, messages take the whole screen again…")
+        XCTAssertEqual(again.area, area(), "…and the area stays, to be turned on again without drawing it anew.")
+        again.useArea = true
+        again.area = nil
+        XCTAssertFalse(again.useArea, "With the area gone the switch goes off too.")
+        let third = try self.vision(defaults: defaults)
+        XCTAssertNil(third.area)
+        XCTAssertFalse(third.useArea)
+    }
+
+    func testWithAnAreaAMessageCapturesOnlyThatPart() throws {
+        let capturer = FakeScreenCapturer()
+        let vision = try vision(capturer)
+        vision.enabled = true; vision.attachToMessages = true
+        vision.area = area(); vision.useArea = true
+        var delivered: [String]?
+        vision.prepareMessage(files: [], withScreen: true, deliver: { delivered = $0 }, failed: { XCTFail($0) })
+        waitUntil { delivered != nil }
+        XCTAssertTrue(capturer.calls.isEmpty, "The whole display is never captured, not even to be cut afterwards.")
+        XCTAssertEqual(capturer.areaCalls.map { $0.area }, [area()])
+        XCTAssertEqual(capturer.areaCalls.first?.pid, 4242, "Nook's own windows are left out of the area too.")
+        XCTAssertEqual(capturer.areaCalls.first?.maxLongEdge, ScreenVision.maxLongEdge)
+        let files = try XCTUnwrap(delivered)
+        XCTAssertEqual(files.count, 1)
+        XCTAssertTrue(files[0].hasSuffix("/pantalla-20261007-140322.png"), files[0])
+        let shot = try XCTUnwrap(vision.lastCapture?.shots.first)
+        XCTAssertEqual([shot.width, shot.height], [820, 540], "The file is the area's picture.")
+        XCTAssertEqual(vision.lastCapture?.cue, "Área adjunta al mensaje")
+    }
+
+    func testWithTheAreaOffOrForClaudesToolTheWholeScreenIsTaken() async throws {
+        let capturer = FakeScreenCapturer()
+        let vision = try vision(capturer)
+        vision.enabled = true; vision.attachToMessages = true
+        vision.area = area(); vision.useArea = true
+        // Claude's own look, with `capture_screen`, is not a message: it sees the whole screen as before.
+        _ = try await vision.capture(.pointer, origin: .claude)
+        XCTAssertEqual(capturer.calls.map { $0.choice }, [.pointer])
+        XCTAssertTrue(capturer.areaCalls.isEmpty)
+        vision.useArea = false
+        _ = try await vision.captureForMessage()
+        XCTAssertEqual(capturer.calls.map { $0.choice }, [.pointer, .pointer], "With the switch off a message takes the screen under the pointer.")
+        XCTAssertTrue(capturer.areaCalls.isEmpty)
+        XCTAssertEqual(vision.lastCapture?.cue, "Pantalla adjunta al mensaje")
+    }
+
+    func testAnAreaOnADisplayThatIsGoneSendsNothingAndSaysWhich() throws {
+        let capturer = FakeScreenCapturer()
+        capturer.areaResult = .failure(ScreenVisionError.areaDisplayMissing("Studio Display"))
+        let vision = try vision(capturer)
+        vision.enabled = true; vision.attachToMessages = true
+        vision.area = area(); vision.useArea = true
+        var notice: String?
+        vision.prepareMessage(files: [], withScreen: true, deliver: { _ in XCTFail("Sent the whole screen, or nothing, instead of the area") }, failed: { notice = $0 })
+        waitUntil { notice != nil }
+        XCTAssertTrue(capturer.calls.isEmpty, "It never falls back to the whole screen: that would show more than the user chose.")
+        XCTAssertEqual(notice, "No se envió el mensaje porque no se pudo adjuntar tu pantalla: La pantalla del área elegida («Studio Display») no está conectada. Conéctala, elige otra área o vuelve a la pantalla completa en Ajustes de Nook → Pantalla. Tu mensaje sigue en el campo.")
+        XCTAssertFalse(vision.capturing)
+    }
+
+    func testTheAreaWhileTheSettingIsOffIsRefusedWithoutLooking() async throws {
+        let capturer = FakeScreenCapturer()
+        let vision = try vision(capturer)
+        vision.area = area(); vision.useArea = true
+        do { _ = try await vision.captureForMessage(); XCTFail("Captured while off") } catch { XCTAssertEqual(error as? ScreenVisionError, .disabled) }
+        XCTAssertTrue(capturer.areaCalls.isEmpty)
     }
 
     // MARK: The pictures

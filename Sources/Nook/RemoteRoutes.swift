@@ -393,7 +393,8 @@ extension RemoteAccess {
         // On their way: another message can't take the same images meanwhile.
         guard let attached = uploads.reserve(names, for: device.id) else { return respond(unavailable) }
         let uploads = uploads
-        model.sendMessage(text, files: attached.map(\.path), to: session, rememberingFiles: true) { outcome in
+        // With the island collapsed nobody at the Mac is looking at it: the screenshot goes without a cue popping up under the notch.
+        model.sendMessage(text, files: attached.map(\.path), to: session, rememberingFiles: true, quietScreen: !model.expanded) { outcome in
             uploads.finish(names, sent: outcome == .delivered)
             switch outcome {
             case .delivered: respond(.ok())

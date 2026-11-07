@@ -523,6 +523,34 @@ final class RemoteAccessTests: XCTestCase {
         XCTAssertTrue(session.sentHistory.isEmpty)
     }
 
+    func testThePhonesScreenshotIsQuietWhileTheIslandIsCollapsedAndOnlyTheAreaWhenOneIsChosen() throws {
+        let capturer = FakeScreenCapturer()
+        let vision = try ScreenVisionUIFixture.vision(enabled: true, attach: true, capturer: capturer)
+        let (model, session, recorder) = RemoteFixture.model(vision: vision)
+        let (remote, cookie) = try paired(model)
+        model.expanded = false
+        let collapsed = RemoteFixture.call(remote, RemoteFixture.request("POST", "/api/send", remote: remote, cookie: cookie, json: ["tab": session.id, "text": "uno"]), timeout: 20)
+        XCTAssertEqual(collapsed?.status, 200, String(decoding: collapsed?.body ?? Data(), as: UTF8.self))
+        XCTAssertEqual(vision.lastCapture?.quiet, true, "Nobody is looking at the collapsed island: nothing pops up on the Mac.")
+        model.expanded = true
+        let open = RemoteFixture.call(remote, RemoteFixture.request("POST", "/api/send", remote: remote, cookie: cookie, json: ["tab": session.id, "text": "dos"]), timeout: 20)
+        XCTAssertEqual(open?.status, 200)
+        XCTAssertEqual(vision.lastCapture?.quiet, false, "With the island open the capture is told as always.")
+        XCTAssertEqual(capturer.calls.count, 2)
+        // With an area chosen on the Mac the phone's message carries only that part: the whole screen is never captured.
+        model.expanded = false
+        vision.area = ScreenArea(display: 1, displayName: "Pantalla integrada", rect: CGRect(x: 100, y: 60, width: 820, height: 540), in: CGSize(width: 1512, height: 982))
+        vision.useArea = true
+        let area = RemoteFixture.call(remote, RemoteFixture.request("POST", "/api/send", remote: remote, cookie: cookie, json: ["tab": session.id, "text": "tres"]), timeout: 20)
+        XCTAssertEqual(area?.status, 200)
+        XCTAssertEqual(capturer.calls.count, 2, "No whole-screen capture for it.")
+        XCTAssertEqual(capturer.areaCalls.count, 1)
+        XCTAssertEqual(vision.lastCapture.map { [$0.shots[0].width, $0.shots[0].height] }, [820, 540])
+        XCTAssertEqual(vision.lastCapture?.area, true)
+        XCTAssertEqual(vision.lastCapture?.quiet, true)
+        XCTAssertEqual(recorder.all("message").count, 3)
+    }
+
     func testWithTheEyeOffOrInAShellAnEmptySendIsRefused() throws {
         let capturer = FakeScreenCapturer()
         let vision = try ScreenVisionUIFixture.vision(enabled: true, attach: false, capturer: capturer)

@@ -1911,10 +1911,11 @@ final class AppModel: ObservableObject {
     /// (`sentShots`): Claude's record only says "[Image]" where they were. `rememberingFiles`: the attached files are remembered so
     /// too, before the screenshot (the phone's images, which the phone shows again); the island's pasted images are not. What the
     /// composer does with a message that didn't go (the island puts it back in its field; the phone keeps it) is its own.
-    func sendMessage(_ text: String, files: [String] = [], to session: TerminalSession, rememberingFiles: Bool = false,
+    /// `quietScreen`: its screenshot is not told on the Mac (the phone's message while the island is collapsed, `ScreenVisionCapture.quiet`).
+    func sendMessage(_ text: String, files: [String] = [], to session: TerminalSession, rememberingFiles: Bool = false, quietScreen: Bool = false,
                      completion: @escaping (MessageOutcome) -> Void = { _ in }) {
         let withScreen = screenVision.attaches(text: text, agent: session.agent)
-        screenVision.prepareMessage(files: files, withScreen: withScreen) { sent in
+        screenVision.prepareMessage(files: files, withScreen: withScreen, quiet: quietScreen) { sent in
             let message = MessageAttachments.message(text: text, files: sent)
             let shots = rememberingFiles ? sent : Array(sent.dropFirst(files.count))
             // A message that is only the screenshot (the phone's, nothing written) leaves the history as it was.
