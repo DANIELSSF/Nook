@@ -184,6 +184,56 @@ final class ClaudeDialogTests: XCTestCase {
         XCTAssertEqual(AgentPrompt.withoutPrompt(lines(rows)), lines(["⏺ Necesito decidir cómo autenticar.", "", rule]))
     }
 
+    // MARK: - A named session's rule under the dialog
+
+    /// Claude Code 2.1.314 in a session with a name (`--name`, /rename) closes the dialog with a rule that carries it
+    /// ("──── events ─"), and teammates' messages queue above the question. Shape copied from a live Terminal tab on 2026-11-06,
+    /// its words replaced: before, the labelled rule read as text after the dialog and Nook showed no question at all.
+    private var namedSessionQuestion: [String] {
+        ["⏺ Both agents started. Each needs its ticket before writing the header, and that is your call:", "",
+         "› Message from @agente1: Spec 461: 8 questions, recommended answer marked ★. Ticket still needed. \"recomendadas\" accepts",
+         "all. (ctrl+o to expand)",
+         "› Message from @agente2: Spec 465: 8 preguntas; recomendada = A en todas. ",
+         "¿«recomendadas»? (ctrl+o to expand)",
+         String(repeating: "─", count: 120),
+         " ☐ Tickets ",
+         "     ",
+         "│ Which Jira tickets do the five new specs go with (461 operations, 462 OAuth, 463 connector settings, 464 webhooks, 465 ",
+         "│ sales in order_history)?", "",
+         "❯ 1. Five new subtasks (Recommended)",
+         "     One subtask per spec, assigned to you and in design. ",
+         "     Each spec and its PR carry their own ticket.",
+         "  2. Reuse 740 + 3 new",
+         "     462 and 464 go with EP-740; three new subtasks for the rest.",
+         "  3. No ticket",
+         "     The five specs go without a ticket.",
+         "  4. Type something.",
+         String(repeating: "─", count: 120),
+         "  5. Chat about this", "",
+         "Enter to select · ↑/↓ to navigate · Esc to cancel",
+         String(repeating: "─", count: 111) + " events ─"]
+    }
+
+    func testTheSessionsNameInTheRuleUnderTheDialogDoesNotHideIt() throws {
+        let text = lines(namedSessionQuestion)
+        for screen in [text, TerminalSession.screen(text, agent: .claude).conversation] {
+            let prompt = try XCTUnwrap(AgentPrompt.parse(screen), "The rule with the session's name is a rule, not output after the dialog.")
+            XCTAssertEqual(prompt.kind, .question)
+            XCTAssertEqual(prompt.header, "Tickets")
+            XCTAssertEqual(prompt.question, "Which Jira tickets do the five new specs go with (461 operations, 462 OAuth, 463 connector settings, 464 webhooks, 465 sales in order_history)?")
+            XCTAssertEqual(prompt.options.map(\.title), ["Five new subtasks (Recommended)", "Reuse 740 + 3 new", "No ticket", "Type something.", "Chat about this"])
+            XCTAssertEqual(prompt.options.map(\.input), [.none, .none, .none, .inline, .followUp])
+            XCTAssertEqual(prompt.highlighted, 0)
+        }
+    }
+
+    func testANamedSessionsIdleBoxIsNoDialog() {
+        // The same rule closes the input box when nothing is asked: a reply's numbered list above it stays a reply.
+        let rows = ["⏺ Done:", "  1. Specs", "  2. Tickets", "", String(repeating: "─", count: 120), "❯ ", String(repeating: "─", count: 111) + " events ─",
+                    "  ⏵⏵ auto mode on (shift+tab to cycle)"]
+        XCTAssertNil(AgentPrompt.parse(lines(rows)))
+    }
+
     // MARK: - Still not prompts
 
     func testRepliesWithTicksOrBoxesAreNotQuestions() {

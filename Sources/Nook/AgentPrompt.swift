@@ -413,7 +413,9 @@ struct AgentPrompt: Equatable {
             indent = lead
             let lower = text.lowercased()
             let drawing = text.filter { Patterns.frame.contains($0) }.count
+            // A named session's rule carries its name ("──────── events ─"), under a dialog as under the input box: still a rule.
             isFrame = (drawing >= 1 && drawing + text.filter(\.isWhitespace).count == text.count) || Patterns.plainRule.matches(text)
+                || (raw.prefix(while: \.isWhitespace).count <= 1 && ClaudeComposer.isRule(text))
             // A reply line ("⏺ Press Enter to select it") or a quoted message is prose, not the dialog's own hint.
             let prose = text.first.map { Patterns.proseMarks.contains($0) } ?? false
             // "● xHigh effort ←/→ to adjust": the effort's dot is no reply's bullet.
