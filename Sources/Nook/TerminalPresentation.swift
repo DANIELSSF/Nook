@@ -167,6 +167,18 @@ enum MessageEcho {
         return keys.map { chat.components(separatedBy: $0).count - 1 }.max()
     }
 
+    /// How many of Claude's collapsed pastes ("[Pasted text #2 +66 lines]") the conversation above its box shows; nil without the box.
+    /// Claude Code (2.1.330, its paste handler) collapses a paste of more than a couple of lines, or a long one, into that placeholder,
+    /// in its box and in its chat once it takes it (also as its grey copy while queued): the message's words never show on screen, and
+    /// image paths inside it stay text. One more than before a pasted message went is Claude taking it (21/11 00:11, a 66-line paste
+    /// quoting three screenshots' paths: Claude took it on the paste's own Return, Nook waited for its words and gave it back).
+    static func pastedEchoes(inChatOf screen: String) -> Int? {
+        let split = ClaudeComposer.split(screen)
+        guard split.input != nil else { return nil }
+        return squeezed(split.conversation).components(separatedBy: pastedMark).count - 1
+    }
+    private static let pastedMark = "[Pastedtext#"
+
     /// The box holds the start of the message and not yet all of it: Claude is still reading the typed keys, or has shown only part
     /// of a pasted message with images (its images without its words, or the words before their images).
     static func partial(_ box: String, of text: String) -> Bool {
@@ -232,7 +244,9 @@ enum TerminalKey: String, CaseIterable, Identifiable {
         case .left: "Flecha izquierda"; case .right: "Flecha derecha"; case .backtab: "Mayúsculas + Tab"; case .keyS: "S"
         }
     }
-    /// Terminal's `do script` always appends Return, so only Enter can travel that way.
+    /// Terminal's `do script` always appends Return, so only Enter travels that way as a key of its own. Escape to Claude and the keys of
+    /// Claude's dialogs and model picker go as writes too, shaped so that Return is theirs or harmless (`TerminalAppBridge.escapeAction`,
+    /// `answerText`, `pickerText`); every other key, and those where a write can't be proved harmless, are key events.
     var needsDirectKeys: Bool { self != .enter }
 }
 

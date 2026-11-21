@@ -4,6 +4,55 @@ import AppKit
 final class MirrorTextView: NSTextView, PointerClaiming {
     var onCopy: (() -> Void)?
     var pasteboard = NSPasteboard.general
+    /// Hears the pointer come onto the text, move over it and leave it (false), for the copy buttons (`LiveTerminalScrollView.refreshCopyTargets`).
+    var onPointer: ((Bool) -> Void)?
+    /// The copy buttons' actions for VoiceOver, on the text itself: they are on show only under the pointer.
+    var copyActions: (() -> [NSAccessibilityCustomAction])?
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        // Always, as the island is a panel that is seldom the key window.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onPointer?(true)
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onPointer?(false)
+    }
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        let own = super.accessibilityCustomActions() ?? []
+        let copies = copyActions?() ?? []
+        return own.isEmpty && copies.isEmpty ? nil : own + copies
+    }
+    /// The caret moved: the copy buttons follow it while the pointer is elsewhere, when the keyboard moved it (the keyboard's way to
+    /// them; a click that only selected some text leaves nothing behind once the pointer goes).
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if !stillSelecting { onSelection?() }
+    }
+    var onSelection: (() -> Void)?
+    /// The selection last moved with the keyboard, not the mouse.
+    private(set) var selectionFromKeyboard = false
+    override func keyDown(with event: NSEvent) {
+        selectionFromKeyboard = true
+        super.keyDown(with: event)
+    }
+    override func becomeFirstResponder() -> Bool {
+        defer { onSelection?() }
+        return super.becomeFirstResponder()
+    }
+    override func resignFirstResponder() -> Bool {
+        selectionFromKeyboard = false
+        defer { onSelection?() }
+        return super.resignFirstResponder()
+    }
     /// False while a card covers the conversation (`setClaimsPointer`): then no I-beam and no link hand, which would show over the card. The same
     /// where chrome floats over the text (`pointerHole()`): the arrow, and the text around it keeps its I-beam.
     var claimsPointer = true
@@ -12,8 +61,10 @@ final class MirrorTextView: NSTextView, PointerClaiming {
     }
     override func mouseMoved(with event: NSEvent) {
         if pointerHeldBack(at: event) { NSCursor.arrow.set() } else { super.mouseMoved(with: event) }
+        onPointer?(true)
     }
     override func mouseDown(with event: NSEvent) {
+        selectionFromKeyboard = false
         // NSTextView tracks the drag, double and triple clicks until the mouse is released.
         super.mouseDown(with: event)
         copySelection()
@@ -67,6 +118,22 @@ final class LiveTerminalScrollView: NSScrollView {
     /// Set by `setContent`: the next text that arrives belongs to the new content and opens where the reader left it.
     private var pendingPosition: ScrollPosition?
 
+    /// The copy buttons over the text (`MirrorCopyControls`): the SwiftUI side that draws them hands its model over, and hears here which
+    /// buttons show and where; a click comes back to `copy(_:)`.
+    var copyModel: MirrorCopyModel? {
+        didSet { copyModel?.perform = { [weak self] target in self?.copy(target) ?? false } }
+    }
+    /// The text is Claude's record (its replies are the Markdown Claude wrote), not its screen (`MirrorReplies.markdown`).
+    var fromRecord = true
+    /// The first text shown opens at its top, not at its end (a document to read rather than a conversation that grows).
+    var opensAtTop = false
+    /// The pointer is over the text; when the text last scrolled under it, and the look that brings the buttons back once it stops.
+    private var pointerInside = false
+    private var copyScrolledAt: CFTimeInterval = 0
+    private var copySettle: DispatchWorkItem?
+    /// Claude's transcript is on show: only its replies and blocks have copy buttons.
+    private var showsTranscript: Bool { theme?.transcript == true }
+
     enum ScrollPosition: Equatable {
         case end
         case offset(CGFloat)
@@ -103,6 +170,9 @@ final class LiveTerminalScrollView: NSScrollView {
         // Every scroll, the reader's or the mirror's own, may take the reader away from the end of the text or back to it (`noteDistanceToEnd`).
         contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipViewScrolled), name: NSView.boundsDidChangeNotification, object: contentView)
+        textView.onPointer = { [weak self] inside in self?.pointerMoved(inside: inside) }
+        textView.onSelection = { [weak self] in self?.refreshCopyTargets() }
+        textView.copyActions = { [weak self] in self?.copyAccessibilityActions() ?? [] }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -264,7 +334,8 @@ final class LiveTerminalScrollView: NSScrollView {
         // Text of other content opens at its saved place: the end follows the output, an offset stays where it was.
         let restore = pendingPosition
         pendingPosition = nil
-        let followOutput = restore.map { $0 == .end } ?? pendingFollowOutput ?? (previous.length == 0 || isFollowingOutput)
+        // A document opens at its top, whatever an earlier pass asked for.
+        let followOutput = previous.length == 0 && opensAtTop ? false : restore.map { $0 == .end } ?? pendingFollowOutput ?? (previous.length == 0 || isFollowingOutput)
         let selection = textView.selectedRange()
         // Output changes at the end; replacing only the changed tail keeps the layout of everything
         // above it, instead of laying out up to 80,000 characters again on every update.
@@ -342,6 +413,8 @@ final class LiveTerminalScrollView: NSScrollView {
         reflectScrolledClipView(contentView)
         // Text that arrived below a reader who stays where they are takes the end further away from them, with no scroll to say so.
         noteDistanceToEnd()
+        // The text under the copy buttons may have moved or gone.
+        refreshCopyTargets()
     }
 
     // MARK: The way back to the end
@@ -373,7 +446,10 @@ final class LiveTerminalScrollView: NSScrollView {
     /// The offset that shows the end of the text.
     private var endOffset: CGFloat { max(0, textView.frame.height - contentSize.height) }
 
-    @objc private func clipViewScrolled(_ note: Notification) { noteDistanceToEnd() }
+    @objc private func clipViewScrolled(_ note: Notification) {
+        noteDistanceToEnd()
+        scrolledUnderCopyButtons()
+    }
 
     /// Says again whether the reader is away from the end. A reader a glide is taking there is on the way back, not away.
     private func noteDistanceToEnd() {
@@ -476,5 +552,170 @@ final class LiveTerminalScrollView: NSScrollView {
                 mirror.stepGlide(at: now + max(0, min(0.1, link.targetTimestamp - now)))
             }
         }
+    }
+}
+
+// MARK: - Copy buttons
+
+extension LiveTerminalScrollView {
+    /// The pointer came onto the text, moved over it, or left it.
+    fileprivate func pointerMoved(inside: Bool) {
+        pointerInside = inside
+        refreshCopyTargets()
+    }
+
+    /// A scroll moves the text under the buttons: they go at once, and come back where the pointer rests once the text stops.
+    fileprivate func scrolledUnderCopyButtons() {
+        guard let copyModel else { return }
+        copyScrolledAt = CACurrentMediaTime()
+        copyModel.show(reply: nil, code: nil)
+        copySettle?.cancel()
+        let settle = DispatchWorkItem { [weak self] in
+            self?.copySettle = nil
+            self?.refreshCopyTargets()
+        }
+        copySettle = settle
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: settle)
+    }
+
+    /// The character the buttons are for: the one under the pointer while it is over the text's lines, else the caret's while the
+    /// text has the keyboard. Nil over the margins below the text, or with neither.
+    private func copyFocus() -> Int? {
+        guard let storage = textView.textStorage, storage.length > 0, let manager = textView.layoutManager, let container = textView.textContainer else { return nil }
+        if pointerInside, let window = textView.window {
+            let point = textView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            guard textView.visibleRect.contains(point) else { return nil }
+            let origin = textView.textContainerOrigin
+            let local = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+            guard local.y >= 0, local.y <= manager.usedRect(for: container).maxY else { return nil }
+            let glyph = manager.glyphIndex(for: local, in: container, fractionOfDistanceThroughGlyph: nil)
+            return manager.characterIndexForGlyph(at: glyph)
+        }
+        guard textView.window?.firstResponder === textView, textView.selectionFromKeyboard else { return nil }
+        let caret = textView.selectedRange().location
+        return caret < storage.length ? caret : nil
+    }
+
+    /// Works out which buttons show and where, and publishes them (`MirrorCopyModel`): Claude's transcript only, and none while the
+    /// text is scrolling.
+    func refreshCopyTargets() {
+        guard let copyModel else { return }
+        // While the text moves the buttons stay away; the scroll's own look brings them back (`scrolledUnderCopyButtons`).
+        guard showsTranscript, copySettle == nil, CACurrentMediaTime() - copyScrolledAt > 0.1, let index = copyFocus(),
+              let storage = textView.textStorage, let manager = textView.layoutManager as? MirrorLayoutManager, let container = textView.textContainer else {
+            copyModel.show(reply: nil, code: nil)
+            return
+        }
+        let text = storage.mutableString as NSString
+        let origin = textView.textContainerOrigin
+        var reply: MirrorCopyModel.Target?
+        if let range = MirrorReplies.reply(containing: index, in: text), range.length > 0 {
+            let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let first = manager.lineFragmentUsedRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            let last = manager.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
+            let size = MirrorCopyControls.replySize
+            let right = origin.x + container.size.width - container.lineFragmentPadding
+            // Beside the reply's first line, in the room it keeps (`TranscriptStyler.replyButtonRoom`); for a long reply whose start has
+            // gone up out of sight, at the top of what shows of it, never past its end.
+            let beside = origin.y + first.midY - size / 2
+            let top = max(beside, textView.visibleRect.minY + 4)
+            let y = min(top, max(beside, origin.y + last.maxY - size))
+            reply = MirrorCopyModel.Target(kind: .reply, id: range.location, frame: overlayFrame(NSRect(x: right - size + 2, y: y.rounded(), width: size, height: size)))
+        }
+        var code: MirrorCopyModel.Target?
+        var run = NSRange(location: 0, length: 0)
+        if let block = storage.attribute(.transcriptCodeBlock, at: index, longestEffectiveRange: &run, in: NSRange(location: 0, length: storage.length)) as? TranscriptCodeBlock,
+           let tile = manager.codeBlockFrame(block, characters: run) {
+            let button = MirrorLayoutManager.codeBlockButton(in: tile.offsetBy(dx: origin.x, dy: origin.y), lineHeight: block.lineHeight)
+            code = MirrorCopyModel.Target(kind: .code, id: block.id, frame: overlayFrame(button))
+        }
+        var quote: MirrorCopyModel.Target?
+        if let found = storage.attribute(.transcriptQuoteBlock, at: index, longestEffectiveRange: &run, in: NSRange(location: 0, length: storage.length)) as? TranscriptQuoteBlock,
+           let button = manager.quoteButton(found, characters: run) {
+            quote = MirrorCopyModel.Target(kind: .quote, id: found.id, frame: overlayFrame(button.offsetBy(dx: origin.x, dy: origin.y)))
+        }
+        // A quote right under the reply's first line (after one blank line) would have its button touch the reply's: each gives way half.
+        if var above = reply, var below = quote, above.frame.minX < below.frame.maxX, below.frame.minX < above.frame.maxX {
+            let overlap = above.frame.maxY + 1 - below.frame.minY
+            if overlap > 0, overlap < below.frame.height {
+                above.frame.origin.y -= ceil(overlap / 2)
+                below.frame.origin.y += ceil(overlap / 2)
+                reply = above
+                quote = below
+            }
+        }
+        copyModel.show(reply: reply, code: code, quote: quote)
+    }
+
+    /// A rect of the text view in the mirror's own space, from its top left (SwiftUI's).
+    private func overlayFrame(_ rect: NSRect) -> CGRect {
+        let inScroll = convert(rect, from: textView)
+        return CGRect(x: inScroll.minX, y: isFlipped ? inScroll.minY : bounds.height - inScroll.maxY, width: inScroll.width, height: inScroll.height)
+    }
+
+    /// What a button copies, onto the pasteboard. False when the text under it no longer holds it.
+    func copy(_ target: MirrorCopyModel.Target) -> Bool {
+        guard let text = copyText(for: target) else { return false }
+        textView.pasteboard.clearContents()
+        textView.pasteboard.setString(text, forType: .string)
+        textView.onCopy?()
+        return true
+    }
+
+    /// A reply's Markdown, a block's code, or a quote's Markdown (`MirrorReplies`, `TranscriptCodeBlocks.copyText`, `TranscriptQuotes.copyText`).
+    func copyText(for target: MirrorCopyModel.Target) -> String? {
+        guard let storage = textView.textStorage, target.id < storage.length else { return nil }
+        let text = storage.mutableString as NSString
+        switch target.kind {
+        case .reply:
+            guard let range = MirrorReplies.reply(containing: target.id, in: text), range.location == target.id else { return nil }
+            let markdown = MirrorReplies.markdown(text.substring(with: range), fromRecord: fromRecord)
+            return markdown.isEmpty ? nil : markdown
+        case .code:
+            var run = NSRange(location: 0, length: 0)
+            guard let block = storage.attribute(.transcriptCodeBlock, at: target.id, longestEffectiveRange: &run, in: NSRange(location: 0, length: storage.length)) as? TranscriptCodeBlock,
+                  block.id == target.id else { return nil }
+            let code = TranscriptCodeBlocks.copyText(text.substring(with: run).components(separatedBy: "\n"))
+            return code.isEmpty ? nil : code
+        case .quote:
+            var run = NSRange(location: 0, length: 0)
+            guard let quote = storage.attribute(.transcriptQuoteBlock, at: target.id, longestEffectiveRange: &run, in: NSRange(location: 0, length: storage.length)) as? TranscriptQuoteBlock,
+                  quote.id == target.id else { return nil }
+            let quoted = TranscriptQuotes.copyText(text.substring(with: run).components(separatedBy: "\n"), fromRecord: fromRecord)
+            return quoted.isEmpty ? nil : quoted
+        }
+    }
+
+    /// For VoiceOver, on the text: the reply, the block and the quote the caret is in, and the latest of each.
+    fileprivate func copyAccessibilityActions() -> [NSAccessibilityCustomAction] {
+        guard showsTranscript, let storage = textView.textStorage, storage.length > 0 else { return [] }
+        let text = storage.mutableString as NSString
+        var actions: [NSAccessibilityCustomAction] = []
+        func action(_ name: String, _ target: MirrorCopyModel.Target?) {
+            guard let target, copyText(for: target) != nil else { return }
+            actions.append(NSAccessibilityCustomAction(name: name) { [weak self] in self?.copy(target) ?? false })
+        }
+        let caret = textView.selectedRange().location
+        if caret < storage.length, let here = MirrorReplies.reply(containing: caret, in: text) {
+            action("Copiar esta respuesta de Claude", MirrorCopyModel.Target(kind: .reply, id: here.location, frame: .zero))
+        }
+        if caret < storage.length, let block = storage.attribute(.transcriptCodeBlock, at: caret, effectiveRange: nil) as? TranscriptCodeBlock {
+            action("Copiar este bloque de código", MirrorCopyModel.Target(kind: .code, id: block.id, frame: .zero))
+        }
+        if caret < storage.length, let quote = storage.attribute(.transcriptQuoteBlock, at: caret, effectiveRange: nil) as? TranscriptQuoteBlock {
+            action("Copiar esta cita", MirrorCopyModel.Target(kind: .quote, id: quote.id, frame: .zero))
+        }
+        if let last = MirrorReplies.last(in: text) { action("Copiar la última respuesta de Claude", MirrorCopyModel.Target(kind: .reply, id: last.location, frame: .zero)) }
+        var lastBlock: TranscriptCodeBlock?
+        storage.enumerateAttribute(.transcriptCodeBlock, in: NSRange(location: 0, length: storage.length), options: .reverse) { value, _, stop in
+            if let block = value as? TranscriptCodeBlock { lastBlock = block; stop.pointee = true }
+        }
+        if let lastBlock { action("Copiar el último bloque de código", MirrorCopyModel.Target(kind: .code, id: lastBlock.id, frame: .zero)) }
+        var lastQuote: TranscriptQuoteBlock?
+        storage.enumerateAttribute(.transcriptQuoteBlock, in: NSRange(location: 0, length: storage.length), options: .reverse) { value, _, stop in
+            if let quote = value as? TranscriptQuoteBlock { lastQuote = quote; stop.pointee = true }
+        }
+        if let lastQuote { action("Copiar la última cita", MirrorCopyModel.Target(kind: .quote, id: lastQuote.id, frame: .zero)) }
+        return actions
     }
 }

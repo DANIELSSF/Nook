@@ -384,6 +384,8 @@ final class TranscriptStylerTests: XCTestCase {
             // Markdown in replies (and the look-alikes that must stay as they are).
             "⏺ **Cómo queda:** hola `x` y *cursiva*", "  ## Título **fuerte**", "  - punto con `código`", "  * otro _punto_", "  2 * 3 * 4 y file_name_here", "  [guía](https://x.com/a_b) y más",
             "  `sin cerrar", "> **mi** mensaje `x`", "  ⎿  **salida** `y`", "  ```raro", "  **dentro** de una valla",
+            // A table's rows and its rule, which only make a table together, in a reply.
+            "  | Qué | **Cuánto** |", "  |---|--:|", "  | `x` | una celda más ancha |", "  | a \\| b |", "  |:-:|",
         ]
         for round in 0..<150 {
             var lines = (0..<Int(random.next(below: 14)) + 1).map { _ in pool[Int(random.next(below: UInt64(pool.count)))] }

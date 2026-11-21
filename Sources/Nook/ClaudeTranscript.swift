@@ -17,6 +17,8 @@ struct TranscriptRenderer {
     /// (up to 240,000 characters) twice per reading to compare.
     private(set) var version = 0
     private(set) var recap: String?
+    /// The latest summary Claude Code wrote when it compacted the session's context (`CompactionSummary`), readable; nil before any.
+    private(set) var compactSummary: String?
     /// Skills Claude listed for this session (name → description), and the commands it ran.
     private(set) var skills: [String: String] = [:] { didSet { if skills != oldValue { commandsVersion += 1 } } }
     private(set) var usedCommands: Set<String> = [] { didSet { if usedCommands != oldValue { commandsVersion += 1 } } }
@@ -132,6 +134,15 @@ struct TranscriptRenderer {
 
     private mutating func consumeUser(_ entry: [String: Any]) {
         guard let message = entry["message"] as? [String: Any] else { return }
+        // A compaction's summary is Claude Code's, written in the user's place: never a prompt. A divider stands where it was, and its
+        // words go to the summary's own control.
+        if entry["isCompactSummary"] as? Bool == true {
+            let words = message["content"] as? String
+                ?? (message["content"] as? [[String: Any]] ?? []).compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+            let readable = CompactionSummary.readable(words)
+            if !readable.isEmpty { compactSummary = readable }
+            return append(CompactionSummary.marker)
+        }
         let meta = entry["isMeta"] as? Bool == true
         if let text = message["content"] as? String {
             // A meta message is Claude Code's own (a reminder, another session's idle notice): never the user's words, but one that

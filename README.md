@@ -55,7 +55,7 @@ Nook no longer creates tmux sessions of its own: new terminals are Terminal tabs
 3. Allow Nook to control Terminal when macOS asks.
 4. Move the pointer toward the cat to expand the island, then click to start typing.
 
-In **Ajustes → Permisos** (Settings → Permissions), you can review Automation, Accessibility, microphone, speech recognition, and Claude notifications. Accessibility lets Nook press arrow keys, Tab, and Escape in Claude's menus and pickers (options, models), ⇧Tab for its mode, and ⌘T so new terminals open as tabs of your Terminal window (without it they open as windows). Dictation prepares a draft; you choose when to send it.
+In **Ajustes → Permisos** (Settings → Permissions), you can review Automation, Accessibility, microphone, speech recognition, and Claude notifications. Accessibility lets Nook press arrow keys and Tab in Claude's menus and panels, Escape in Codex, ⇧Tab for Claude's mode, and ⌘T so new terminals open as tabs of your Terminal window (without it they open as windows). Escape and the stop button for Claude, answers to Claude's questions, and choosing a model are written to the tab without it and without bringing Terminal forward. Dictation prepares a draft; you choose when to send it.
 
 ## Build
 
@@ -75,7 +75,7 @@ The first build downloads SwiftTerm and the tmux source. The resulting app is si
 
 Direct connections currently support **macOS Terminal**. iTerm2, Ghostty, Warp, and editor terminals do not yet have direct integration. Terminal tabs use a text mirror; tmux sessions that Nook saved earlier use the integrated terminal emulator.
 
-Conversation transcripts, summaries, subagent views, interactive Claude panels, and the mode and model chips are specific to Claude Code. In Terminal tabs, arrow keys, Tab, Escape, the mode chip, some model choices, and opening new terminals as tabs require Accessibility permission; sending messages and pasting images do not. See the [usage guide (Spanish)](docs/USAGE.md) for details on each mode.
+Conversation transcripts, summaries, subagent views, interactive Claude panels, and the mode and model chips are specific to Claude Code. In Terminal tabs, arrow keys, Tab, Codex's Escape, the mode chip, and opening new terminals as tabs require Accessibility permission; sending messages, pasting images, stopping Claude, and choosing its model do not. See the [usage guide (Spanish)](docs/USAGE.md) for details on each mode.
 
 Capture exclusion is **experimental and off by default**. Its effectiveness depends on macOS and the recording or screen-sharing app; verify the receiving view before relying on it. Nook remains visible in process monitors. See [capture privacy](docs/PRIVACY.md) for its scope and limitations.
 

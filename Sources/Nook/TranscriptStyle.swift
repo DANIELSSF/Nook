@@ -14,6 +14,7 @@ import CoreText
 // - the rows of a change (`TranscriptRenderer.change`): numbered lines on a red or green band, their code coloured by
 //   the file's language (`SyntaxHighlighter`), the way Claude's terminal draws an edit;
 // - the fenced blocks of a reply (```lang … ```), their code coloured the same way.
+// A reply's Markdown tables are found by the styler and laid out by the layout manager (`TranscriptTable.swift`).
 //
 // Every rule is conservative: a line that is not recognised with confidence is `plain` and looks exactly as it did.
 
@@ -43,6 +44,9 @@ extension NSAttributedString.Key {
     static let transcriptLineFill = NSAttributedString.Key("nook.transcript.lineFill")
     /// On the dash of a list item: `MirrorLayoutManager` draws a bullet (•) in its place; the text keeps the dash.
     static let transcriptBullet = NSAttributedString.Key("nook.transcript.bullet")
+    /// On a line whose characters the text system neither draws nor gives room to (a table's lines, a fence's): `MirrorLayoutManager`
+    /// lays the line out as one empty line, gives it the height what it stands for needs (`hiddenLineHeight`), and draws that.
+    static let transcriptHiddenLine = NSAttributedString.Key("nook.transcript.hiddenLine")
 }
 
 // MARK: - Classifier
@@ -461,6 +465,23 @@ enum TranscriptClassifier {
     }
 }
 
+extension TranscriptClassifier {
+    /// What a line opens, by its shape alone: `.assistant` (a reply of Claude's), `.tool`, `.user`, `.toolOutput` (a result's `⎿`) or
+    /// `.plain` (any other line at the left edge); nil for a blank line or one indented under the line above, which goes on with
+    /// whatever is open (`MirrorReplies`).
+    static func opening(_ text: NSString, line: NSRange) -> TranscriptRole? {
+        let chars = lineChars(text, NSRange(location: line.location, length: min(line.length, 600)))
+        switch probe(chars, 0..<chars.count).kind {
+        case .blank, .indented: return nil
+        case .user: return .user
+        case .assistant: return .assistant
+        case .tool: return .tool
+        case .output: return .toolOutput
+        case .edge: return .plain
+        }
+    }
+}
+
 // MARK: - Look
 
 /// A soft block behind a user message. It travels with the text as an attribute, so a theme change that restyles
@@ -532,6 +553,13 @@ struct TranscriptPalette {
     let inlineCode: NSColor
     let inlineCodeFill: NSColor
     let link: NSColor
+    /// A fenced block: its tile, the tile's hairline, and its copy button at rest. Code with no language is in `inlineCode`.
+    let codeBlockFill: NSColor
+    let codeBlockStroke: NSColor
+    let codeButton: NSColor
+    /// A block quote: its text, and the bar beside it.
+    let quote: NSColor
+    let quoteBar: NSColor
     private let syntax: [SyntaxToken: NSColor]
 
     /// The colour of a kind of code.
@@ -571,6 +599,11 @@ struct TranscriptPalette {
             inlineCode = NSColor(red: 0.66, green: 0.83, blue: 1.0, alpha: 1)
             inlineCodeFill = NSColor(white: 1, alpha: 0.10)
             link = NSColor(red: 0.50, green: 0.75, blue: 1.0, alpha: 1)
+            codeBlockFill = NSColor(white: 1, alpha: 0.055)
+            codeBlockStroke = NSColor(white: 1, alpha: 0.10)
+            codeButton = NSColor(white: 1, alpha: 0.40)
+            quote = NSColor(white: 1, alpha: 0.74)
+            quoteBar = NSColor(white: 1, alpha: 0.26)
             syntax = [
                 .keyword: NSColor(red: 0.85, green: 0.62, blue: 0.97, alpha: 1), .string: NSColor(red: 0.96, green: 0.72, blue: 0.50, alpha: 1),
                 .number: NSColor(red: 0.74, green: 0.89, blue: 0.66, alpha: 1), .comment: NSColor(red: 0.56, green: 0.62, blue: 0.60, alpha: 1),
@@ -605,6 +638,11 @@ struct TranscriptPalette {
             inlineCode = NSColor(red: 0.08, green: 0.34, blue: 0.62, alpha: 1)
             inlineCodeFill = Self.inked(0.07)
             link = NSColor(red: 0.05, green: 0.36, blue: 0.80, alpha: 1)
+            codeBlockFill = Self.inked(0.045)
+            codeBlockStroke = Self.inked(0.10)
+            codeButton = Self.inked(0.46)
+            quote = Self.inked(0.72)
+            quoteBar = Self.inked(0.24)
             syntax = [
                 .keyword: NSColor(red: 0.55, green: 0.18, blue: 0.70, alpha: 1), .string: NSColor(red: 0.66, green: 0.30, blue: 0.06, alpha: 1),
                 .number: NSColor(red: 0.10, green: 0.43, blue: 0.19, alpha: 1), .comment: NSColor(red: 0.36, green: 0.42, blue: 0.40, alpha: 1),
@@ -627,6 +665,8 @@ enum TranscriptStyler {
     }
     /// Space kept between a message block and a line that follows it with nothing in between.
     static let gapAfterBubble: CGFloat = 8
+    /// The room Claude's first line of a reply keeps free at its end, where the reply's copy button shows (`MirrorCopyControls`).
+    static let replyButtonRoom: CGFloat = 22
 
     /// Restyles the text from the line that holds `location` to the end. Call it inside the same editing session
     /// that replaced the text from `location` on (everything before it must be unchanged): the result is what
@@ -645,8 +685,14 @@ enum TranscriptStyler {
         var apply = 0
         if location > 0 {
             apply = text.lineRange(for: NSRange(location: min(location, length), length: 0)).location
+            // A table is measured over all its rows: a change to one restyles it from its first line. A quote, named by its first line,
+            // is restyled whole too.
+            apply = TranscriptTables.firstLine(above: apply, in: text)
+            apply = TranscriptQuotes.firstLine(above: apply, in: text)
             let open = TranscriptClassifier.state(before: apply, in: text)
             if open.block == .user, !open.inOutput, open.head >= 0 { apply = min(apply, open.head) }
+            // So is a fenced block: from the reply it is in, whose lines say where it opened.
+            if open.block == .assistant, open.fence != nil, open.head >= 0 { apply = min(apply, open.head) }
         }
         let context = apply > 0 ? text.lineRange(for: NSRange(location: apply - 1, length: 0)).location : 0
 
@@ -674,14 +720,74 @@ enum TranscriptStyler {
 
         // The addresses of links, put on their text once everything else is written.
         var links: [InlineMarkdown.Link] = []
+        // The runs of a reply's lines shaped like a table's, dressed once everything else is written (`TranscriptTables`).
+        var tables: [TranscriptTables.Found] = []
+        var table = TranscriptTables.Found()
+        func closeTable() {
+            if table.lines.count >= 2 { tables.append(table) }
+            table = TranscriptTables.Found()
+        }
+        // The fenced blocks of the replies and the fence lines that take no room (`TranscriptCodeBlocks`), and the quoted lines with how
+        // deep each is, all put on their lines once everything else is written. `block` is the one open: where it starts, and where its
+        // last line so far ends.
+        var codeBlocks: [NSRange] = []
+        var fences: [NSRange] = []
+        var quotes: [(range: NSRange, depth: Int)] = []
+        // The lines that stand where a compaction's summary was (`CompactionSummary.marker`).
+        var dividers: [NSRange] = []
+        // The quotes as blocks (a run of `>` lines, each with its copy button), and the one open.
+        var quoteBlocks: [NSRange] = []
+        var quoteBlock: (start: Int, end: Int)?
+        func closeQuote() {
+            if let open = quoteBlock { quoteBlocks.append(NSRange(location: open.start, length: open.end - open.start)) }
+            quoteBlock = nil
+        }
+        var block: (start: Int, end: Int)?
+        func closeBlock() {
+            if let open = block, open.end > open.start { codeBlocks.append(NSRange(location: open.start, length: open.end - open.start)) }
+            block = nil
+        }
         var previous: TranscriptClassifier.Line?
         for line in TranscriptClassifier.lines(in: text, from: context) {
             defer { previous = line }
             guard line.range.location >= apply else { continue }
+            if line.role == .assistant, line.marker == nil, line.detail == .none, let shape = TranscriptTableShape.of(text, line.range) {
+                table.add(line, shape)
+            } else {
+                closeTable()
+            }
             // Room below a user message that nothing separates from the next line.
             let gap = previous.map { $0.role == .user && !line.isBlank && !($0.head == line.head && line.role == .user) } ?? false
             let whole = NSRange(location: line.range.location, length: line.end - line.range.location)
-            let block = line.role == .user ? line.head : -1
+            // A reply's fences open and close its blocks; a blank line inside one is part of it, anything else ends it.
+            switch line.detail {
+            case .fence where line.role == .assistant:
+                if line.marker != nil {
+                    // Opened on the reply's first line, beside Claude's dot: the block is the lines under it.
+                    closeBlock()
+                    block = (line.end, line.end)
+                } else if block == nil {
+                    block = (line.range.location, line.end)
+                    fences.append(whole)
+                } else {
+                    block?.end = line.end
+                    fences.append(whole)
+                    closeBlock()
+                }
+            case .code, .verbatim:
+                if block == nil { block = (line.range.location, line.end) }
+                block?.end = line.end
+            default:
+                if !line.isBlank { closeBlock() }
+            }
+            // The spaces a line of code starts with: its wrapped lines hang under its first character.
+            var codeHang = 0
+            if line.detail == .verbatim || { if case .code = line.detail { true } else { false } }() {
+                var index = line.range.location
+                while index < NSMaxRange(line.range), text.character(at: index) == 0x20 { index += 1 }
+                codeHang = min(index - line.range.location, Sheet.maxHang)
+            }
+            let bubble = line.role == .user ? line.head : -1
             // A "●" is in the monospaced font already, and "⏺" followed by a variation selector is an emoji whatever the
             // font: both keep the system's own drawing, with the line's own font and height.
             var native = false
@@ -698,7 +804,7 @@ enum TranscriptStyler {
                 }
             }
             // The first message of the text, when it is the one that carries the label.
-            let task = taskLabel != nil && block == 0
+            let task = taskLabel != nil && bubble == 0
             // The Markdown of a reply's line (the text after its dot, or the whole continuation line) is read once: it gives the
             // line's pieces, and where a list item's wrapped lines hang.
             var markdown: InlineMarkdown.Result?
@@ -708,10 +814,25 @@ enum TranscriptStyler {
                 markdown = InlineMarkdown.parse(text, range: NSRange(location: textStart, length: max(0, NSMaxRange(line.range) - textStart)))
             }
             let indent = markdown?.hang.map { $0 + textStart - line.range.location } ?? 0
-            func key(_ kind: Sheet.Kind) -> Sheet.Key { Sheet.Key(kind: kind, gap: gap, block: block, fit: fit, native: native, task: task, indent: indent) }
+            if let depth = markdown?.quote, depth > 0 { quotes.append((whole, depth)) }
+            // A quote's first line keeps room at its end for the quote's copy button, as Claude's first line of a reply does for the reply's
+            // (`MirrorCopyControls`).
+            let quoted = line.role == .assistant && (markdown?.quote ?? 0) > 0
+            let quoteHead = quoted && quoteBlock == nil
+            if quoted {
+                if quoteBlock == nil { quoteBlock = (line.range.location, line.end) }
+                quoteBlock?.end = line.end
+            } else {
+                closeQuote()
+            }
+            let head = line.role == .assistant && line.marker != nil
+            func key(_ kind: Sheet.Kind) -> Sheet.Key {
+                Sheet.Key(kind: kind, gap: gap, block: bubble, fit: fit, native: native, task: task, indent: indent, replyHead: head, quoteHead: quoteHead)
+            }
             // The code of a row or of a fenced line, split by what each stretch is.
             func putCode(_ code: NSRange, language: SyntaxLanguage?, as codeLine: Sheet.CodeLine, hang: Int = 0) {
-                func codeKey(_ token: SyntaxToken?) -> Sheet.Key { Sheet.Key(kind: .code(codeLine, token), gap: gap, block: block, hang: hang) }
+                let fenced = codeLine == .fenced
+                func codeKey(_ token: SyntaxToken?) -> Sheet.Key { Sheet.Key(kind: .code(codeLine, token), gap: gap, block: bubble, hang: hang, codeBlock: fenced) }
                 var cursor = code.location
                 if let language, code.length > 0 {
                     for span in SyntaxHighlighter.spans(in: text, range: code, language: language) {
@@ -739,6 +860,11 @@ enum TranscriptStyler {
             }
             if line.isBlank {
                 put(whole, Sheet.Key(kind: .blank))
+            } else if line.role == .plain, line.range.length <= 40,
+                      text.substring(with: line.range).trimmingCharacters(in: .whitespaces) == CompactionSummary.marker {
+                // Where Claude Code compacted the context: a quiet divider, the summary being behind its own control.
+                put(whole, Sheet.Key(kind: .divider))
+                dividers.append(whole)
             } else if case .row(let row) = line.detail {
                 // A row's wrapped lines hang under the first character of its code, as an editor's soft wrap does.
                 var hang = 0
@@ -790,14 +916,21 @@ enum TranscriptStyler {
                     putText(rest)
                 }
             } else if case .code(let language, let start) = line.detail {
-                put(NSRange(location: line.range.location, length: start - line.range.location), key(.text(line.role)))
-                putCode(NSRange(location: start, length: NSMaxRange(line.range) - start), language: language, as: .fenced)
+                // The reply's indent too: a paragraph takes its first character's indents, and the block's are the code's.
+                put(NSRange(location: line.range.location, length: start - line.range.location),
+                    Sheet.Key(kind: .code(.fenced, nil), gap: gap, hang: codeHang, codeBlock: true))
+                putCode(NSRange(location: start, length: NSMaxRange(line.range) - start), language: language, as: .fenced, hang: codeHang)
+            } else if line.detail == .verbatim {
+                put(whole, Sheet.Key(kind: .code(.verbatim, nil), gap: gap, hang: codeHang, codeBlock: true))
             } else if line.detail == .fence {
                 put(whole, key(.fence))
             } else {
                 putText(whole)
             }
         }
+        closeTable()
+        closeBlock()
+        closeQuote()
         flush()
         // A link's text opens its address when clicked, and says where it goes when pointed at.
         for link in links {
@@ -805,6 +938,20 @@ enum TranscriptStyler {
             if link.opens, let url = URL(string: link.url) { attributes[.link] = url }
             storage.addAttributes(attributes, range: link.range)
         }
+        // A fenced block's tile and its fences, which take no room; a quote's bars.
+        for range in codeBlocks {
+            let tile = TranscriptCodeBlock(id: range.location, indent: 2 * sheet.column, fill: sheet.palette.codeBlockFill, stroke: sheet.palette.codeBlockStroke,
+                                           icon: sheet.palette.codeButton, lineHeight: sheet.lineHeight)
+            storage.addAttribute(.transcriptCodeBlock, value: tile, range: range)
+        }
+        for range in fences { storage.addAttribute(.transcriptHiddenLine, value: true, range: range) }
+        for range in dividers { storage.addAttribute(.transcriptDivider, value: sheet.palette.codeBlockStroke, range: range) }
+        for quote in quotes { storage.addAttributes([.transcriptQuote: quote.depth, .transcriptQuoteBar: sheet.palette.quoteBar], range: quote.range) }
+        for range in quoteBlocks {
+            storage.addAttribute(.transcriptQuoteBlock, value: TranscriptQuoteBlock(id: range.location, icon: sheet.palette.codeButton, lineHeight: sheet.lineHeight), range: range)
+        }
+        // Tables last: their columns are measured with the look the rest of the styling gave their cells.
+        for found in tables { TranscriptTables.dress(found, in: storage, sheet: sheet) }
     }
 
     /// Takes every transcript attribute off the text and gives it plain attributes again: for a tab that stopped
@@ -845,10 +992,13 @@ enum TranscriptStyler {
             case fence
             /// A stretch of a reply the Markdown dresses (see `InlineMarkdown`).
             case markup(MarkupStyle)
+            /// The line where a compaction's summary was: small, quiet and centred, between two hairlines (`drawDividers`).
+            case divider
         }
 
-        /// Which kind of line a piece of code sits on: the band behind it and the weight of its colours follow.
-        enum CodeLine: Hashable { case removed, added, context, fenced }
+        /// Which kind of line a piece of code sits on: the band behind it and the weight of its colours follow. `verbatim` is a fenced
+        /// block's line in no language the highlighter knows (a command to run, most often): it takes inline code's colour.
+        enum CodeLine: Hashable { case removed, added, context, fenced, verbatim }
 
         /// Which glyph on the line comes from a font of its own, and so changes the line's height.
         enum Fit: Hashable { case none, assistantDot, toolDot, result }
@@ -868,6 +1018,13 @@ enum TranscriptStyler {
             var task = false
             /// For a reply's list item: how many columns of the reply's font its text starts at, where wrapped lines hang.
             var indent = 0
+            /// Claude's first line of a reply: it keeps room at its end for the reply's copy button.
+            var replyHead = false
+            /// A line of a fenced block: inside its tile, with room at its right for the block's copy button. Its `hang` is in columns
+            /// of the reply's font.
+            var codeBlock = false
+            /// A quote's first line: it keeps room at its end for the quote's copy button (beside the reply's, on Claude's first line).
+            var quoteHead = false
         }
 
         /// The most columns a wrapped row hangs by, so a deeply indented line still has room to wrap.
@@ -909,12 +1066,15 @@ enum TranscriptStyler {
         let italicSkew: Bool
         /// One column of the reply's font: the room a hidden mark gives back.
         let column: CGFloat
+        /// One line of the reply's font.
+        let lineHeight: CGFloat
 
         init(dark: Bool, font: NSFont, taskLabel: String? = nil, voice: TabVoice? = nil) {
             palette = TranscriptPalette(dark: dark, voice: voice)
             self.taskLabel = taskLabel
             base = font
             column = ("0" as NSString).size(withAttributes: [.font: font]).width
+            lineHeight = Sheet.lineHeight(of: font)
             let heavy = font.isFixedPitch ? NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold) : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
             bold = heavy
             let manager = NSFontManager.shared
@@ -940,6 +1100,19 @@ enum TranscriptStyler {
             resultMark = Sheet.glyph(0x23BF, in: "AppleSymbols", size: smaller.pointSize + 3, line: smaller)
         }
 
+        /// The height TextKit gives a line of `font`, asked once per font: a sheet is made for every restyle.
+        static func lineHeight(of font: NSFont) -> CGFloat {
+            lineHeightLock.lock()
+            defer { lineHeightLock.unlock() }
+            if let known = lineHeights[font] { return known }
+            let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
+            if lineHeights.count > 32 { lineHeights.removeAll() }
+            lineHeights[font] = height
+            return height
+        }
+        private static let lineHeightLock = NSLock()
+        nonisolated(unsafe) private static var lineHeights: [NSFont: CGFloat] = [:]
+
         /// The font `name` for `unit`, with the kern that keeps the column as wide as the line's own font makes it and
         /// the spacing that takes back the leading the font adds to its line. Nil when the font is missing or lacks the
         /// glyph: the system fallback applies then.
@@ -961,6 +1134,12 @@ enum TranscriptStyler {
         func attributes(_ key: Key) -> [NSAttributedString.Key: Any] {
             var attributes: [NSAttributedString.Key: Any]
             switch key.kind {
+            case .divider:
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.alignment = .center
+                paragraph.paragraphSpacingBefore = 3
+                paragraph.paragraphSpacing = 3
+                return [.font: small, .foregroundColor: palette.outputMarker, .kern: 0.3, .paragraphStyle: paragraph]
             case .blank:
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.lineBreakMode = .byWordWrapping
@@ -1005,17 +1184,24 @@ enum TranscriptStyler {
             case .markup(let style):
                 attributes = markupAttributes(style)
             case .gutter(let line):
-                attributes = [.font: line == .fenced ? base : small, .foregroundColor: palette.gutter, .transcriptRole: Self.role(of: line).rawValue]
+                attributes = [.font: line == .fenced || line == .verbatim ? base : small, .foregroundColor: palette.gutter, .transcriptRole: Self.role(of: line).rawValue]
                 if let fill = fill(line) { attributes[.transcriptLineFill] = fill }
             case .mark(let line):
                 let color = line == .removed ? palette.removedMark : line == .added ? palette.addedMark : palette.gutter
                 attributes = [.font: rowMark, .foregroundColor: color, .transcriptRole: Self.role(of: line).rawValue]
                 if let fill = fill(line) { attributes[.transcriptLineFill] = fill }
             case .code(let line, let token):
-                var color = token.map(palette.color) ?? (line == .context ? palette.contextCode : line == .fenced ? palette.text : palette.changedCode)
+                var color = token.map(palette.color) ?? {
+                    switch line {
+                    case .context: palette.contextCode
+                    case .fenced: palette.text
+                    case .verbatim: palette.inlineCode
+                    case .removed, .added: palette.changedCode
+                    }
+                }()
                 // Lines kept only for context sit back, as in Claude's own diff.
                 if line == .context, token != nil { color = color.withAlphaComponent(0.72) }
-                attributes = [.font: line == .fenced ? base : small, .foregroundColor: color, .transcriptRole: Self.role(of: line).rawValue]
+                attributes = [.font: line == .fenced || line == .verbatim ? base : small, .foregroundColor: color, .transcriptRole: Self.role(of: line).rawValue]
                 if let fill = fill(line) { attributes[.transcriptLineFill] = fill }
             }
             attributes[.paragraphStyle] = paragraph(key)
@@ -1032,11 +1218,15 @@ enum TranscriptStyler {
             if style.contains(.hidden) {
                 return [.font: base, .foregroundColor: NSColor.clear, .kern: -column, .transcriptRole: TranscriptRole.assistant.rawValue]
             }
+            // A quote's ">" keeps its room, where its bar is drawn (`MirrorLayoutManager.drawQuoteBars`).
+            if style.contains(.quoteMark) {
+                return [.font: base, .foregroundColor: NSColor.clear, .transcriptRole: TranscriptRole.assistant.rawValue]
+            }
             let heavy = style.contains(.bold) || style.contains(.heading)
-            let slanted = style.contains(.italic)
+            let slanted = style.contains(.italic) || style.contains(.quote)
             var attributes: [NSAttributedString.Key: Any] = [
                 .font: heavy ? (slanted ? boldItalic : bold) : (slanted ? italic : base),
-                .foregroundColor: palette.text, .transcriptRole: TranscriptRole.assistant.rawValue,
+                .foregroundColor: style.contains(.quote) ? palette.quote : palette.text, .transcriptRole: TranscriptRole.assistant.rawValue,
             ]
             if slanted, italicSkew { attributes[.obliqueness] = 0.2 }
             if style.contains(.heading) { attributes[.foregroundColor] = palette.heading }
@@ -1052,22 +1242,31 @@ enum TranscriptStyler {
             return attributes
         }
 
-        private static func role(of line: CodeLine) -> TranscriptRole { line == .fenced ? .assistant : .toolOutput }
+        private static func role(of line: CodeLine) -> TranscriptRole { line == .fenced || line == .verbatim ? .assistant : .toolOutput }
 
         /// The band behind a changed row; none for the others.
         private func fill(_ line: CodeLine) -> NSColor? {
             switch line {
             case .removed: palette.removedFill
             case .added: palette.addedFill
-            case .context, .fenced: nil
+            case .context, .fenced, .verbatim: nil
             }
         }
 
         private func paragraph(_ key: Key) -> NSParagraphStyle {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byWordWrapping
-            if key.hang > 0 { paragraph.headIndent = (CGFloat(key.hang) * rowColumn).rounded(.up) }
+            if key.codeBlock {
+                // Inside the block's tile: the code starts a little in from its edge, wraps under its own first character, and
+                // leaves the tile's right end to the block's copy button.
+                paragraph.firstLineHeadIndent = TranscriptCodeBlocks.padding
+                paragraph.headIndent = TranscriptCodeBlocks.padding + (CGFloat(key.hang) * column).rounded(.up)
+                paragraph.tailIndent = -(TranscriptCodeBlocks.padding + TranscriptCodeBlocks.buttonRoom)
+            } else if key.hang > 0 { paragraph.headIndent = (CGFloat(key.hang) * rowColumn).rounded(.up) }
             if key.indent > 0 { paragraph.headIndent = (CGFloat(key.indent) * column).rounded(.up) }
+            if key.replyHead || key.quoteHead {
+                paragraph.tailIndent = -TranscriptStyler.replyButtonRoom * (key.replyHead && key.quoteHead ? 2 : 1)
+            }
             switch key.fit {
             case .none: break
             case .assistantDot: paragraph.lineSpacing = assistantDot?.spacing ?? 0
@@ -1083,7 +1282,9 @@ enum TranscriptStyler {
 // MARK: - Layout manager
 
 /// Paints the soft block behind each user message, under the text and the selection. The block spans the width of the
-/// text container and the lines of the message; the characters themselves are drawn by `NSLayoutManager`.
+/// text container and the lines of the message; the characters themselves are drawn by `NSLayoutManager`. It also lays out and
+/// draws what the mirror shows in place of characters: a table's lines and a fenced block's fences (`transcriptHiddenLine`), a
+/// block's tile and its copy button, and a quote's bars.
 final class MirrorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     override init() {
         super.init()
@@ -1091,29 +1292,101 @@ final class MirrorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// The dash of a list item (`.transcriptBullet`) is drawn as a bullet, the way Claude's terminal draws it. The glyph is
-    /// swapped as glyphs are generated, so the text, its copy and its selection are untouched. Batches without a bullet (nearly
-    /// all of them) are left to the default, after one look at the few attribute runs they cover.
+    /// The dash of a list item (`.transcriptBullet`) is drawn as a bullet, the way Claude's terminal draws it. The characters of a
+    /// hidden line (`.transcriptHiddenLine`) take no room: its first one becomes a control character laid out as whitespace of no
+    /// width, which keeps the line a line of its own (a null glyph right after a line break would be laid out on the line above),
+    /// and the others null glyphs; its line break stays one. Glyphs change as they are generated, so the text, its copy and its
+    /// selection are untouched. Batches with none of these (nearly all of them) are left to the default, after one look at the few
+    /// attribute runs they cover.
     func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>, properties props: UnsafePointer<NSLayoutManager.GlyphProperty>,
                        characterIndexes charIndexes: UnsafePointer<Int>, font aFont: NSFont, forGlyphRange glyphRange: NSRange) -> Int {
         guard let storage = textStorage, glyphRange.length > 0 else { return 0 }
         let count = glyphRange.length
         let low = charIndexes[0], high = charIndexes[count - 1]
         guard low >= 0, high < storage.length, high >= low else { return 0 }
-        var bullets: Set<Int> = []
-        storage.enumerateAttribute(.transcriptBullet, in: NSRange(location: low, length: high - low + 1), options: []) { value, range, _ in
-            if value != nil { for index in range.location..<NSMaxRange(range) { bullets.insert(index) } }
+        var bullets: Set<Int> = [], hidden: Set<Int> = []
+        storage.enumerateAttributes(in: NSRange(location: low, length: high - low + 1), options: []) { attributes, range, _ in
+            let indexes = range.location..<NSMaxRange(range)
+            if attributes[.transcriptBullet] != nil { bullets.formUnion(indexes) }
+            if attributes[.transcriptHiddenLine] != nil { hidden.formUnion(indexes) }
         }
-        guard !bullets.isEmpty else { return 0 }
+        guard !bullets.isEmpty || !hidden.isEmpty else { return 0 }
+        let text = storage.mutableString as NSString
         var dot: unichar = 0x2022
         var dotGlyph = CGGlyph(0)
-        guard CTFontGetGlyphsForCharacters(aFont, &dot, &dotGlyph, 1), dotGlyph != 0 else { return 0 }
+        if !bullets.isEmpty, !CTFontGetGlyphsForCharacters(aFont, &dot, &dotGlyph, 1) { dotGlyph = 0 }
         var newGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: count))
-        let properties = Array(UnsafeBufferPointer(start: props, count: count))
+        var properties = Array(UnsafeBufferPointer(start: props, count: count))
         let indexes = Array(UnsafeBufferPointer(start: charIndexes, count: count))
-        for position in 0..<count where bullets.contains(indexes[position]) { newGlyphs[position] = dotGlyph }
+        for position in 0..<count {
+            let index = indexes[position]
+            if dotGlyph != 0, bullets.contains(index) { newGlyphs[position] = dotGlyph }
+            guard hidden.contains(index), text.character(at: index) != 0x0A else { continue }
+            properties[position] = index == 0 || text.character(at: index - 1) == 0x0A ? .controlCharacter : .null
+        }
         layoutManager.setGlyphs(newGlyphs, properties: properties, characterIndexes: indexes, font: aFont, forGlyphRange: glyphRange)
         return count
+    }
+
+    /// The first character of a hidden line: whitespace, of no width (`layoutManager(_:boundingBoxForControlGlyphAt:…)`).
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+                       forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
+        guard let storage = textStorage, charIndex < storage.length, storage.mutableString.character(at: charIndex) != 0x0A,
+              storage.attribute(.transcriptHiddenLine, at: charIndex, effectiveRange: nil) != nil else { return action }
+        return .whitespace
+    }
+
+    func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
+                       proposedLineFragment proposedRect: NSRect, glyphPosition: NSPoint, characterIndex charIndex: Int) -> NSRect {
+        NSRect(x: glyphPosition.x, y: 0, width: 0, height: proposedRect.height)
+    }
+
+    /// A hidden line is as tall as what stands in its place: its table row in the width the container has now (so an island made
+    /// narrower or wider lays its tables out again with no restyle), or a fence's sliver of the block's tile.
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+                       lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+                       in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
+        guard glyphRange.length > 0, let height = hiddenLineHeight(at: characterIndexForGlyph(at: glyphRange.location), container: textContainer) else { return false }
+        lineFragmentRect.pointee.size.height = height
+        lineFragmentUsedRect.pointee.origin.y = lineFragmentRect.pointee.origin.y
+        lineFragmentUsedRect.pointee.size.height = height
+        baselineOffset.pointee = min(baselineOffset.pointee, height)
+        return true
+    }
+
+    /// The height of the hidden line that starts at `index`, or nil when no hidden line starts there.
+    func hiddenLineHeight(at index: Int, container: NSTextContainer) -> CGFloat? {
+        guard let storage = textStorage, index < storage.length, storage.attribute(.transcriptHiddenLine, at: index, effectiveRange: nil) != nil else { return nil }
+        if let (_, line, layout) = table(at: index, container: container) { return layout.height(ofLine: line) }
+        return TranscriptCodeBlocks.fenceHeight
+    }
+
+    /// A background the text itself asks for (inline `code`'s) hugs its characters on each line they take, rounded a little. The
+    /// layout manager's own rects for a range that wraps run to the end of the first line and start the next one at the container's
+    /// edge, past a quote's bar or a list's hang. The selection, which no character asks for, keeps them.
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
+        guard let storage = textStorage, charRange.length > 0, NSMaxRange(charRange) <= storage.length,
+              (storage.attribute(.backgroundColor, at: charRange.location, effectiveRange: nil) as? NSColor) == color,
+              let container = textContainers.first, let first = (0..<rectCount).first.map({ rectArray[$0] }) else {
+            return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+        }
+        let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        // The rects come in the view's coordinates: the container's origin in it is where the first one is less where it is in the container.
+        let start = boundingRect(forGlyphRange: NSRange(location: glyphs.location, length: 1), in: container)
+        let shift = NSPoint(x: first.minX - start.minX, y: first.minY - lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil).minY)
+        color.setFill()
+        enumerateLineFragments(forGlyphRange: glyphs) { line, _, container, lineGlyphs, _ in
+            var piece = NSIntersectionRange(lineGlyphs, glyphs)
+            // A space the line wrapped at is not the code's.
+            while piece.length > 0, let index = Optional(self.characterIndexForGlyph(at: NSMaxRange(piece) - 1)),
+                  [0x20, 0x0A].contains(storage.mutableString.character(at: index)) { piece.length -= 1 }
+            guard piece.length > 0 else { return }
+            var bounds = self.boundingRect(forGlyphRange: piece, in: container)
+            bounds.origin.y = line.minY
+            bounds.size.height = line.height
+            let rect = bounds.offsetBy(dx: shift.x, dy: shift.y).insetBy(dx: -1, dy: 0.5)
+            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+        }
     }
 
     static let cornerRadius: CGFloat = 6
@@ -1123,7 +1396,19 @@ final class MirrorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         drawLineFills(forGlyphRange: glyphsToShow, at: origin)
         drawBubbles(forGlyphRange: glyphsToShow, at: origin)
+        drawCodeBlocks(forGlyphRange: glyphsToShow, at: origin)
+        drawQuoteBars(forGlyphRange: glyphsToShow, at: origin)
+        drawTableChrome(forGlyphRange: glyphsToShow, at: origin)
+        drawDividers(forGlyphRange: glyphsToShow, at: origin)
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+
+    /// Over the characters (and the selection): the tables' cells and the fenced blocks' copy buttons at rest.
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        drawTableCells(forGlyphRange: glyphsToShow, at: origin)
+        drawCodeButtons(forGlyphRange: glyphsToShow, at: origin)
+        drawQuoteButtons(forGlyphRange: glyphsToShow, at: origin)
     }
 
     /// The band behind a changed row: every line the row takes (a long one wraps) is filled across the whole width of

@@ -173,11 +173,20 @@ struct NookPanel: View {
             }
                 .nookMenu().help("Nueva pestaña en Terminal").accessibilityLabel("Nueva pestaña")
             if let selected = model.selected {
-                ObservedRecapButton(object: selected, id: \.id, recap: \.recap)
+                // Claude's recap, and beside it the summary of the session's last compaction: icons alone, each said by its tip.
+                HStack(spacing: 4) {
+                    ObservedRecapButton(object: selected, id: \.id, recap: \.recap)
+                    ObservedRecapButton(object: selected, id: \.id, recap: \.compactSummary, kind: .compaction,
+                                        cardWidth: min(440, max(220, paneLayout.width - 24)), maxBodyHeight: paneLayout.recapMaxBodyHeight)
+                }
                 IconButton(symbol: "arrow.up.right.square", label: "Mostrar terminal completa") { model.controller?.focusSession() }
                 SessionMenu(model: model, session: selected, signalsEnabled: model.claudeSignalsEnabled)
             }
         }.padding(.horizontal, 15).frame(height: 30)
+            // The tips of the row's controls that have one (the recap's and the compaction's): the session pane's layer is below the row.
+            .overlayPreferenceValue(NookTipKey.self) { entry in
+                NookTipLayer(entry: entry, enabled: model.islandContentVisible, animated: model.animations)
+            }
             // The tabs' agent badges report where they are in this space, and their list opens in it. It is an overlay
             // of the row because the tabs' scroll view would clip a card hanging from one of them.
             .coordinateSpace(name: TabAgentListPresenter.space)
@@ -1184,8 +1193,10 @@ struct SessionPane: View {
                     model.view(agent: nil, in: session)
                 }.padding(.top, 2)
             }
+            // An agent's conversation always comes from its record; Claude's, unless no record was found and the mirror is its screen.
             LiveTerminalSurface(text: mirrorText, transcript: session.agent == .claude, fontSize: model.display.chatSize, contentID: session.viewedAgent ?? "",
-                                taskLabel: session.viewedAgent == nil ? nil : "Tarea", voice: session.tint.voice(colorScheme), messages: mirrorMessages) { copiedAt = Date() }
+                                taskLabel: session.viewedAgent == nil ? nil : "Tarea", voice: session.tint.voice(colorScheme), messages: mirrorMessages,
+                                fromRecord: session.viewedAgent != nil || session.transcriptText != nil) { copiedAt = Date() }
                 .padding(.horizontal, Metrics.mirrorInset).padding(.top, session.viewedAgent == nil ? 2 : 0)
                 .overlay {
                     // The agent has no record yet (or it is being read): nothing to show but a word about it.
@@ -1916,6 +1927,7 @@ struct SessionPane: View {
         let sentText = draft.trimmingCharacters(in: .newlines)
         let sentFiles = attachments
         draft = ""; attachments = []; beforeDictation = ""; history.reset(); followUpHint = nil
+        let serial = model.noticeSerial
         model.sendMessage(sentText, files: sentFiles, to: session) { outcome in
             switch outcome {
             case .delivered:
@@ -1926,6 +1938,8 @@ struct SessionPane: View {
                 let gave = Self.giveBack(sentText, files: sentFiles, to: session)
                 if gave.draft { draft = sentText }
                 if gave.attachments { attachments = sentFiles }
+                // Never in silence: the notice says why it came back, unless something more precise already did.
+                model.tellUndelivered(on: session, since: serial)
             case .screenFailed(let notice):
                 // Without the screenshot Claude would not see the screen: nothing went, and the message comes back to the field (before
                 // anything typed meanwhile). The tab's own stores get it too, in case the user moved to another tab while it was captured.
@@ -2162,9 +2176,17 @@ struct LiveTerminalSurface: View {
     var messages: [MirrorMessage] = []
     /// What the end of the text is (a conversation's last message, a shell's latest output), which names the way back to it.
     var end = MirrorEnd.latestMessage
+    /// The text is Claude's record rather than its screen: a reply's copy button copies its lines as they are (`MirrorReplies`).
+    var fromRecord = true
+    /// The text opens at its top instead of following its end (a document to read, such as a compaction's summary), and has no way back
+    /// to its end.
+    var opensAtTop = false
+    var showsWayBack = true
     var onCopy: () -> Void = {}
     /// The reader is far enough up for the way back to show (`LiveTerminalScrollView.awayFromEnd`).
     @State private var away = false
+    /// The copy buttons on Claude's replies and blocks (`MirrorCopyControls`). Held, not observed: only the buttons redraw as the pointer moves.
+    @State private var copyButtons = MirrorCopyModel()
     /// Goes up by one each time the way back is taken.
     @State private var jumpRequest = 0
     /// Under a card the button goes: faded out with the text it would still stand where the card's own controls are, and claim the pointer there.
@@ -2173,10 +2195,15 @@ struct LiveTerminalSurface: View {
     @Environment(\.nookMotion) private var animations
 
     var body: some View {
-        let shows = away && !covered
+        let shows = away && !covered && showsWayBack
         let presence = JumpPresence.transition(moves: animations && !reduceMotion, fades: animations)
         LiveTerminalMirror(text: text, transcript: transcript, fontSize: fontSize, contentID: contentID, taskLabel: taskLabel, voice: voice, messages: messages,
-                           away: away, jumpRequest: jumpRequest, jumpMotion: jumpMotion, onAway: { away = $0 }, onCopy: onCopy)
+                           away: away, jumpRequest: jumpRequest, jumpMotion: jumpMotion, fromRecord: fromRecord, opensAtTop: opensAtTop, copyButtons: copyButtons,
+                           onAway: { away = $0 }, onCopy: onCopy)
+            .overlay(alignment: .topLeading) {
+                // Under a card the buttons go, as the way back does: the card's own controls are there.
+                if transcript && !covered { MirrorCopyControls(model: copyButtons) }
+            }
             .overlay(alignment: .bottom) {
                 ZStack {
                     if shows {
@@ -2208,6 +2235,9 @@ private struct LiveTerminalMirror: NSViewRepresentable {
     var away: Bool
     var jumpRequest: Int
     var jumpMotion: LiveTerminalScrollView.JumpMotion
+    var fromRecord: Bool
+    var opensAtTop: Bool
+    var copyButtons: MirrorCopyModel
     var onAway: (Bool) -> Void
     var onCopy: () -> Void
     /// A card has taken the place of the conversation and faded it out (`\.nookCovered`): the mirror gives up the pointer, whose I-beam would
@@ -2222,7 +2252,10 @@ private struct LiveTerminalMirror: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> LiveTerminalScrollView {
         context.coordinator.jumpRequest = jumpRequest
-        return LiveTerminalScrollView()
+        let scroll = LiveTerminalScrollView()
+        scroll.copyModel = copyButtons
+        scroll.opensAtTop = opensAtTop
+        return scroll
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: LiveTerminalScrollView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 410, height: proposal.height ?? 92)
@@ -2234,6 +2267,7 @@ private struct LiveTerminalMirror: NSViewRepresentable {
         scroll.setFontSize(fontSize)
         scroll.setVoice(voice)
         scroll.textView.onCopy = onCopy
+        scroll.fromRecord = fromRecord
         scroll.setContent(contentID)
         scroll.update(text: text, messages: messages)
         // After the text: when the content changes, only the text that stays on show has to be restyled for the label.

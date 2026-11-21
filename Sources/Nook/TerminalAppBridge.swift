@@ -666,6 +666,68 @@ final class TerminalAppBridge: ObservableObject {
         if (miniaturized of targetWindow) or (index of targetWindow is not 1) then error "La ventana de la pestaña no es la de delante en Terminal."
         if not (selected of t) then set selected of t to true
         """
+    /// The same for a tab whose window is behind another of Terminal's: the window becomes Terminal's front one and the tab its selected
+    /// one, with Terminal itself left behind the app in front (nothing is activated, so the keyboard stays where it is). Tried before
+    /// Terminal is ever brought forward for a key that can be checked on screen.
+    static let raiseKeyAction = """
+        if miniaturized of targetWindow then error "La ventana de la pestaña está minimizada."
+        set index of targetWindow to 1
+        if not (selected of t) then set selected of t to true
+        """
+
+    // MARK: Escape to Claude, written
+
+    /// Escape for Claude Code as one `do script`, which always ends in Terminal's own Return: ESC, then ESC P. What Claude Code (2.1.329,
+    /// the same in 2.1.330) does with that chunk, from its input tokenizer and its key parser:
+    ///
+    /// - ESC followed by ESC hands the first one over on its own, a bare "\u{1B}": the Escape key, as a press of the key sends it.
+    /// - ESC P opens a device control string, and the tokenizer takes everything up to its end (BEL, ST, CAN, SUB or another ESC) as part
+    ///   of it: Terminal's Return is held inside it. An unfinished string is let go 50 ms later as one key with no name, which no handler
+    ///   of Claude's acts on: nothing is sent and no line break is typed, whatever is on screen.
+    ///
+    /// Why not ESC alone, or the key's other forms: ESC followed by the Return is Alt+Enter (a new line, and no interrupt), and the CSI forms
+    /// (ESC [27u, ESC [27;1;27~) are read as Escape but leave the Return a Return: after an interrupt it sent the draft in the box, and with
+    /// the "/" menu open it ran what was typed. Checked in a private tmux against Claude Code itself, in each state: idle with the box
+    /// empty or not, working with or without a draft, interrupted right after a message was sent (the message comes back to the box and
+    /// stays there), a queued message (Claude sends it on its own, with or without this Return), a permission dialog (refused, as Esc
+    /// does), the "/" menu (closed, its text kept) and a panel (closed).
+    ///
+    /// What follows within those 50 ms ends up in the string too, unless it starts with ESC (arrows, a bracketed paste): a write of plain
+    /// text waits until they are over (`waitOutEscape`). Codex reads ESC P as Alt+P: it keeps its key.
+    static let escapeAction = "do script ((character id 27) & (character id 27) & \"P\") in t"
+    /// How long Claude may still read what is written after the Escape into its control string: its 50 ms, with room.
+    static let escapeQuiet: TimeInterval = 0.15
+
+    private static let escapeLock = NSLock()
+    nonisolated(unsafe) private static var escapedAt: [String: TimeInterval] = [:]
+
+    /// A write to `tty` that might start with plain text waits until an Escape written there can no longer take it (`escapeAction`).
+    static func waitOutEscape(tty: String, clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, pause: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+        escapeLock.lock()
+        let since = escapedAt[tty]
+        escapeLock.unlock()
+        guard let since else { return }
+        let left = since + escapeQuiet - clock()
+        if left > 0 { pause(left) }
+    }
+
+    private static func noteEscape(tty: String, at time: TimeInterval) {
+        escapeLock.lock()
+        escapedAt[tty] = time
+        escapeLock.unlock()
+    }
+
+    /// How an Escape written to Claude went (`writeEscape`).
+    enum EscapeWrite: Equatable {
+        /// Claude showed it; or nothing on its screen would, and the write is harmless whatever it did.
+        case delivered
+        /// The tab no longer runs a program in its foreground: nothing was written (`answerScript`'s check).
+        case agentGone
+        /// The script failed: Terminal or the tab is gone.
+        case failed(String)
+        /// Written twice and never shown: the key goes the way keys go (`press`).
+        case unseen
+    }
 
     /// The answer to an agent's dialog as one `do script`: the arrows as the bytes a terminal sends for them, and Terminal's own
     /// Return as the Enter that confirms (a multi-select's Enter ticks the box). Nothing comes forward and no key event is
@@ -779,7 +841,10 @@ final class TerminalAppBridge: ObservableObject {
     /// history read in between would delay every check of the delivery.
     private var delivering = 0
 
-    func deliver(windowID: Int, tty: String, text: String, agent: TerminalAgent, completion: @escaping (DeliveryOutcome) -> Void) {
+    /// `record`: whether Claude's own record holds the message (as it went) since the delivery began (`ClaudeRecordArrival`), asked on
+    /// the delivery's queue when the screen never showed it arrive; nil where there is no record to ask.
+    func deliver(windowID: Int, tty: String, text: String, agent: TerminalAgent, record: ((String) -> Bool)? = nil,
+                 completion: @escaping (DeliveryOutcome) -> Void) {
         delivering += 1
         deliveryQueue.async { [weak self] in
             var steps: [String] = []
@@ -787,8 +852,9 @@ final class TerminalAppBridge: ObservableObject {
             let result = Result {
                 // The box is on the visible screen, which is far quicker to read than the history.
                 try Self.deliver(text, agent: agent,
-                                 run: { _ = try Self.execute(Self.targetScript(windowID: windowID, tty: tty, action: $0)) },
+                                 run: { Self.waitOutEscape(tty: tty); _ = try Self.execute(Self.targetScript(windowID: windowID, tty: tty, action: $0)) },
                                  read: { try Self.snapshot(Self.snapshotScript(windowIDs: [windowID], ttys: [tty], includeText: true, screenOnly: true)).first { $0.tty == tty }?.text },
+                                 record: record,
                                  trace: { steps.append(String(format: "%.1fs %@", Date().timeIntervalSince(started), $0)) })
             }
             if case .failure(let error) = result, !(error is DeliveryError) { steps.append("error: \(error.localizedDescription)") }
@@ -832,11 +898,12 @@ final class TerminalAppBridge: ObservableObject {
     /// current model and closed. Now Enter goes only when Claude visibly holds the message; a message it took gets nothing
     /// more. Claude empties its box when it takes a message; while it still holds the whole one, one more Return follows.
     /// `run` gets the scripts for this Terminal tab: the message (`messageAction`) and Enters (`returnAction`).
-    static func deliver(_ text: String, agent: TerminalAgent, timing: DeliveryTiming = .init(), run: (String) throws -> Void, read: () throws -> String?, trace: (String) -> Void = { _ in }) throws {
+    static func deliver(_ text: String, agent: TerminalAgent, timing: DeliveryTiming = .init(), run: (String) throws -> Void, read: () throws -> String?,
+                        record: ((String) -> Bool)? = nil, trace: (String) -> Void = { _ in }) throws {
         // What travels is what the screen is compared with: control characters never reach the box.
         let text = TerminalText.sendable(text)
         try deliver(text, agent: agent, typed: typesDirectly(text, agent: agent), withReturn: true, timing: timing,
-                    send: { try run($0 == .enter ? returnAction : messageAction(text, agent: agent)) }, read: read, trace: trace)
+                    send: { try run($0 == .enter ? returnAction : messageAction(text, agent: agent)) }, read: read, record: record, trace: trace)
     }
 
     /// The delivery itself, for any transport: `send` writes the message (`typed`, or pasted between bracketed-paste marks; with
@@ -846,9 +913,10 @@ final class TerminalAppBridge: ObservableObject {
     /// A message with images is pasted (`typesDirectly`) and Claude drops the Return of such a paste (`ClaudeImagePaste`): it waits
     /// in the box as "[Image #1]…", and the Enter Nook presses once the box has held it for `hold` is what sends it. Until the box
     /// shows it Claude is reading the images, so nothing else on screen counts as an arrival (`arrival`), and a message that never
-    /// shows up is not reported as sent (`DeliveryError.unseen`).
+    /// shows up is not reported as sent (`DeliveryError.unseen`), unless Claude's own record has it (`record`, asked then): a long
+    /// paste shows on screen only as "[Pasted text #1 +66 lines]", and Claude may take it before any reading catches its box.
     static func deliver(_ text: String, agent: TerminalAgent, typed: Bool, withReturn: Bool, timing: DeliveryTiming = .init(), send: (DeliveryStep) throws -> Void,
-                        read: () throws -> String?, trace: (String) -> Void = { _ in }) throws {
+                        read: () throws -> String?, record: ((String) -> Bool)? = nil, trace: (String) -> Void = { _ in }) throws {
         let images = typed ? 0 : ClaudeImagePaste.parts(text).images.count
         var screen: String?
         /// What Claude's box holds on the latest reading, nil without a box.
@@ -872,11 +940,19 @@ final class TerminalAppBridge: ObservableObject {
         // accept its highlighted option.
         // The message showing up in the conversation above the box is Claude taking it, even when its box then shows the
         // same text again as its grey suggestion (after "! infra/gcp/deploy.sh dev" ran, Claude suggests running it again).
-        var before: String? { didSet { echoes = before.flatMap { MessageEcho.echoes(of: text, inChatOf: $0) } } }
-        var echoes: Int?
+        // A paste Claude collapsed shows there only as "[Pasted text #1 +66 lines]" (`MessageEcho.pastedEchoes`): one more of those counts too.
+        var before: String? {
+            didSet {
+                echoes = before.flatMap { MessageEcho.echoes(of: text, inChatOf: $0) }
+                pastes = typed ? nil : before.flatMap { MessageEcho.pastedEchoes(inChatOf: $0) }
+            }
+        }
+        var echoes: Int?, pastes: Int?
         func sent() -> Bool {
-            guard let echoes, let now = screen.flatMap({ MessageEcho.echoes(of: text, inChatOf: $0) }) else { return false }
-            return now > echoes
+            guard let screen else { return false }
+            if let echoes, let now = MessageEcho.echoes(of: text, inChatOf: screen), now > echoes { return true }
+            if let pastes, let now = MessageEcho.pastedEchoes(inChatOf: screen), now > pastes { return true }
+            return false
         }
         func stillInBox() -> Bool {
             screen = (try? read()) ?? nil
@@ -933,8 +1009,13 @@ final class TerminalAppBridge: ObservableObject {
                     return
                 case .unseen where images > 0:
                     // Claude never showed it: still reading the images, or something else had the keys. No Enter on a guess, and
-                    // no "sent" either: the message comes back to the field.
-                    trace("no apareció en la caja en \(Int(timing.images)) s; sin Enter, no enviado")
+                    // no "sent" either: the message comes back to the field. Unless Claude's own record has it: Claude took it in a
+                    // form its screen never told (it writes the record only for a message it got).
+                    if let record, record(text) {
+                        trace("no apareció en la caja, pero el registro de Claude lo tiene: enviado")
+                        return
+                    }
+                    trace("no apareció en la caja en \(Int(timing.images)) s; sin Enter, no enviado\(record == nil ? "" : " (tampoco en el registro de Claude)")")
                     throw DeliveryError.unseen
                 case .unseen:
                     // No Enter on a guess: it would land on whatever is on screen (a dialog, a picker).
@@ -988,21 +1069,32 @@ final class TerminalAppBridge: ObservableObject {
     /// its echo in the chat says Claude took it. A box that still shows what it showed before (an "[Image #4]" left there holds a
     /// message that is only images) shows nothing of it yet. The hold starts again whenever the box changes, as images and words
     /// come in.
+    ///
+    /// A `pasted` message Claude collapses ("[Pasted text #1 +66 lines]": several lines, or long) never shows its words, in the box or
+    /// in the chat, and Claude may take it on the paste's own Return before any reading catches the box: one more of those
+    /// placeholders in the chat is its echo (`MessageEcho.pastedEchoes`), with or without images in it.
     static func arrival(of text: String, before: String?, timing: DeliveryTiming, pasted: Bool = false, read: () -> String?, now: () -> Date = Date.init) -> Arrival {
         let answering = before.map { screen in
             let split = ClaudeComposer.split(screen)
             return split.input == nil && AgentPrompt.parse(split.conversation) != nil
         } ?? false
         let echoes = before.flatMap { MessageEcho.echoes(of: text, inChatOf: $0) }
+        let pastes = pasted ? before.flatMap { MessageEcho.pastedEchoes(inChatOf: $0) } : nil
         let images = pasted && !ClaudeImagePaste.parts(text).images.isEmpty
         let boxBefore = images ? before.flatMap { ClaudeComposer.split($0).input } : nil
         let deadline = now().addingTimeInterval(images ? timing.images : timing.echo)
         var holdingSince: Date?, heldBox: String?, takenReadings = 0, landed = !images
+        /// The message's echo in the conversation above the box: its words, or the placeholder of a collapsed paste.
+        func echoed(_ screen: String) -> Bool {
+            if let echoes, let now = MessageEcho.echoes(of: text, inChatOf: screen), now > echoes { return true }
+            if let pastes, let now = MessageEcho.pastedEchoes(inChatOf: screen), now > pastes { return true }
+            return false
+        }
         repeat {
             Thread.sleep(forTimeInterval: timing.poll)
             guard let screen = read() else { continue }
             // In the conversation above the box: taken, whatever the box shows (Claude may suggest the same text again).
-            if let echoes, let now = MessageEcho.echoes(of: text, inChatOf: screen), now > echoes {
+            if echoed(screen) {
                 takenReadings += 1
                 if takenReadings >= 2 { return .taken }
                 continue
@@ -1096,6 +1188,72 @@ final class TerminalAppBridge: ObservableObject {
             perform(Self.targetScript(windowID: windowID, tty: tty, action: Self.returnAction)) { completion($0 ? .sent : .failed) }
             return
         }
+        // Escape to Claude is written, with Terminal left where it is and no Accessibility (`escapeAction`), and checked on its screen.
+        if key == .escape, agent == .claude, backgroundKeys { return pressEscape(windowID: windowID, tty: tty, completion: completion) }
+        pressDirectly(key, windowID: windowID, tty: tty, agent: agent, completion: completion)
+    }
+
+    /// Escape to Claude as a write (`writeEscape`). Only one that never showed on screen goes on as the key, the way keys go.
+    private func pressEscape(windowID: Int, tty: String, completion: @escaping (KeyDelivery) -> Void) {
+        let transport = KeyTransport(run: runScript, post: postKey, read: screenReader, clock: keyClock, pause: keyPause, report: keyReport)
+        queue.async { [weak self] in
+            let outcome = Self.writeEscape(windowID: windowID, tty: tty, transport)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch outcome {
+                case .delivered: completion(.sent)
+                case .agentGone: completion(.failed)
+                case .failed(let message): self.finish(.failure(TerminalBridgeError.failed(message))) { _ in completion(.failed) }
+                case .unseen: self.pressDirectly(.escape, windowID: windowID, tty: tty, agent: .claude, completion: completion)
+                }
+            }
+        }
+    }
+
+    /// Writes Escape to Claude (`escapeAction`, scripting queue only) behind `answerScript`'s check that the tab still runs a program in
+    /// its foreground: with its shell back, ESC P would recall a command and the Return run it. The screen is read before and after, and
+    /// the Escape counts once two readings in a row show it (`KeyEffect`), within `keyVerifyWindow`; where nothing on the screen would
+    /// show it, the write is enough, being harmless whatever Claude does with it. One that didn't show is written once more (Claude
+    /// can let an Escape go right after a message is sent), past the window in which two would read as Esc Esc; then it is `.unseen`.
+    private static func writeEscape(windowID: Int, tty: String, attempts: Int = 2, _ transport: KeyTransport) -> EscapeWrite {
+        let start = transport.clock()
+        func report(_ outcome: KeyAttempt.Outcome, _ detail: String) {
+            transport.report(KeyAttempt(key: .escape, outcome: outcome, milliseconds: Int(((transport.clock() - start) * 1000).rounded()), detail: detail))
+        }
+        let shows = (try? transport.read(windowID, tty)).flatMap { KeyEffect.check(.escape, agent: .claude, before: $0) }
+        for attempt in 1...max(1, attempts) {
+            do {
+                try transport.run(answerScript(windowID: windowID, tty: tty, action: escapeAction))
+            } catch {
+                if case FieldAnswerError.agentGone? = answerOutcome(error) as? FieldAnswerError { report(.unchecked, "written: no program in the tab"); return .agentGone }
+                report(.unchecked, "written: \(error.localizedDescription)")
+                return .failed(error.localizedDescription)
+            }
+            noteEscape(tty: tty, at: ProcessInfo.processInfo.systemUptime)
+            guard let shows else {
+                // The scripting queue's next write waits the string out too.
+                transport.pause(escapeQuiet)
+                report(.written, "nothing on screen to show it")
+                return .delivered
+            }
+            let written = transport.clock()
+            var streak = 0
+            repeat {
+                transport.pause(keyPoll)
+                let screen = try? transport.read(windowID, tty)
+                streak = screen.map(shows) == true ? streak + 1 : 0
+                if streak == 2 {
+                    report(.verified, "written\(attempt > 1 ? " twice" : "")")
+                    return .delivered
+                }
+            } while transport.clock() - written < keyVerifyWindow
+        }
+        report(.unverified, "written \(attempts) times")
+        return .unseen
+    }
+
+    /// A key as a key event: in the background when the screen can tell it arrived, else with Terminal in front.
+    private func pressDirectly(_ key: TerminalKey, windowID: Int, tty: String, agent: TerminalAgent?, completion: @escaping (KeyDelivery) -> Void) {
         guard directKeysAllowed(), let pid = terminalProcess() else { completion(directKeysAllowed() ? .failed : .needsPermission); return }
         // The first key of a burst notes where the keyboard is; the next ones may find Terminal in front, brought by an earlier one.
         focusReturn?.cancel(); focusReturn = nil
@@ -1203,8 +1361,15 @@ final class TerminalAppBridge: ObservableObject {
         func report(_ outcome: KeyAttempt.Outcome, _ detail: String = "") {
             transport.report(KeyAttempt(key: key, outcome: outcome, milliseconds: Int(((transport.clock() - start) * 1000).rounded()), detail: detail))
         }
+        var raised = false
         do { try transport.run(Self.targetScript(windowID: windowID, tty: tty, action: Self.backgroundKeyAction)) }
-        catch { trustedUntil[tty] = nil; report(.behind, error.localizedDescription); return .fallBack(nil) }
+        catch {
+            // The tab's window is behind another of Terminal's: it comes to the front of Terminal's windows, Terminal staying behind.
+            do { try transport.run(Self.targetScript(windowID: windowID, tty: tty, action: Self.raiseKeyAction)) }
+            catch { trustedUntil[tty] = nil; report(.behind, error.localizedDescription); return .fallBack(nil) }
+            raised = true
+            trustedUntil[tty] = nil
+        }
         if let until = trustedUntil[tty], start < until {
             transport.post(key, pid)
             trustedUntil[tty] = transport.clock() + Self.keyTrust
@@ -1222,7 +1387,7 @@ final class TerminalAppBridge: ObservableObject {
             streak = screen.map(shows) == true ? streak + 1 : 0
             if streak == 2 {
                 trustedUntil[tty] = transport.clock() + Self.keyTrust
-                report(.verified)
+                report(.verified, raised ? "window raised" : "")
                 return .delivered
             }
         } while transport.clock() - start < Self.keyVerifyWindow
@@ -1278,6 +1443,43 @@ final class TerminalAppBridge: ObservableObject {
         }
         return true
     }
+
+    /// Applies a row of Claude's /model picker with `keys` (arrows, then Enter or "s") in one write, behind `answerScript`'s checks: the
+    /// tab still runs Claude and its screen still shows `anchors` (the picker's highlighted row as the keys were counted from it). Terminal
+    /// stays where it is and no Accessibility is needed, as for a dialog's answer (`answer`). False, with nothing sent, when the keys
+    /// don't fit one write (`pickerAction`).
+    func pickModel(_ keys: [TerminalKey], anchors: [String], windowID: Int, tty: String, refused: @escaping (FieldAnswerError) -> Void = { _ in },
+                   completion: @escaping (KeyDelivery) -> Void) -> Bool {
+        guard let action = Self.pickerAction(keys) else { return false }
+        let run = runScript
+        queue.async { [weak self] in
+            let result = Result { try run(Self.answerScript(windowID: windowID, tty: tty, anchors: anchors, action: action)) }.mapError(Self.answerOutcome)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let error as FieldAnswerError) = result { refused(error); completion(.failed); return }
+                self.finish(result) { completion($0 ? .sent : .failed) }
+            }
+        }
+        return true
+    }
+
+    /// The keys that apply a row of Claude's /model picker, as one `do script`: the arrows to the row (as `answerText` writes them), then
+    ///
+    /// - for the default (Enter): nothing more. Terminal's own Return is the Enter that sets the row as the default for new sessions.
+    /// - for this session only: "s". Claude's picker reads it as its "use this session only" key and closes; Terminal's Return comes
+    ///   after it in the same chunk and lands on Claude's box, empty as the /model that opened the picker left it, where Enter sends
+    ///   nothing. Only for a picker whose hint lists "s" (`AppModel.pick`): in one that doesn't, the Return would set the row as the
+    ///   default instead.
+    ///
+    /// nil for keys of any other shape, or more arrows than `answerArrowLimit`.
+    static func pickerText(_ keys: [TerminalKey]) -> String? {
+        guard let last = keys.last, last == .enter || last == .keyS else { return nil }
+        let arrows = Array(keys.dropLast())
+        guard arrows.count <= answerArrowLimit, arrows.allSatisfy({ $0 == .up || $0 == .down }) else { return nil }
+        let parts = arrows.map { "(character id 27) & \"[\($0 == .up ? "A" : "B")\"" } + (last == .keyS ? ["\"s\""] : [])
+        return parts.isEmpty ? "\"\"" : "(" + parts.joined(separator: " & ") + ")"
+    }
+    static func pickerAction(_ keys: [TerminalKey]) -> String? { pickerText(keys).map { "do script \($0) in t" } }
 
     /// What an answer's script raises, with nothing written, when the tab no longer runs a program in its foreground: the agent quit
     /// and its shell is back, where an arrow and Terminal's Return would recall and run the last command (`answerScript`).

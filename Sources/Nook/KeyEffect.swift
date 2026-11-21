@@ -90,6 +90,9 @@ struct KeyAttempt: Equatable {
         case verified
         /// Sent without a check, right after one that showed (a burst on the same tab).
         case trusted
+        /// Written to the tab (Escape to Claude, `TerminalAppBridge.escapeAction`) where nothing on its screen would show it: harmless
+        /// whatever Claude did with it, so it was not pressed again.
+        case written
         /// The screen didn't show it in time: pressed again with Terminal in front.
         case unverified = "not verified"
         /// It showed once Terminal was in front, before being pressed again: not pressed twice.

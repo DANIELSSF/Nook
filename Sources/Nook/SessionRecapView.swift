@@ -5,6 +5,10 @@ import AppKit
 // offers it here: a small "Resumen" button in the session-tab row (it costs no mirror height) that opens a card
 // over the top of the mirror. A recap the user has not opened yet is marked with a small mint badge, quietly.
 //
+// The summary Claude Code writes when it compacts the session's context (`CompactionSummary`) is offered the same way, by a
+// second button beside it (`RecapKind.compaction`): both are icons alone, said in words by their tip, and the summary's card
+// shows its Markdown as the mirror does, in the mirror's own view.
+//
 // Integration (PanelView.swift, `sessionTabs`), inside `if let selected = model.selected { … }`, before the
 // "arrow.up.right.square" IconButton:
 //
@@ -43,6 +47,43 @@ enum RecapText {
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
         return String(hash, radix: 16)
+    }
+}
+
+// MARK: - Kinds
+
+/// What a button of this file offers: Claude's recap, or the summary of a compaction.
+enum RecapKind: Equatable {
+    case recap, compaction
+
+    /// The words the button stands for, in its tip and the card's header.
+    var title: String { self == .recap ? "Resumen" : "Resumen de la compactación" }
+    var tip: NookTip {
+        self == .recap ? NookTip("Resumen", detail: "Lo que Claude cuenta de esta sesión al volver a ella")
+            : NookTip("Resumen de la compactación", detail: "Lo que Claude guardó de la conversación al compactar su contexto")
+    }
+    var tipID: String { self == .recap ? "sessionRecap" : "compactionSummary" }
+    /// The key the seen state keeps it under: a session's recap and its compaction summary are read apart.
+    func storeKey(_ session: String) -> String { self == .recap ? session : session + "#compaction" }
+    /// The text worth showing; nil hides the button.
+    func text(_ raw: String?) -> String? {
+        switch self {
+        case .recap: RecapText.clean(raw)
+        case .compaction: CompactionSummary.shown(raw)
+        }
+    }
+}
+
+/// The kind's mark: Claude's own "※" for the recap, a compressed page for the compaction.
+struct RecapKindGlyph: View {
+    var kind: RecapKind
+    var size: CGFloat = 10.5
+
+    var body: some View {
+        switch kind {
+        case .recap: Text("※").font(.system(size: size, weight: .semibold))
+        case .compaction: Image(systemName: "rectangle.compress.vertical").font(.system(size: size - 0.5, weight: .medium))
+        }
     }
 }
 
@@ -89,6 +130,8 @@ final class RecapSeenStore: ObservableObject {
 struct SessionRecapButton: View {
     /// Identifies the session, so each one remembers on its own whether its recap was read.
     var sessionID: String
+    /// The recap, or the compaction's summary.
+    var kind: RecapKind
     /// The session's latest recap as plain text (`TerminalSession.recap`); nil or blank hides the button.
     var recap: String?
     /// Leave the card open while the pointer is elsewhere; previews and tests turn it on.
@@ -105,9 +148,10 @@ struct SessionRecapButton: View {
     @State private var overButton = false
     @State private var overCard = false
 
-    init(sessionID: String, recap: String?, store: RecapSeenStore = .shared, initiallyOpen: Bool = false, keepsOpen: Bool = false, pasteboard: NSPasteboard = .general,
-         cardWidth: CGFloat = SessionRecapCard.width, maxBodyHeight: CGFloat = SessionRecapCard.maxBodyHeight) {
+    init(sessionID: String, recap: String?, kind: RecapKind = .recap, store: RecapSeenStore = .shared, initiallyOpen: Bool = false, keepsOpen: Bool = false,
+         pasteboard: NSPasteboard = .general, cardWidth: CGFloat = SessionRecapCard.width, maxBodyHeight: CGFloat = SessionRecapCard.maxBodyHeight) {
         self.sessionID = sessionID
+        self.kind = kind
         self.recap = recap
         self.keepsOpen = keepsOpen
         self.pasteboard = pasteboard
@@ -118,8 +162,10 @@ struct SessionRecapButton: View {
     }
 
     static let height: CGFloat = 22
-    private var text: String? { RecapText.clean(recap) }
-    private var isNew: Bool { text.map { store.isNew($0, in: sessionID) } ?? false }
+    private var text: String? { kind.text(recap) }
+    private var key: String { kind.storeKey(sessionID) }
+    private var isNew: Bool { text.map { store.isNew($0, in: key) } ?? false }
+    @State private var hovering = false
 
     var body: some View {
         // Without a recap the body is empty, so the tab row's HStack adds no gap for it.
@@ -127,7 +173,7 @@ struct SessionRecapButton: View {
             button(new: isNew)
                 .overlay(alignment: .topTrailing) {
                     if open {
-                        SessionRecapCard(text: text, isNew: openedAsNew, pasteboard: pasteboard, width: cardWidth, maxBodyHeight: maxBodyHeight)
+                        SessionRecapCard(text: text, kind: kind, isNew: openedAsNew, pasteboard: pasteboard, width: cardWidth, maxBodyHeight: maxBodyHeight)
                             // It hangs over the conversation: the arrow shows over it, not the text's I-beam.
                             .pointerHole()
                             .onHover { overCard = $0 }
@@ -137,11 +183,11 @@ struct SessionRecapButton: View {
                     }
                 }
                 .zIndex(1)
-                .onAppear { if open { openedAsNew = store.isNew(text, in: sessionID); store.markSeen(text, in: sessionID) } }
+                .onAppear { if open { openedAsNew = store.isNew(text, in: key); store.markSeen(text, in: key) } }
                 // A new recap while the card is open is read as it arrives.
                 .onChange(of: text) { _, new in
                     guard open else { return }
-                    openedAsNew = store.isNew(new, in: sessionID); store.markSeen(new, in: sessionID)
+                    openedAsNew = store.isNew(new, in: key); store.markSeen(new, in: key)
                 }
                 .onChange(of: sessionID) { _, _ in open = false }
                 // The recap going away takes the card with it.
@@ -155,18 +201,15 @@ struct SessionRecapButton: View {
         }
     }
 
+    /// The button is its mark alone, in a small square chip; its tip says what it is (`RecapKind.tip`), as VoiceOver does.
     private func button(new: Bool) -> some View {
         Button { toggle() } label: {
-            HStack(spacing: 4) {
-                Text("※").font(.system(size: 9.5, weight: .semibold))
-                Text("Resumen").font(.system(size: 9, weight: .medium)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 5.5, weight: .bold)).rotationEffect(.degrees(open ? 180 : 0)).opacity(0.7)
-            }
-            .fixedSize()
-            // Unread: brighter than the quiet resting state, plus a mint badge like the one on the collapsed notch.
-            .foregroundStyle(new || open ? Color.primary.opacity(0.88) : Color.nookSecondary)
-            .padding(.horizontal, 7).frame(height: Self.height)
-            .background(Color.nookWash(open ? 0.12 : (new ? 0.09 : 0.055)), in: RoundedRectangle(cornerRadius: 7))
+            RecapKindGlyph(kind: kind)
+            .frame(width: Self.height, height: Self.height)
+            // Unread or under the pointer: brighter than the quiet resting state; unread also wears a mint badge like the one on the
+            // collapsed notch.
+            .foregroundStyle(new || open || hovering ? Color.primary.opacity(0.88) : Color.nookSecondary)
+            .background(Color.nookWash(open ? 0.12 : hovering ? 0.10 : (new ? 0.09 : 0.055)), in: RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .topTrailing) {
                 if new {
                     Circle().fill(RecapPalette.accent).frame(width: 5.5, height: 5.5)
@@ -177,17 +220,19 @@ struct SessionRecapButton: View {
             .contentShape(Rectangle())
         }
         .nookPress(.pop)
-        .onHover { overButton = $0 }
-        .help(new ? "Resumen nuevo de esta sesión" : "Resumen de esta sesión")
-        .accessibilityLabel("Resumen de la sesión")
+        .onHover { overButton = $0; hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        // Not while its card is open: the card says it.
+        .nookTip(open ? nil : kind.tip, id: kind.tipID)
+        .accessibilityLabel(kind.title)
         .accessibilityValue(new ? "nuevo" : "")
     }
 
     private func toggle() {
         guard let text else { return }
         if !open {
-            openedAsNew = store.isNew(text, in: sessionID)
-            store.markSeen(text, in: sessionID)
+            openedAsNew = store.isNew(text, in: key)
+            store.markSeen(text, in: key)
         }
         withAnimation(.easeOut(duration: 0.16)) { open.toggle() }
     }
@@ -199,12 +244,13 @@ struct ObservedRecapButton<Object: ObservableObject>: View {
     @ObservedObject var object: Object
     var id: KeyPath<Object, String>
     var recap: KeyPath<Object, String?>
+    var kind: RecapKind = .recap
     var cardWidth: CGFloat = SessionRecapCard.width
     var maxBodyHeight: CGFloat = SessionRecapCard.maxBodyHeight
 
     var body: some View {
         let session = object[keyPath: id]
-        SessionRecapButton(sessionID: session, recap: object[keyPath: recap], cardWidth: cardWidth, maxBodyHeight: maxBodyHeight).id(session)
+        SessionRecapButton(sessionID: session, recap: object[keyPath: recap], kind: kind, cardWidth: cardWidth, maxBodyHeight: maxBodyHeight).id(session)
     }
 }
 
@@ -219,6 +265,7 @@ private enum RecapPalette {
 /// with a copy button, the session's topic as a title when the recap opens with one, then the text.
 struct SessionRecapCard: View {
     var text: String
+    var kind: RecapKind = .recap
     /// Shows the "nuevo" tag.
     var isNew = false
     var pasteboard: NSPasteboard = .general
@@ -232,8 +279,10 @@ struct SessionRecapCard: View {
     /// The card scrolls past this; it must stay inside the panel, below the tab row.
     static let maxBodyHeight: CGFloat = 124
 
-    init(text: String, isNew: Bool = false, pasteboard: NSPasteboard = .general, width: CGFloat = SessionRecapCard.width, maxBodyHeight: CGFloat = SessionRecapCard.maxBodyHeight) {
+    init(text: String, kind: RecapKind = .recap, isNew: Bool = false, pasteboard: NSPasteboard = .general, width: CGFloat = SessionRecapCard.width,
+         maxBodyHeight: CGFloat = SessionRecapCard.maxBodyHeight) {
         self.text = text
+        self.kind = kind
         self.isNew = isNew
         self.pasteboard = pasteboard
         self.width = width
@@ -242,10 +291,31 @@ struct SessionRecapCard: View {
     }
 
     var body: some View {
-        let parts = RecapText.split(text)
         VStack(alignment: .leading, spacing: 0) {
             header
-            ScrollView(.vertical) {
+            if kind == .compaction { summary } else { recapBody }
+        }
+        .frame(width: width)
+        .nookGlassCard(radius: 11, clipsContent: true, fill: Self.surface)
+        .nookCardShadow(0.55, radius: 14, y: 5)
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.4))
+            if !Task.isCancelled { copied = false }
+        }
+    }
+
+    /// The compaction's summary, long and in Markdown, in the mirror's own view: its headings, lists, `code` and blocks look as in
+    /// the conversation, it scrolls from its top, and it can be selected and copied (the reply's own copy button copies it too).
+    private var summary: some View {
+        LiveTerminalSurface(text: TranscriptRenderer.indented("⏺ ", text), transcript: true, fontSize: Self.summaryFontSize, opensAtTop: true, showsWayBack: false)
+            .padding(.leading, 8).padding(.trailing, 4).padding(.bottom, 8)
+            .frame(height: maxBodyHeight)
+    }
+
+    private var recapBody: some View {
+        let parts = RecapText.split(text)
+        return ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 5) {
                     if let topic = parts.topic {
                         Text(topic).font(.system(size: Self.topicSize, weight: .semibold)).foregroundStyle(.primary)
@@ -262,21 +332,12 @@ struct SessionRecapCard: View {
             .onPreferenceChange(RecapHeightKey.self) { bodyHeight = $0 }
             // A long recap scrolls; the fade says so.
             .nookScrollFade(active: bodyHeight > maxBodyHeight, surface: Self.surface)
-        }
-        .frame(width: width)
-        .nookGlassCard(radius: 11, clipsContent: true, fill: Self.surface)
-        .nookCardShadow(0.55, radius: 14, y: 5)
-        .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .seconds(1.4))
-            if !Task.isCancelled { copied = false }
-        }
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text("※").font(.system(size: 10)).foregroundStyle(Color.nookTertiary)
-            Text("Resumen").font(.system(size: 9, weight: .semibold))
+            RecapKindGlyph(kind: kind, size: 10).foregroundStyle(Color.nookTertiary)
+            Text(kind.title).font(.system(size: 9, weight: .semibold))
             if isNew {
                 Text("nuevo").font(.system(size: 7.5, weight: .semibold)).foregroundStyle(RecapPalette.accent)
                     .padding(.horizontal, 4).padding(.vertical, 1.5)
@@ -289,7 +350,7 @@ struct SessionRecapCard: View {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 7, weight: .semibold)).frame(width: 15, height: 11)
                         .background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 3))
                 }.foregroundStyle(copied ? RecapPalette.accent : Color.nookSecondary)
-            }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).help("Copiar el resumen")
+            }.nookPress(.squeeze, depth: PressDepth.card, strength: 0.5).help(kind == .recap ? "Copiar el resumen" : "Copiar el resumen de la compactación")
         }.padding(.horizontal, 12).frame(height: 26)
     }
 
@@ -300,6 +361,8 @@ struct SessionRecapCard: View {
     }
 
     private static let surface = Color.nookCard
+    /// The summary's text: a point under the chat's default, in a card narrower than the conversation.
+    static let summaryFontSize: Double = 10
     private static let topicSize: CGFloat = 11
     private static let bodySize: CGFloat = 10.5
     private static let bodySpacing: CGFloat = 2.5

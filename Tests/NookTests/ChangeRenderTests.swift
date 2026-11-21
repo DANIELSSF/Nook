@@ -88,6 +88,15 @@ final class ChangeRenderTests: XCTestCase {
         try renderMirror(text, chatSize: 9, size: NSSize(width: 540, height: 360), to: path(directory, "markdown-reply-small.png"))
     }
 
+    func testRenderTablesInAReply() throws {
+        let directory = try renderDirectory()
+        let wide = "Quedan tres comprobaciones:\n\n| Qué | Cuánto toma | Cuándo |\n|---|---|---|\n| **816:** correr `ghl:setup` para que cree el campo M-07 en «LYN Dev» | unos 5 min; tú corres un script con `!` | cuando quieras |\n| **818:** una venta con creadora, que aparezca en su `order_history` | unos 15 min; entrar por el enlace de una creadora, comprar y simular el pago | cuando quieras |\n| **467:** ver que el token se renovó solo | un vistazo al log | mañana entre 07:00 y 08:00 UTC |\n\n¿Hacemos ahora la 816 y la 818?"
+        let narrow = "Resultado de los tests:\n\n| Suite | Tests | Fallos |\n|:--|--:|--:|\n| RemoteAccessTests | 49 | 0 |\n| PreviewNotesFocusTests | 13 | 0 |\n| **Total** | 2506 | 8 |\n\nTodo en verde al repetirlos."
+        let text = TranscriptFixtures.render([TranscriptFixtures.prompt("¿Qué falta?"), TranscriptFixtures.reply(wide), TranscriptFixtures.reply(narrow)])
+        try renderMirror(text, size: NSSize(width: 540, height: 520), to: path(directory, "table-island.png"))
+        try renderMirror(text, size: NSSize(width: 1300, height: 360), to: path(directory, "table-wide.png"))
+    }
+
     func testRenderMarkdownInTheIsland() throws {
         let directory = try renderDirectory()
         let reply = "**Cómo queda:** el espejo dibuja la *cursiva*, la **negrita** y el `código en línea`.\n\n## Qué cambió\n\n- **Negrita:** sin asteriscos.\n- Una ruta `src/**/*.swift` y [una guía](https://example.com).\n\nListo, 2 * 3 * 4 y file_name_here quedan igual."

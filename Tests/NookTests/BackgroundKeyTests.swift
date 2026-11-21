@@ -105,6 +105,12 @@ final class BackgroundKeyTests: XCTestCase {
         private var _front: pid_t
         private var _now: TimeInterval = 1_000
         var windowInFront = true
+        /// Terminal brings the tab's window to the front of its own without being activated (`raiseKeyAction`).
+        var raises = true
+        /// Claude reads the Escape Nook writes (`escapeAction`); the tab runs a program in its foreground.
+        var writeArrives = true
+        var busy = true
+        var writes: Int { scripts.filter { $0.contains(TerminalAppBridge.escapeAction) }.count }
         var background: Arrival
         var effect: (TerminalKey, String) -> String
         var returned: [KeyFocus] = []
@@ -128,6 +134,14 @@ final class BackgroundKeyTests: XCTestCase {
                 try self.locked {
                     self._scripts.append(script)
                     if script.contains("index of targetWindow is not 1"), !self.windowInFront { throw TerminalBridgeError.failed("La ventana de la pestaña no es la de delante en Terminal.") }
+                    if script.contains(TerminalAppBridge.escapeAction) {
+                        if !self.busy { throw TerminalBridgeError.failed(TerminalAppBridge.agentGoneError) }
+                        if self.writeArrives { self._screen = self.effect(.escape, self._screen) }
+                    }
+                    if script.contains("set index of targetWindow to 1"), !script.contains("activate") {
+                        guard self.raises else { throw TerminalBridgeError.failed("La ventana de la pestaña está minimizada.") }
+                        self.windowInFront = true
+                    }
                     if script.contains("activate") {
                         self._front = 4242
                         if let held = self.held { self._screen = held; self.held = nil }
@@ -178,14 +192,86 @@ final class BackgroundKeyTests: XCTestCase {
         return permission(min(2, max(0, at + (key == .down ? 1 : key == .up ? -1 : 0))))
     }
 
-    func testTheStopButtonsEscapeGoesWithTerminalBehindWhenTheScreenShowsIt() {
+    private static func codexStop(_ key: TerminalKey, _ screen: String) -> String { key == .escape && screen == codexWorking ? codexStopped : screen }
+
+    // MARK: Escape to Claude, written
+
+    func testTheStopButtonsEscapeIsWrittenWithTerminalLeftBehind() {
         let terminal = FakeTerminal(screen: Self.working, effect: Self.stop)
+        terminal.windowInFront = false   // another of Terminal's windows is in front: it makes no difference
         XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
-        XCTAssertEqual(terminal.posts, ["escape"], "One key, posted with Terminal behind.")
+        XCTAssertEqual(terminal.posts, [], "No key event: no Accessibility, and Terminal can be anywhere.")
+        XCTAssertEqual(terminal.scripts.count, 1)
+        XCTAssertTrue(terminal.scripts[0].contains(TerminalAppBridge.escapeAction))
+        XCTAssertTrue(terminal.scripts[0].contains(TerminalAppBridge.busyGuard), "Never to the shell, where ESC P recalls a command and the Return runs it.")
+        XCTAssertFalse(terminal.activated)
+        XCTAssertFalse(terminal.scripts[0].contains("set index"), "The window is not raised either.")
+        XCTAssertEqual(terminal.reports, [KeyAttempt(key: .escape, outcome: .verified, milliseconds: 200, detail: "written")], "Two readings in a row, 0.1 s apart.")
+        XCTAssertEqual(terminal.screen, Self.interrupted)
+        settle()
+        XCTAssertEqual(terminal.returned, [], "Terminal never came forward: the keyboard never moved.")
+        XCTAssertEqual(terminal.front, 777)
+    }
+
+    func testTheWrittenEscapeIsEscapeAndTerminalsReturnIsHeldInAControlString() {
+        // ESC, then ESC P: the first ESC goes on its own (the key), ESC P opens a string that takes Terminal's Return and comes to nothing.
+        XCTAssertEqual(TerminalAppBridge.escapeAction, "do script ((character id 27) & (character id 27) & \"P\") in t")
+        var details: NSDictionary?
+        let source = TerminalAppBridge.answerScript(windowID: 42, tty: "/dev/ttys003", action: TerminalAppBridge.escapeAction)
+        XCTAssertTrue(NSAppleScript(source: source)!.compileAndReturnError(&details), details?.description ?? "")
+        XCTAssertFalse(source.contains("activate"))
+    }
+
+    func testAnEscapeWithNothingToShowItIsWrittenOnce() {
+        let terminal = FakeTerminal(screen: Self.idle, effect: { _, screen in screen })
+        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
+        XCTAssertEqual(terminal.writes, 1, "Harmless whatever Claude does with it: not written again.")
+        XCTAssertEqual(terminal.outcomes, [.written])
+        XCTAssertEqual(terminal.posts, [])
+        XCTAssertFalse(terminal.activated)
+    }
+
+    func testAWrittenEscapeThatNeverShowsIsWrittenOnceMoreThenGoesAsAKey() {
+        let terminal = FakeTerminal(screen: Self.working, effect: Self.stop)
+        terminal.writeArrives = false
+        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
+        XCTAssertEqual(terminal.writes, 2, "Once more past the double-press window, then the key.")
+        XCTAssertEqual(terminal.outcomes, [.unverified, .verified])
+        XCTAssertGreaterThanOrEqual(terminal.reports[0].milliseconds, 2000, "Each write had its whole wait: never Esc Esc.")
+        XCTAssertEqual(terminal.posts, ["escape"], "The key with Terminal behind, as for any key the screen can check.")
+        XCTAssertFalse(terminal.activated)
+    }
+
+    func testAnEscapeToATabWhoseClaudeQuitIsNotWritten() {
+        let terminal = FakeTerminal(screen: Self.working, effect: Self.stop)
+        terminal.busy = false
+        XCTAssertEqual(terminal.press([.escape], test: self), [.failed])
+        XCTAssertEqual(terminal.posts, [])
+        XCTAssertFalse(terminal.activated)
+        XCTAssertNotEqual(terminal.screen, Self.interrupted)
+    }
+
+    func testAWriteRightAfterTheEscapeWaitsForClaudesStringToEnd() {
+        var paused: [TimeInterval] = []
+        TerminalAppBridge.waitOutEscape(tty: "/dev/ttys-never", pause: { paused.append($0) })
+        XCTAssertEqual(paused, [], "No Escape was written there.")
+        let terminal = FakeTerminal(screen: Self.idle, effect: { _, screen in screen })
+        _ = terminal.press([.escape], test: self)
+        TerminalAppBridge.waitOutEscape(tty: "/dev/ttys090", pause: { paused.append($0) })
+        XCTAssertLessThanOrEqual(paused.count, 1)
+        XCTAssertLessThanOrEqual(paused.first ?? 0, TerminalAppBridge.escapeQuiet)
+    }
+
+    // MARK: Keys as key events (Codex's Escape, the arrows)
+
+    func testCodexsEscapeGoesWithTerminalBehindWhenTheScreenShowsIt() {
+        let terminal = FakeTerminal(screen: Self.codexWorking, effect: Self.codexStop)
+        XCTAssertEqual(terminal.press([.escape], agent: .codex, test: self), [.sent])
+        XCTAssertEqual(terminal.posts, ["escape"], "One key, posted with Terminal behind: Codex reads ESC P as Alt+P, so it keeps its key.")
         XCTAssertEqual(terminal.scripts.count, 1)
         XCTAssertTrue(terminal.scripts[0].contains("index of targetWindow is not 1"))
         XCTAssertFalse(terminal.activated)
-        XCTAssertFalse(terminal.scripts[0].contains("set index"), "The window is never raised in the background.")
+        XCTAssertFalse(terminal.scripts[0].contains("set index"), "The window is never raised when it is already in front.")
         XCTAssertEqual(terminal.reports, [KeyAttempt(key: .escape, outcome: .verified, milliseconds: 200)], "Two readings in a row, 0.1 s apart.")
         settle()
         XCTAssertEqual(terminal.returned, [], "Terminal never came forward: the keyboard never moved.")
@@ -193,36 +279,49 @@ final class BackgroundKeyTests: XCTestCase {
     }
 
     func testAKeyTheScreenDoesntShowIsPressedOnceMoreWithTerminalInFront() {
-        let terminal = FakeTerminal(screen: Self.working, background: .never, effect: Self.stop)
-        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
+        let terminal = FakeTerminal(screen: Self.codexWorking, background: .never, effect: Self.codexStop)
+        XCTAssertEqual(terminal.press([.escape], agent: .codex, test: self), [.sent])
         XCTAssertEqual(terminal.posts, ["escape", "escape (Terminal delante)"], "Exactly one more press, with Terminal in front.")
         XCTAssertEqual(terminal.scripts.count, 2)
         XCTAssertTrue(terminal.scripts[1].contains("activate"))
         XCTAssertEqual(terminal.outcomes, [.unverified])
         XCTAssertTrue((1000...1100).contains(terminal.reports[0].milliseconds), "The whole wait: \(terminal.reports[0].milliseconds) ms")
-        XCTAssertEqual(terminal.screen, Self.interrupted)
+        XCTAssertEqual(terminal.screen, Self.codexStopped)
         settle()
         XCTAssertEqual(terminal.returned, [KeyFocus(app: 777)], "The keyboard goes back, as with any key that brought Terminal forward.")
     }
 
-    func testAWindowThatIsntTerminalsFrontOneGoesStraightToTerminalInFront() {
-        let terminal = FakeTerminal(screen: Self.working, effect: Self.stop)
+    func testAWindowBehindAnotherOfTerminalsIsRaisedWithoutActivatingTerminal() {
+        let terminal = FakeTerminal(screen: Self.permission(0), effect: Self.move)
         terminal.windowInFront = false
-        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
-        XCTAssertEqual(terminal.posts, ["escape (Terminal delante)"], "No key with Terminal behind: it would go to its front window.")
+        XCTAssertEqual(terminal.press([.down], test: self), [.sent])
+        XCTAssertEqual(terminal.posts, ["down"], "Posted with Terminal behind, once its window was Terminal's front one.")
+        XCTAssertTrue(terminal.scripts.contains { $0.contains("set index of targetWindow to 1") })
+        XCTAssertFalse(terminal.activated)
+        XCTAssertEqual(terminal.reports.map(\.outcome), [.verified])
+        XCTAssertEqual(terminal.reports[0].detail, "window raised")
+        settle()
+        XCTAssertEqual(terminal.returned, [], "The keyboard never moved.")
+    }
+
+    func testAWindowThatCantBeRaisedGoesStraightToTerminalInFront() {
+        let terminal = FakeTerminal(screen: Self.permission(0), effect: Self.move)
+        terminal.windowInFront = false
+        terminal.raises = false
+        XCTAssertEqual(terminal.press([.down], test: self), [.sent])
+        XCTAssertEqual(terminal.posts, ["down (Terminal delante)"], "No key with Terminal behind: it would go to its front window.")
         XCTAssertEqual(terminal.reports.map(\.outcome), [.behind])
-        XCTAssertTrue(terminal.reports[0].detail.contains("no es la de delante"))
         XCTAssertTrue(terminal.activated)
         settle()
         XCTAssertEqual(terminal.returned, [KeyFocus(app: 777)])
     }
 
     func testAKeyThatShowsOnlyOnceTerminalIsInFrontIsNotPressedTwice() {
-        let terminal = FakeTerminal(screen: Self.working, background: .whenInFront, effect: Self.stop)
-        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
+        let terminal = FakeTerminal(screen: Self.codexWorking, background: .whenInFront, effect: Self.codexStop)
+        XCTAssertEqual(terminal.press([.escape], agent: .codex, test: self), [.sent])
         XCTAssertEqual(terminal.posts, ["escape"], "It arrived in the background; it is not pressed again.")
         XCTAssertEqual(terminal.outcomes, [.unverified, .late])
-        XCTAssertEqual(terminal.screen, Self.interrupted)
+        XCTAssertEqual(terminal.screen, Self.codexStopped)
     }
 
     func testABurstWaitsOnlyForItsFirstKey() {
@@ -238,8 +337,9 @@ final class BackgroundKeyTests: XCTestCase {
 
     func testAMissedKeyEndsTheTrust() {
         let terminal = FakeTerminal(screen: Self.permission(0), effect: Self.move)
+        terminal.raises = false
         _ = terminal.press([.down], test: self)
-        terminal.windowInFront = false   // the user raised another Terminal window
+        terminal.windowInFront = false   // the user raised another Terminal window, and minimized this one
         _ = terminal.press([.down], test: self)
         terminal.windowInFront = true
         _ = terminal.press([.up], test: self)
@@ -247,8 +347,9 @@ final class BackgroundKeyTests: XCTestCase {
     }
 
     func testAScreenWithNothingSureToShowTheKeyGoesWithTerminalInFront() {
-        let terminal = FakeTerminal(screen: Self.idle, effect: { _, screen in screen })
-        XCTAssertEqual(terminal.press([.escape], test: self), [.sent])
+        let idle = Self.screen(["• Listo.", "", "› Ask Codex to do something", "", "  ⏎ send   ⌃J newline"])
+        let terminal = FakeTerminal(screen: idle, effect: { _, screen in screen })
+        XCTAssertEqual(terminal.press([.escape], agent: .codex, test: self), [.sent])
         XCTAssertEqual(terminal.outcomes, [.unchecked])
         XCTAssertEqual(terminal.posts, ["escape (Terminal delante)"])
     }
@@ -316,7 +417,8 @@ final class BackgroundKeyTests: XCTestCase {
         DispatchQueue.global().async { while terminal.reports.isEmpty { usleep(5_000) }; done.fulfill() }
         wait(for: [done], timeout: 3)
         XCTAssertEqual(terminal.outcomes, [.verified])
-        XCTAssertEqual(terminal.posts, ["escape"])
+        XCTAssertEqual(terminal.writes, 1, "Written: Escape and Terminal's Return held in Claude's control string.")
+        XCTAssertEqual(terminal.posts, [])
         XCTAssertFalse(terminal.activated)
     }
 

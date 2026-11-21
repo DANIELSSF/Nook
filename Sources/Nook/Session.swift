@@ -180,6 +180,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     @Published private(set) var agentMode: ClaudeMode?
     /// Claude's latest session recap, shown outside the chat.
     @Published var recap: String?
+    /// The summary Claude Code wrote when it last compacted this session's context (`CompactionSummary`): out of the chat, behind its
+    /// own control beside the recap's. From the record, or from the screen without one.
+    @Published private(set) var compactSummary: String?
     /// The question the agent is waiting on at the end of its screen (a permission, a choice), if any. It is read on
     /// every pass, also the collapsed island's screen-only ones: a new prompt is what brings the island forward.
     @Published private(set) var prompt: AgentPrompt?
@@ -245,7 +248,9 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     private var recordShown: String? { transcriptText.map { record in record + (runningShell?.shown(after: record) ?? "") } }
 
     func applyTranscript(_ text: String?, recap: String?, skills: [String: String] = [:], usedCommands: Set<String> = [], agents: [SubagentActivity]? = nil,
-                         queued: [String]? = nil, shells: [ShellActivity]? = nil) {
+                         queued: [String]? = nil, shells: [ShellActivity]? = nil, compactSummary: String? = nil) {
+        // The record's latest compaction summary, read with the text it belongs to.
+        if text != nil, self.compactSummary != compactSummary { self.compactSummary = compactSummary }
         if let text {
             if transcriptText != text { recordBegun = ClaudeExchange.begun(text) }
             transcriptText = text
@@ -433,6 +438,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
             mirroredText = text; lastOutput = Date()
         }
         if agent != foreground { agent = foreground }
+        if foreground != .claude, compactSummary != nil { compactSummary = nil }
         if foreground != .claude, transcript != nil { transcript = nil; transcriptText = nil; recordBegun = false; transcriptLocated = .distantPast; skills = [:]; usedCommands = []; viewedAgent = nil; forgetShells() }
         if foreground != .claude { recordLocator = nil }
         if foreground != .claude, effort != nil { effort = nil }
@@ -443,10 +449,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         let fromRecord = transcriptText != nil && foreground == .claude
         let split = fromRecord ? Self.screen(text, agent: foreground, earlier: archive) : Self.screen(archive + text, agent: foreground)
         menu = split.menu
-        screenConversation = fromRecord ? "" : split.conversation
+        // Without the record, a compaction's summary on the screen gives way to a divider in the chat, and goes to its own control.
+        let compacted = fromRecord ? nil : CompactionSummary.stripped(split.conversation)
+        if let summary = compacted?.summary, compactSummary != summary { compactSummary = summary }
+        screenConversation = compacted?.text ?? ""
         runningShell = fromRecord ? RunningShellCommand.parse(split.conversation) : nil
         // Published only when it changed: every assignment redraws the island, also with the same 240,000 characters.
-        let shown = recordShown ?? split.conversation
+        let shown = recordShown ?? compacted?.text ?? split.conversation
         if viewedAgent == nil, displayText != shown { displayText = shown }
         readPrompt(in: split.conversation, agent: foreground)
         showPanel(split.panel, agent: foreground)
@@ -631,6 +640,12 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     /// Only an agent's screen can hold its prompt; a shell's output never is one.
     private func readPrompt(in text: String, agent: TerminalAgent?) {
         let found = agent == nil ? nil : AgentPrompt.parse(text)
+        // The picker's highlighted row as this reading has it: a write counted from this reading checks it is still on screen.
+        promptHighlight = found.flatMap { found in
+            guard ClaudeModelStore.isModelPicker(found) else { return nil }
+            return text.split(separator: "\n", omittingEmptySubsequences: false).suffix(found.tailLines)
+                .first { $0.contains("❯") }.map { String($0.reversed().drop(while: \.isWhitespace).reversed()) }
+        }
         if prompt != found {
             prompt = found
             // Claude's /model picker is where Nook learns which models this account offers.
@@ -913,7 +928,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
         if let tty = externalTTY, let windowID = externalWindowID, let terminalBridge {
             // A shell runs the line on Terminal's own Return; an agent needs its own Enter.
             if let agent {
-                terminalBridge.deliver(windowID: windowID, tty: tty, text: draft, agent: agent) { [weak self] outcome in
+                terminalBridge.deliver(windowID: windowID, tty: tty, text: draft, agent: agent, record: recordCheck()) { [weak self] outcome in
                     self?.sending = false
                     switch outcome {
                     case .sent: completion(true)
@@ -953,19 +968,31 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     var paneJournal: (String) -> Void = { DeliveryJournal.append($0) }
     private static let paneDeliveries = DispatchQueue(label: "dev.nook.pane-delivery", qos: .userInitiated)
 
+    /// Claude's own record of this tab, which a delivery asks when the screen never showed its message arrive (`ClaudeRecordArrival`);
+    /// nil without Claude or a record found. Tests point it at a file of their own.
+    lazy var deliveryRecord: () -> URL? = { [weak self] in self?.agent == .claude ? self?.transcript?.url : nil }
+
+    /// Whether the record has a message since now (a second of slack for the clocks' rounding): the delivery that starts now asks it, on
+    /// its own queue, with the message as it went. An earlier copy of the same words (a message sent twice) is from before, and never counts.
+    private func recordCheck() -> ((String) -> Bool)? {
+        guard let url = deliveryRecord() else { return nil }
+        let since = Date().addingTimeInterval(-1)
+        return { ClaudeRecordArrival.holds($0, in: url, since: since) }
+    }
+
     /// A message with images for Claude in this Nook session. Claude drops the Return of a paste with images (`ClaudeImagePaste`),
     /// and the old way here (paste, Return 0.35 s later) lost it while Claude still read them: the message stayed in its box while
     /// Nook said it went. It goes like a Terminal tab's instead (`TerminalAppBridge.deliver`): tmux pastes it (bracketed, so Claude
     /// attaches the images), and Enter follows once the box holds it, with the same checks, retries and outcomes. The steps go to
     /// the delivery log like a Terminal tab's.
     private func deliverToPane(_ text: String, completion: @escaping (Bool) -> Void) {
-        let send = paneSend, read = paneScreen, timing = paneTiming, journal = paneJournal
+        let send = paneSend, read = paneScreen, timing = paneTiming, journal = paneJournal, record = recordCheck()
         Self.paneDeliveries.async { [weak self] in
             var steps: [String] = []
             let started = Date()
             let result = Result {
                 try TerminalAppBridge.deliver(text, agent: .claude, typed: false, withReturn: false, timing: timing, send: { try send($0, text) }, read: read,
-                                              trace: { steps.append(String(format: "%.1fs %@", Date().timeIntervalSince(started), $0)) })
+                                              record: record, trace: { steps.append(String(format: "%.1fs %@", Date().timeIntervalSince(started), $0)) })
             }
             if case .failure(let error) = result, !(error is DeliveryError) { steps.append("error: \(error.localizedDescription)") }
             DispatchQueue.main.async {
@@ -990,6 +1017,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     /// otherwise; a tmux session presses its keys one by one, as before.
     /// The write goes only while the tab still runs the agent in its foreground; otherwise nothing is written and `refused` hears why
     /// (`TerminalAppBridge.answerScript`).
+    /// The line of Claude's /model picker with its highlight, as the latest reading had it (`readPrompt`); nil without the picker.
+    private(set) var promptHighlight: String?
+
+    /// Applies a row of Claude's /model picker in this Terminal tab with `keys` (arrows, then Enter or "s") in one write, with Terminal
+    /// left where it is (`TerminalAppBridge.pickModel`): nothing goes unless the tab still runs Claude and still shows the picker's
+    /// highlighted row as the keys were counted from it. False, with nothing sent, when this is no Terminal tab or the keys don't fit.
+    func pickModel(_ keys: [TerminalKey], refused: @escaping (TerminalAppBridge.FieldAnswerError) -> Void = { _ in },
+                   completion: @escaping (KeyDelivery) -> Void) -> Bool {
+        guard let tty = externalTTY, let windowID = externalWindowID, let terminalBridge, let highlight = promptHighlight else { return false }
+        if let key = keys.first { userInput(key) }
+        return terminalBridge.pickModel(keys, anchors: [highlight], windowID: windowID, tty: tty, refused: refused, completion: completion)
+    }
+
     func choose(_ keys: [TerminalKey], refused: @escaping (TerminalAppBridge.FieldAnswerError) -> Void = { _ in },
                 completion: @escaping (KeyDelivery) -> Void) -> Bool {
         guard let tty = externalTTY, let windowID = externalWindowID, let terminalBridge else { return false }
@@ -1113,8 +1153,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, LocalProc
     }
     func interrupt(completion: @escaping (KeyDelivery) -> Void = { _ in }) {
         userInput(.escape)
-        // Agents stop on Escape; a second Control-C would quit them, and Terminal's
-        // Return would arrive in the same chunk as the Control-C.
+        // Agents stop on Escape (Claude's, in a Terminal tab, is written with Terminal left where it is: `TerminalAppBridge.escapeAction`);
+        // a second Control-C would quit them, and Terminal's Return would arrive in the same chunk as the Control-C.
         if drivesAgent { press(.escape, completion: completion); return }
         if isExternal { send("\u{03}") { completion($0 ? .sent : .failed) } }
         else { terminal.send(txt: "\u{03}"); completion(.sent) }
@@ -1846,6 +1886,16 @@ final class AppModel: ObservableObject {
             notice = "El selector de Claude no muestra «\(choice.label)»; elígelo en él."
             return
         }
+        // In a Terminal tab the row is applied in one write, Terminal left where it is (`TerminalSession.pickModel`). "s" goes that way
+        // only where the picker's hint lists it, which proves Terminal's Return after it harmless (`TerminalAppBridge.pickerText`).
+        // Otherwise, or with more arrows than one write takes, the keys go one by one as before.
+        let oneWrite = keys.last == .enter || picker.actions.contains { $0.key == "s" }
+        let refused: (TerminalAppBridge.FieldAnswerError) -> Void = { [weak self, weak session] error in
+            self?.notice = error == .agentGone ? Self.agentGoneNotice(agent: session?.agent)
+                : "El selector de modelos de Claude cambió antes de que eligiera; no envié ninguna tecla."
+        }
+        // A write brings nothing forward: no keyboard to give back, and a refusal says why itself.
+        if oneWrite, session.pickModel(keys, refused: refused, completion: { _ in }) { return }
         pressInPicker(keys, on: session, from: origin)
     }
     /// One key after the other while the tab still shows the picker; anything else on screen stops them.
@@ -1914,6 +1964,12 @@ final class AppModel: ObservableObject {
     /// `quietScreen`: its screenshot is not told on the Mac (the phone's message while the island is collapsed, `ScreenVisionCapture.quiet`).
     func sendMessage(_ text: String, files: [String] = [], to session: TerminalSession, rememberingFiles: Bool = false, quietScreen: Bool = false,
                      completion: @escaping (MessageOutcome) -> Void = { _ in }) {
+        // One message at a time: while the one before is on its way (its picture of the screen being taken, or its delivery), another never
+        // goes, whichever composer sends it. It goes back to whoever wrote it, and the notice says why.
+        if let busy = Self.messageInFlight(sending: session.sending, capturing: screenVision.capturing) {
+            notice = busy
+            return completion(.notDelivered)
+        }
         let withScreen = screenVision.attaches(text: text, agent: session.agent)
         screenVision.prepareMessage(files: files, withScreen: withScreen, quiet: quietScreen) { sent in
             let message = MessageAttachments.message(text: text, files: sent)
@@ -1931,6 +1987,28 @@ final class AppModel: ObservableObject {
         } failed: { notice in
             completion(.screenFailed(notice))
         }
+    }
+
+    /// Why a message can't go now (`sendMessage`): the one before is still on its way; nil when nothing is.
+    static func messageInFlight(sending: Bool, capturing: Bool) -> String? {
+        if sending { return "Todavía se está enviando el mensaje anterior; espera un momento." }
+        if capturing { return "Nook está capturando la pantalla para el mensaje anterior; espera un momento." }
+        return nil
+    }
+
+    /// What the user is told of a message that came back to them: the agent never showed it arriving (its screen nor its record), or
+    /// still held it in its box after Nook's Enters. Not "it failed": it may be on its way in a form Nook can't see, so before writing
+    /// it again they look.
+    static func undeliveredNotice(agent: TerminalAgent?) -> String {
+        "No pude confirmar que \(agent?.title ?? "la terminal") recibiera tu mensaje, así que no lo di por enviado. Revisa la terminal antes de enviarlo otra vez."
+    }
+
+    /// The island's composer got a message back (`MessageOutcome.notDelivered`): never in silence. Said unless something more precise
+    /// already was since `serial` (the `noticeSerial` read before sending): why it could not go yet (`messageInFlight`), the terminal's
+    /// own failure (`onFailure`), or the joined box, which has a warning of its own. The phone says it in its own words (`RemoteRoutes`).
+    func tellUndelivered(on session: TerminalSession, since serial: Int) {
+        guard session.joinedBox == nil, noticeSerial == serial else { return }
+        notice = Self.undeliveredNotice(agent: session.agent)
     }
 
     /// The screenshots that went with messages from Nook's composers, by tab id, oldest first (`SentShot`). Nook Remote shows them
@@ -2560,7 +2638,7 @@ final class AppModel: ObservableObject {
                 DispatchQueue.main.async {
                     if session.transcript === follower {
                         session.applyTranscript(text, recap: renderer.recap, skills: renderer.skills, usedCommands: renderer.usedCommands, agents: agents, queued: queued,
-                                                shells: shells)
+                                                shells: shells, compactSummary: renderer.compactSummary)
                         if let viewing, let agentText { session.applyAgentText(agentText, call: viewing) }
                         if let shell, let output { session.applyShellOutput(output, id: shell) }
                     }

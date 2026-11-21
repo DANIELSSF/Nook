@@ -14,7 +14,7 @@ import Foundation
 
 /// How a character of a reply looks beyond plain text. Several can apply at once (a bold word inside a heading).
 struct MarkupStyle: OptionSet, Hashable {
-    let rawValue: UInt8
+    let rawValue: UInt16
     static let bold = MarkupStyle(rawValue: 1)
     static let italic = MarkupStyle(rawValue: 2)
     /// Inside `backticks`.
@@ -27,6 +27,10 @@ struct MarkupStyle: OptionSet, Hashable {
     static let link = MarkupStyle(rawValue: 32)
     /// The dash of a bullet.
     static let bullet = MarkupStyle(rawValue: 64)
+    /// The text of a block quote (`> text`): quieter, and slanted.
+    static let quote = MarkupStyle(rawValue: 128)
+    /// A quote's `>` and the space after it: not shown, but it keeps its room, where the mirror draws the quote's bar.
+    static let quoteMark = MarkupStyle(rawValue: 256)
 }
 
 enum InlineMarkdown {
@@ -47,8 +51,10 @@ enum InlineMarkdown {
         /// The stretches that look different, in order and without overlaps; the text between them is plain.
         var runs: [Run]
         var links: [Link]
-        /// The column, counted from the start of the line, where the text of a list item begins: its wrapped lines hang there.
+        /// The column, counted from the start of the line, where the text of a list item or a quote begins: its wrapped lines hang there.
         var hang: Int?
+        /// How many quotes deep the line is: `> text` is 1, `> > text` 2; 0 outside a quote.
+        var quote = 0
     }
 
     /// The most columns a wrapped list item hangs by.
@@ -66,7 +72,7 @@ enum InlineMarkdown {
         // Most lines have none of the characters that start anything: no work for them.
         let lead = chars.firstIndex { $0 != 0x20 && $0 != 0x09 } ?? 0
         let first = chars[lead]
-        guard first == 0x23 || first == 0x2D || first == 0x2B || (first >= 0x30 && first <= 0x39)
+        guard first == 0x23 || first == 0x2D || first == 0x2B || first == 0x3E || (first >= 0x30 && first <= 0x39)
                 || chars.contains(where: { $0 == 0x60 || $0 == 0x2A || $0 == 0x5F || $0 == 0x5B }) else { return nil }
         var parser = Parser(chars)
         let touched = parser.run()
@@ -83,16 +89,17 @@ enum InlineMarkdown {
 private struct Parser {
     let c: [unichar]
     let n: Int
-    var style: [UInt8]
+    var style: [UInt16]
     /// The line as emphasis sees it: code spans are one solid word, and so is the address of a link.
     var mask: [unichar]
     var links: [(start: Int, end: Int, url: String)] = []
     var touched = false
     var hang: Int?
+    var quote = 0
 
     init(_ chars: [unichar]) {
         c = chars; n = chars.count
-        style = [UInt8](repeating: 0, count: chars.count)
+        style = [UInt16](repeating: 0, count: chars.count)
         mask = chars
     }
 
@@ -116,6 +123,21 @@ private struct Parser {
         var lead = 0
         while lead < n, isSpace(c[lead]) { lead += 1 }
         guard lead < n else { return false }
+        // A block quote: ">" followed by a space, the end of the line or another ">" ("> > text", ">> text"). Each mark and its space
+        // keep their room (the bar is drawn there) and are not shown; what follows is the quote, read as a line of its own. ">=" or
+        // "->" are text.
+        while lead < n, c[lead] == 0x3E, lead + 1 == n || c[lead + 1] == 0x20 || c[lead + 1] == 0x3E {
+            var after = lead + 1
+            if after < n, c[after] == 0x20 { after += 1 }
+            set(lead..<after, .quoteMark)
+            quote += 1
+            lead = after
+        }
+        if quote > 0 {
+            set(lead..<n, .quote)
+            hang = min(lead, InlineMarkdown.maxHang)
+            guard lead < n else { return true }
+        }
         var start = lead
         // A heading: one to six "#" and a space. The marks and the space are hidden, the rest is the heading.
         if c[lead] == 0x23 {
@@ -269,14 +291,18 @@ private struct Parser {
         var i = 0
         while i < n {
             guard style[i] != 0 else { i += 1; continue }
-            // A hidden mark is only hidden, whatever the text around it is.
-            func normalized(_ flags: UInt8) -> UInt8 { flags & MarkupStyle.hidden.rawValue != 0 ? MarkupStyle.hidden.rawValue : flags }
+            // A hidden mark is only hidden, and a quote's mark only that, whatever the text around it is.
+            func normalized(_ flags: UInt16) -> UInt16 {
+                if flags & MarkupStyle.quoteMark.rawValue != 0 { return MarkupStyle.quoteMark.rawValue }
+                return flags & MarkupStyle.hidden.rawValue != 0 ? MarkupStyle.hidden.rawValue : flags
+            }
             let flags = normalized(style[i])
             var j = i + 1
             while j < n, normalized(style[j]) == flags { j += 1 }
             runs.append(InlineMarkdown.Run(range: NSRange(location: base + i, length: j - i), style: MarkupStyle(rawValue: flags)))
             i = j
         }
-        return InlineMarkdown.Result(runs: runs, links: links.map { InlineMarkdown.Link(range: NSRange(location: base + $0.start, length: $0.end - $0.start), url: $0.url) }, hang: hang)
+        return InlineMarkdown.Result(runs: runs, links: links.map { InlineMarkdown.Link(range: NSRange(location: base + $0.start, length: $0.end - $0.start), url: $0.url) },
+                                     hang: hang, quote: quote)
     }
 }

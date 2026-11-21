@@ -239,13 +239,23 @@ final class ClaudeModelTests: XCTestCase {
         var commands: [String] = []
         model.terminalBridge.directKeysAllowed = { true }
         model.terminalBridge.terminalProcess = { 4242 }
-        model.terminalBridge.runScript = { _ in }
+        model.terminalBridge.runScript = { [weak self] script in self?.scriptLock.lock(); self?.scripts.append(script); self?.scriptLock.unlock() }
         model.terminalBridge.postKey = { key, _ in lock.lock(); keys.append(key); lock.unlock() }
         model.commandSender = { text, _ in commands.append(text) }
         let session = TerminalSession(tab: tab(screen, version: version), backend: .bundled, bridge: model.terminalBridge)
         model.sessions = [session]; model.selectedID = session.id
         session.onModelPicker = { [weak model, weak session] picker in if let session { model?.modelPickerShown(picker, on: session) } }
         return (model, session, { commands }, { lock.lock(); defer { lock.unlock() }; return keys })
+    }
+
+    /// The scripts the rig's bridge ran (nothing reaches Terminal).
+    private let scriptLock = NSLock()
+    private var scripts: [String] = []
+    private func ranScripts() -> [String] { scriptLock.lock(); defer { scriptLock.unlock() }; return scripts }
+    private func waitForScript(_ fragment: String) {
+        let done = expectation(description: "script")
+        DispatchQueue.global().async { [unowned self] in while !self.ranScripts().contains(where: { $0.contains(fragment) }) { usleep(5_000) }; done.fulfill() }
+        wait(for: [done], timeout: 3)
     }
 
     private func tab(_ screen: [String], version: String = "2.1.290") -> TerminalTabSnapshot {
@@ -279,8 +289,42 @@ final class ClaudeModelTests: XCTestCase {
         model.setModel(haiku, on: session, scope: .sessionOnly)
         XCTAssertEqual(commands(), ["/model"], "Only Claude's picker applies a model to this session only.")
         session.update(tab(realPicker))
-        waitForKeys(keys, count: 4)
-        XCTAssertEqual(keys(), [.down, .down, .down, .keyS], "From Opus 5.5 (row 2) to Haiku 4.5 (row 5), then \"s\".")
+        // One write: the arrows from Opus 5.5 (row 2) to Haiku 4.5 (row 5) and "s", Terminal's Return after it; no key event, so Terminal
+        // never comes forward. The write checks the picker still shows the highlight the arrows were counted from.
+        let arrow = "(character id 27) & \"[B\""
+        waitForScript("do script (\(arrow) & \(arrow) & \(arrow) & \"s\") in t")
+        let write = try XCTUnwrap(ranScripts().first { $0.contains("do script") })
+        XCTAssertTrue(write.contains("if not (busy of t)"))
+        XCTAssertTrue(write.contains("screenNow does not contain \"" + " ❯  2.  Opus 5.5 ✔             For complex work and everyday tasks\""), write)
+        XCTAssertFalse(write.contains("activate"))
+        XCTAssertTrue(keys().isEmpty, "No key events, no Accessibility.")
+    }
+
+    func testAPickerWhoseHintDoesNotListSGetsItsKeysOneByOne() throws {
+        let noHint = realPicker.dropLast() + [" Enter to set as default · Esc to cancel"]
+        try XCTSkipIf(AgentPrompt.parse(lines(Array(noHint))) == nil, "Waiting on the parser for this picker shape (AgentPrompt).")
+        let (model, session, _, keys) = rig(screen: [rule, "❯ ", rule], catalog: sampleList)
+        model.setModel(model.availableModels(for: session)[4], on: session, scope: .sessionOnly)
+        session.update(tab(Array(noHint)))
+        // Without "s" in the hint, Terminal's Return after an "s" would set the row as the default: the keys go as before.
+        if AgentPrompt.parse(lines(Array(noHint)))?.actions.isEmpty == false {
+            XCTAssertEqual(model.notice, "Este Claude no permite usar un modelo solo en esta sesión; elígelo como predeterminado.")
+            XCTAssertTrue(keys().isEmpty)
+        }
+        XCTAssertFalse(ranScripts().contains { $0.contains("\"s\") in t") })
+    }
+
+    func testTheOneWriteKeysForThePicker() {
+        let down = "(character id 27) & \"[B\"", up = "(character id 27) & \"[A\""
+        XCTAssertEqual(TerminalAppBridge.pickerText([.down, .down, .keyS]), "(\(down) & \(down) & \"s\")")
+        XCTAssertEqual(TerminalAppBridge.pickerText([.up, .enter]), "(\(up))", "Terminal's own Return is the Enter.")
+        XCTAssertEqual(TerminalAppBridge.pickerText([.keyS]), "(\"s\")")
+        XCTAssertEqual(TerminalAppBridge.pickerText([.enter]), "\"\"")
+        XCTAssertNil(TerminalAppBridge.pickerText([.down, .tab]))
+        XCTAssertNil(TerminalAppBridge.pickerText(Array(repeating: .down, count: 13) + [.keyS]), "More arrows than one write takes: the keys go one by one.")
+        var details: NSDictionary?
+        let source = TerminalAppBridge.answerScript(windowID: 3, tty: "/dev/ttys004", anchors: [" ❯  2.  Opus 5.5"], action: TerminalAppBridge.pickerAction([.down, .keyS])!)
+        XCTAssertTrue(NSAppleScript(source: source)!.compileAndReturnError(&details), details?.description ?? "")
     }
 
     func testWithoutTheListARowOnlyThePickerKnowsIsChosenThere() {
@@ -288,8 +332,9 @@ final class ClaudeModelTests: XCTestCase {
         model.setModel(ClaudeModelChoice(label: "Opus (1M context)", row: 4), on: session)
         XCTAssertEqual(commands(), ["/model"], "Opens Claude's own picker.")
         session.update(tab(oldPicker))
-        waitForKeys(keys, count: 3)
-        XCTAssertEqual(keys(), [.down, .down, .down], "Three down from the ticked Default; Enter goes as Terminal's own Return.")
+        let arrow = "(character id 27) & \"[B\""
+        waitForScript("do script (\(arrow) & \(arrow) & \(arrow)) in t")
+        XCTAssertTrue(keys().isEmpty, "Three down from the ticked Default in one write; Terminal's own Return is the Enter.")
         XCTAssertEqual(model.models.catalog(folder: nil)?.entries.count, 4, "The picker that opened was learned on the way.")
     }
 
