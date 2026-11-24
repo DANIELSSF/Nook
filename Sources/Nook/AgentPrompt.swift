@@ -309,6 +309,9 @@ struct AgentPrompt: Equatable {
         static let scrollMarks: Set<Character> = ["↓", "↑", "▼", "▲"]
         /// "… +3 models", "↑ … +2 more": options the list does not show.
         static let more = Pattern(#"^([↑↓▲▼])?\s*(?:…|\.\.\.)\s*\+(\d+)\s+\S+(?:\s+\S+)?$"#)
+        /// "↑ 211 more lines": Claude folds what a permission dialog shows (a long command) when it doesn't fit the screen, and says so
+        /// under the options, at their margin. It is about the dialog's content, not its options, so it counts no hidden option.
+        static let fold = Pattern(#"^[↑↓▲▼]\s*\d+\s+more\s+lines?$"#, caseInsensitive: true)
         /// What opens a reply, a tool result or a quoted message.
         static let proseMarks: Set<Character> = ["⏺", "●", "•", "⎿", ">"]
         static let plainRule = Pattern(#"^[-=_]{5,}$"#)
@@ -389,6 +392,8 @@ struct AgentPrompt: Equatable {
         /// "… +3 models": how many options the list hides, and which way when the line says ("↑ … +3 models").
         let more: Int?
         let moreMark: Character?
+        /// "↑ 211 more lines": the dialog's content folded, which may sit between its options and its key hint.
+        let isFold: Bool
 
         init(_ raw: String) {
             var line = Substring(raw)
@@ -429,6 +434,7 @@ struct AgentPrompt: Equatable {
                 more = nil
                 moreMark = nil
             }
+            isFold = Patterns.fold.matches(text)
             let scrolled = text.first.map(Patterns.scrollMarks.contains) == true && text.dropFirst().first?.isWhitespace == true
                 && Patterns.numbered.matches(text.dropFirst().trimmingCharacters(in: .whitespaces))
             if let first = text.first, Patterns.markers.contains(first) || scrolled, text.dropFirst().first.map(\.isWhitespace) ?? true {
@@ -455,7 +461,7 @@ struct AgentPrompt: Equatable {
 
         var isBlank: Bool { text.isEmpty }
         /// Lines that may follow a dialog without meaning that it scrolled away.
-        var isQuiet: Bool { isBlank || isFrame || isHint || isModeLine || more != nil }
+        var isQuiet: Bool { isBlank || isFrame || isHint || isModeLine || more != nil || isFold }
         /// "⏺ Bash(rm -rf build)": the call a permission question is about.
         var isToolCall: Bool { indent <= 1 && Patterns.tool.matches(text) }
     }

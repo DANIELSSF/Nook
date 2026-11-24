@@ -311,8 +311,10 @@ struct ClaudePanelCard: View {
         case .backtab: action = "cambiar de modo"
         case .keyS: action = "usar solo en esta sesión"
         }
-        // ⌃V is the exception: a Terminal tab never gets it (the image travels as a file), so it needs no permission.
-        return "\(key.label) · \(action)" + (needsAccessibility && key.needsDirectKeys && key != .pasteImage ? " (requiere Accesibilidad)" : "")
+        // A Terminal tab gets Claude's Escape, arrows and Tab written (`TerminalAppBridge.escapeAction`, `keyAction`), and never gets ⌃V
+        // (the image travels as a file): none of them needs the permission.
+        let written = key == .escape || key == .pasteImage || TerminalAppBridge.keyAction(key) != nil
+        return "\(key.label) · \(action)" + (needsAccessibility && key.needsDirectKeys && !written ? " (requiere Accesibilidad)" : "")
     }
 
     // MARK: Content

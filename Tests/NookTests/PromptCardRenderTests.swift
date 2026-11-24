@@ -130,6 +130,19 @@ final class PromptCardRenderTests: XCTestCase {
 
     // MARK: The card
 
+    /// A Bash command too long for the screen, folded by Claude under the options ("↑ 211 more lines"): a permission card, not Claude's panel.
+    func testRenderAFoldedPermission() throws {
+        let directory = try renderDirectory()
+        let rule = String(repeating: "─", count: 100)
+        let rows = ["⏺ Compilo el módulo para comprobar que no tiene errores.", "", rule, " Bash command", "",
+                    "   python3 -I -m py_compile herramientas.py && echo compiled && rm -rf __pycache__", " " + String(repeating: "┄", count: 98),
+                    " Contains brace with quote character (expansion obfuscation)",
+                    " Rule Bash(rm -rf*) from shared project settings overrides auto mode.", " /permissions to let auto mode decide", "",
+                    " Do you want to proceed?", " ❯ 1. Yes", "   2. No", " ↑ 211 more lines", " Esc to cancel · Tab to amend",
+                    String(repeating: "─", count: 90) + " agenteC ─"]
+        try render("folded-permission", rows, in: directory)
+    }
+
     func testRenderTheLongQuestion() throws {
         let directory = try renderDirectory()
         try render("long", longQuestion, widths: [NotchGeometry.expandedWidth, 440], in: directory)

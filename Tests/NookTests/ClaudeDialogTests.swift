@@ -65,6 +65,45 @@ final class ClaudeDialogTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(AgentPrompt.parse(lines(rows))).question, "The migration touches 14 tables.\nShould I run it now or wait for the backup?")
     }
 
+    /// Claude Code 2.1.330 (a private tmux, 2026-11-23): two single-answer questions, the first one open. ↓ and the Return in one write
+    /// (what a click on «Blue» sends) answered it and opened the second question; the bytes are checked in `TerminalAnswerTests`.
+    func testSeveralQuestionsAsClaude2_1_330DrawsThemAnswerOneAtATime() throws {
+        let wide = String(repeating: "─", count: 110)
+        let rows = [wide, "←  ☐ Color  ☐ Size  ✔ Submit  →", "", "Favorite color?", "", "❯ 1. Red", "     Red", "  2. Blue", "     Blue",
+                    "  3. Type something.", wide, "  4. Chat about this", "", "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"]
+        let prompt = try XCTUnwrap(AgentPrompt.parse(lines(rows)))
+        XCTAssertEqual(prompt.kind, .question)
+        XCTAssertFalse(prompt.multiSelect)
+        XCTAssertEqual(prompt.question, "Favorite color?")
+        XCTAssertEqual(prompt.tabs.map(\.title), ["Color", "Size", "Submit"])
+        XCTAssertEqual(prompt.options.map(\.title), ["Red", "Blue", "Type something.", "Chat about this"])
+        XCTAssertEqual(prompt.highlighted, 0)
+        XCTAssertEqual(prompt.keys(choosing: 1), [.down, .enter], "One write: the arrow, then Terminal's Return.")
+        XCTAssertNotNil(TerminalAppBridge.answerAction(prompt.keys(choosing: 1)))
+    }
+
+    /// A Bash command too long for the screen (Claude Code, 2026-11-23): the dialog folds it and says so under its options, at their
+    /// margin. The fold is about the command, so the dialog is still a card and not one of Claude's panels.
+    func testAPermissionWhoseCommandIsFoldedIsStillTheDialog() throws {
+        let rows = [rule, " Bash command", "", "   python3 -I -m py_compile herramientas.py && echo compiled && rm -rf __pycache__",
+                    " " + String(repeating: "┄", count: 70),
+                    " Contains brace with quote character (expansion obfuscation)",
+                    " Rule Bash(rm -rf*) from shared project settings overrides auto mode.", " /permissions to let auto mode decide", "",
+                    " Do you want to proceed?", " ❯ 1. Yes", "   2. No", " ↑ 211 more lines", " Esc to cancel · Tab to amend",
+                    String(repeating: "─", count: 60) + " agenteC ─"]
+        let prompt = try XCTUnwrap(AgentPrompt.parse(lines(rows)))
+        XCTAssertEqual(prompt.kind, .approval)
+        XCTAssertEqual(prompt.question, "Do you want to proceed?")
+        XCTAssertEqual(prompt.options.map(\.title), ["Yes", "No"])
+        XCTAssertEqual(prompt.options.map(\.detail), [nil, nil], "The fold is no description of «No».")
+        XCTAssertEqual(prompt.moreAbove, 0)
+        XCTAssertEqual(prompt.moreBelow, 0, "It hides lines of the command, not options.")
+        XCTAssertEqual(prompt.actions.map(\.key), ["esc", "tab"])
+        XCTAssertFalse(AgentPrompt.withoutPrompt(lines(rows)).contains("Do you want to proceed?"), "The card shows the dialog; the chat doesn't.")
+        // A fold whose lines are a reply's, not a dialog's, changes nothing: a numbered list without a highlight is no dialog.
+        XCTAssertNil(AgentPrompt.parse(lines(["⏺ Two options:", "  1. Yes", "  2. No", " ↑ 211 more lines"])))
+    }
+
     func testSeveralQuestionsShowTheirTabs() throws {
         let rows = [rule, "←  ☒ Database  ☐ Cache  ✔ Submit  →", "", "Which cache should we put in front of it?", "",
                     "❯ 1. Redis", "     In-memory, battle tested", "  2. Memcached", "     Simpler, no persistence", "  3. Type something.", rule,

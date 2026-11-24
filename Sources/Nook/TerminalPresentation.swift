@@ -244,9 +244,10 @@ enum TerminalKey: String, CaseIterable, Identifiable {
         case .left: "Flecha izquierda"; case .right: "Flecha derecha"; case .backtab: "Mayúsculas + Tab"; case .keyS: "S"
         }
     }
-    /// Terminal's `do script` always appends Return, so only Enter travels that way as a key of its own. Escape to Claude and the keys of
-    /// Claude's dialogs and model picker go as writes too, shaped so that Return is theirs or harmless (`TerminalAppBridge.escapeAction`,
-    /// `answerText`, `pickerText`); every other key, and those where a write can't be proved harmless, are key events.
+    /// Terminal's `do script` always appends Return, so only Enter travels that way as a key of its own. Escape, the arrows, Tab and ⇧Tab
+    /// to Claude and the keys of Claude's dialogs and model picker go as writes too, shaped so that Return is theirs or harmless
+    /// (`TerminalAppBridge.escapeAction`, `keyAction`, `answerText`, `pickerText`); every other key, and those where a write can't be
+    /// proved harmless, are key events.
     var needsDirectKeys: Bool { self != .enter }
 }
 

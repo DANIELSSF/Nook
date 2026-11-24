@@ -1395,7 +1395,7 @@ struct SessionPane: View {
                             if showsAgentControls {
                                 // The permission mode the screen shows under Claude's box; a click passes to the next one, as ⇧⇥ does there.
                                 if let mode = session.agentMode {
-                                    ClaudeModeChip(mode: mode, blocked: modeChipBlock, needsAccessibility: session.isExternal && !DirectKeys.allowed) { model.cycleMode(on: session) }
+                                    ClaudeModeChip(mode: mode, blocked: modeChipBlock) { model.cycleMode(on: session) }
                                 }
                                 // The model the tab uses; a click opens the list of every model Claude offers.
                                 ClaudeModelChip(model: session.currentModel, open: modelMenuOpen, blocked: modelChipBlock, waiting: modelAsked) { toggleModelMenu() }

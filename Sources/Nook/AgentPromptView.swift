@@ -398,12 +398,15 @@ struct AgentPromptCard: View {
         }
     }
 
+    /// Claude's arrows and Tab go to a Terminal tab as writes (`TerminalAppBridge.keyAction`); any other key is a key event, which needs Accessibility.
+    private func needsAccessibility(for key: TerminalKey) -> Bool { needsAccessibility && !(agent == .claude && TerminalAppBridge.keyAction(key) != nil) }
+
     private func keyButton(_ key: TerminalKey, symbol: String, help: String) -> some View {
         Button { onKey(key) } label: {
             Image(systemName: symbol).font(.system(size: 9, weight: .bold)).foregroundStyle(Color.primary.opacity(0.8))
                 .frame(width: 22, height: 22).background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 6, style: .continuous)).contentShape(Rectangle())
         }.nookPress(symbol: symbol).disabled(busy)
-            .help(help + " · " + key.label + (needsAccessibility ? " (requiere Accesibilidad)" : "")).accessibilityLabel(help)
+            .help(help + " · " + key.label + (needsAccessibility(for: key) ? " (requiere Accesibilidad)" : "")).accessibilityLabel(help)
     }
 
     // MARK: Options
@@ -528,7 +531,7 @@ struct AgentPromptCard: View {
             Image(systemName: symbol).font(.system(size: 9.5, weight: .bold)).foregroundStyle(Color.primary.opacity(0.85))
                 .frame(width: 26, height: 22).background(Color.nookWash(0.09), in: RoundedRectangle(cornerRadius: 6, style: .continuous)).contentShape(Rectangle())
         }.nookPress(symbol: symbol).disabled(busy)
-            .help(help + " · " + key.label + (needsAccessibility ? " (requiere Accesibilidad)" : "")).accessibilityLabel(help)
+            .help(help + " · " + key.label + (needsAccessibility(for: key) ? " (requiere Accesibilidad)" : "")).accessibilityLabel(help)
     }
 }
 

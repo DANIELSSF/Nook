@@ -2499,8 +2499,8 @@ final class AppModel: ObservableObject {
         }
     }
     /// ⇧⇥ in a tab running Claude: Claude moves to its next permission mode (default → accept edits → plan → auto…), and
-    /// `agentMode` follows from the reading that comes right after the key. Like any key but Enter, a Terminal tab needs
-    /// Accessibility for it. `.failed` at once, with nothing pressed, where Claude isn't running.
+    /// `agentMode` follows from the reading that comes right after the key. A Terminal tab gets it written, with no Accessibility
+    /// and Terminal left where it is (`TerminalAppBridge.keyAction`). `.failed` at once, with nothing pressed, where Claude isn't running.
     func cycleMode(on session: TerminalSession, from origin: ActionOrigin = .island, completion: @escaping (KeyDelivery) -> Void = { _ in }) {
         guard session.agent == .claude, session.isRunning else { completion(.failed); return }
         press(.backtab, on: session, from: origin, completion: completion)

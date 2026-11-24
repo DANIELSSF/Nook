@@ -309,8 +309,10 @@ final class ClaudePanelTests: XCTestCase {
             let help = ClaudePanelCard.help(for: key, needsAccessibility: false)
             XCTAssertTrue(help.hasPrefix(key.label), help)
             XCTAssertFalse(help.contains("Accesibilidad"))
-            XCTAssertEqual(ClaudePanelCard.help(for: key, needsAccessibility: true).contains("Accesibilidad"), key.needsDirectKeys, "Enter works without the permission.")
+            XCTAssertFalse(ClaudePanelCard.help(for: key, needsAccessibility: true).contains("Accesibilidad"),
+                           "Enter, and Claude's Escape, arrows and Tab written to the tab, work without the permission: \(key)")
         }
+        XCTAssertTrue(ClaudePanelCard.help(for: .keyS, needsAccessibility: true).contains("Accesibilidad"), "A key Nook can't write still needs it.")
         XCTAssertTrue(ClaudePanelCard.help(for: .escape, needsAccessibility: false).contains("cerrar el panel"))
     }
 

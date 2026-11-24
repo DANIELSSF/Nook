@@ -698,6 +698,27 @@ final class TerminalAppBridge: ObservableObject {
     /// How long Claude may still read what is written after the Escape into its control string: its 50 ms, with room.
     static let escapeQuiet: TimeInterval = 0.15
 
+    /// An arrow, Tab or ⇧Tab for Claude Code as one `do script`, so Terminal stays where it is and no Accessibility is needed: the key
+    /// as Terminal sends it (ESC [ A…D, a tab, ESC [ Z), then ESC P, whose control string holds Terminal's own Return and is let go 50 ms
+    /// later as a key no handler of Claude's acts on (`escapeAction`). Checked in a private tmux against Claude Code 2.1.330: in a dialog
+    /// with several questions ← → and Tab switch questions and ↑ ↓ move the highlight (onto the free-text option too, which stays
+    /// empty), with nothing chosen; at the empty box ⇧Tab cycles the mode and nothing is sent. Before, ← → and Tab always brought
+    /// Terminal forward to be pressed as key events, since the screen can't confirm them in the background (`KeyEffect.checkable`).
+    /// nil for any other key. Only for Claude: Codex reads ESC P as Alt+P.
+    static func keyAction(_ key: TerminalKey) -> String? {
+        let bytes: String
+        switch key {
+        case .up: bytes = "(character id 27) & \"[A\""
+        case .down: bytes = "(character id 27) & \"[B\""
+        case .right: bytes = "(character id 27) & \"[C\""
+        case .left: bytes = "(character id 27) & \"[D\""
+        case .backtab: bytes = "(character id 27) & \"[Z\""
+        case .tab: bytes = "(character id 9)"
+        default: return nil
+        }
+        return "do script (\(bytes) & (character id 27) & \"P\") in t"
+    }
+
     private static let escapeLock = NSLock()
     nonisolated(unsafe) private static var escapedAt: [String: TimeInterval] = [:]
 
@@ -1190,7 +1211,34 @@ final class TerminalAppBridge: ObservableObject {
         }
         // Escape to Claude is written, with Terminal left where it is and no Accessibility (`escapeAction`), and checked on its screen.
         if key == .escape, agent == .claude, backgroundKeys { return pressEscape(windowID: windowID, tty: tty, completion: completion) }
+        // So are Claude's arrows, Tab and ⇧Tab (`keyAction`): the "next question" button no longer brings Terminal forward.
+        if agent == .claude, backgroundKeys, let action = Self.keyAction(key) { return writeKey(key, action: action, windowID: windowID, tty: tty, completion: completion) }
         pressDirectly(key, windowID: windowID, tty: tty, agent: agent, completion: completion)
+    }
+
+    /// Writes one of Claude's keys (`keyAction`) behind `answerScript`'s check that the tab still runs a program in its foreground: with
+    /// its shell back, an arrow would recall a command and the Return run it. The bytes reach the tab's terminal as they are, so nothing
+    /// is read back. The control string the write leaves open is waited out before the next write, here and for messages (`waitOutEscape`).
+    private func writeKey(_ key: TerminalKey, action: String, windowID: Int, tty: String, completion: @escaping (KeyDelivery) -> Void) {
+        let run = runScript, pause = keyPause, clock = keyClock, report = keyReport
+        queue.async { [weak self] in
+            let start = clock()
+            let result = Result { try run(Self.answerScript(windowID: windowID, tty: tty, action: action)) }.mapError(Self.answerOutcome)
+            let milliseconds = Int(((clock() - start) * 1000).rounded())
+            switch result {
+            case .success:
+                Self.noteEscape(tty: tty, at: ProcessInfo.processInfo.systemUptime)
+                pause(Self.escapeQuiet)
+                report(KeyAttempt(key: key, outcome: .written, milliseconds: milliseconds, detail: "written"))
+            case .failure(let error):
+                report(KeyAttempt(key: key, outcome: .unchecked, milliseconds: milliseconds, detail: "written: \(error.localizedDescription)"))
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let error) = result, case FieldAnswerError.agentGone? = error as? FieldAnswerError { completion(.failed); return }
+                self.finish(result) { completion($0 ? .sent : .failed) }
+            }
+        }
     }
 
     /// Escape to Claude as a write (`writeEscape`). Only one that never showed on screen goes on as the key, the way keys go.
